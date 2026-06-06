@@ -9321,7 +9321,17 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
             // legitimately - raising the extruder count and not saving the printer preset leaves
             // exactly that on the next start - and losing the project's mixes to it is worse than
             // carrying a filament the printer has no nozzle for until the count is next changed.
-            const size_t target = nozzle_diameter->values.size() + preset_bundle->num_mixed_filaments();
+            size_t num_physical = nozzle_diameter->values.size();
+            // Orca: hybrid MMU printers can carry more filaments than toolheads. Restore the declared
+            // MMU filament count (clamped to at least the toolhead count) instead of collapsing the
+            // filament list back to the number of extruders on every reload/restart.
+            if (edited_printer_preset.config.has("multi_extruder_multi_material") &&
+                edited_printer_preset.config.opt_bool("multi_extruder_multi_material") &&
+                edited_printer_preset.config.has("multi_extruder_multi_material_filament_count")) {
+                int declared = edited_printer_preset.config.opt_int("multi_extruder_multi_material_filament_count");
+                num_physical = std::max<size_t>(num_physical, (size_t) std::max(1, declared));
+            }
+            const size_t target = num_physical + preset_bundle->num_mixed_filaments();
             if (target > preset_bundle->filament_presets.size())
                 preset_bundle->set_num_filaments(target);
         }

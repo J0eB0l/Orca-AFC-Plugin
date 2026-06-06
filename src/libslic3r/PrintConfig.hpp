@@ -1797,6 +1797,10 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Orca: when set, a multi-toolhead printer is also fed by a filament switcher (MMU),
     // so it can carry more filaments than it has toolheads. Gates the hybrid SEMM/multi-tool workflow.
     ((ConfigOptionBool,                multi_extruder_multi_material))
+    // Orca: total filaments the filament switcher (MMU) can feed across all toolheads. Caps the
+    // filament count for the hybrid workflow and is the count restored on restart. Only meaningful
+    // when multi_extruder_multi_material is on.
+    ((ConfigOptionInt,                 multi_extruder_multi_material_filament_count))
     ((ConfigOptionBool,                manual_filament_change))
     // IDEX/IQEX (independent X extruder) — parallel printing support for IDEX/IQEX printers
     ((ConfigOptionBool,                is_imex))
