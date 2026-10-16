@@ -1,0 +1,34 @@
+name: AFC plugin
+
+on:
+  push:
+    paths:
+      - 'afc-plugin/**'
+      - '.github/workflows/afc_plugin.yml'
+  pull_request:
+    paths:
+      - 'afc-plugin/**'
+      - '.github/workflows/afc_plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # OrcaSlicer bundles Python 3.12 for plugins.
+          python-version: '3.12'
+      - name: Test
+        run: python -m unittest discover -s afc-plugin/tests -v
+      - name: Build orca_afc.whl
+        run: python afc-plugin/build_wheel.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orca_afc
+          path: afc-plugin/dist/orca_afc.whl
+          if-no-files-found: error

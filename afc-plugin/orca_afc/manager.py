@@ -1,0 +1,204 @@
+"""Reads AFC from the printer and runs what the AFC page asks for.
+
+Everything here runs on the plugin's worker thread, never on OrcaSlicer's UI
+thread, since each request waits on the network.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+
+from . import protocol
+from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
+from .protocol import AFCError, Snapshot
+
+# How long a spool's flow K is trusted before it is read again. AFC autocal only
+# writes it after a calibration, so this mostly bounds how soon a new one shows.
+FLOW_K_MAX_AGE = 120.0
+
+
+def read_snapshot(client: Moonraker) -> Snapshot:
+    """One AFC read: the webhook first, Klipper objects as the fallback, then
+    the lane_data database and the unit dryers to fill in the rest."""
+    try:
+        snap = protocol.parse_status_endpoint(client.afc_status())
+        webhook_error = None
+    except PrinterUnreachable:
+        raise
+    except MoonrakerError as error:
+        snap, webhook_error = None, error  # an AFC without the webhook, or none at all
+
+    if snap is not None:
+        # The webhook leaves out some settings, multiple tool mapping among them.
+        try:
+            protocol.merge_afc_object(client.objects_query(protocol.afc_object_query()), snap)
+        except MoonrakerError:
+            pass
+    else:
+        try:
+            status = client.objects_query({"AFC": None})
+        except MoonrakerError:
+            # The printer is not answering at all; say why the first call failed.
+            raise webhook_error or MoonrakerError("AFC did not answer") from None
+        afc = (status or {}).get("status", {}).get("AFC") if isinstance(status, dict) else None
+        if not isinstance(afc, dict) or not afc:
+            return Snapshot()  # no AFC on this printer
+        lanes = protocol._string_list(afc.get("lanes"))
+        try:
+            objects_list = client.objects_list()
+        except MoonrakerError:
+            objects_list = {}
+        objects = {"AFC": None, "print_task_config": protocol.afc_object_query()["print_task_config"]}
+        for name in protocol.lane_object_names(objects_list, lanes):
+            objects[name] = None
+        snap = protocol.parse_objects_status(client.objects_query(objects)) or Snapshot()
+
+    try:
+        protocol.merge_lane_data(client.database_namespace("lane_data"), snap)
+    except MoonrakerError:
+        pass  # older AFC, or no lane_data yet
+
+    # Unit dryers (ACE, AMS 2 Pro, AMS HT) live on the units' own Klipper objects.
+    dryers = protocol.dryer_objects_query(snap)
+    if dryers:
+        try:
+            protocol.merge_dryer_status(client.objects_query(dryers), snap)
+        except MoonrakerError:
+            pass
+    return snap
+
+
+class AFCManager:
+    """The last AFC snapshot of the printer the tab shows, and the commands
+    the page sends. Callers serialize the calls (one worker thread)."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._lock = threading.Lock()
+        self.snapshot = Snapshot()
+        self.printer = ""       # the printer the snapshot came from
+        self._flow_k = {}       # spool id -> (k, read at)
+
+    # ------------------------------------------------------------ reading
+
+    def refresh(self, client: Moonraker) -> str:
+        """Read AFC again. Returns an error to show, or "". A failed read on
+        the same printer keeps its last good snapshot."""
+        if client.url != self.printer:
+            self._flow_k.clear()
+        try:
+            snap = read_snapshot(client)
+        except MoonrakerError as error:
+            if client.url != self.printer:
+                self.snapshot, self.printer = Snapshot(), client.url
+            return str(error)
+        self._read_flow_k(client, snap)
+        with self._lock:
+            self.snapshot, self.printer = snap, client.url
+        return ""
+
+    def _read_flow_k(self, client: Moonraker, snap: Snapshot) -> None:
+        """Each spool's saved pressure advance, from Spoolman through Moonraker,
+        or from AFC's own Spoolman address when Moonraker cannot ask it."""
+        now = self._clock()
+        for lane in snap.lanes:
+            if lane.spool_id <= 0:
+                continue
+            known = self._flow_k.get(lane.spool_id)
+            if known is None or now - known[1] >= FLOW_K_MAX_AGE:
+                known = (self._spool_flow_k(client, lane.spool_id, snap.spoolman_url), now)
+                self._flow_k[lane.spool_id] = known
+            lane.flow_k = known[0]
+
+    @staticmethod
+    def _spool_flow_k(client: Moonraker, spool: int, spoolman_url: str) -> float:
+        try:
+            return protocol.spool_flow_k(client.spoolman_spool(spool))
+        except PrinterUnreachable:
+            return -1.0
+        except MoonrakerError:
+            pass
+        if spoolman_url:
+            try:
+                return protocol.spool_flow_k(fetch_json("%s/api/v1/spool/%d" % (spoolman_url.rstrip("/"), spool)))
+            except MoonrakerError:
+                pass
+        return -1.0  # counts as "no K" until it is due again
+
+    def state(self, printer: str, hint: str = "", error: str = "") -> dict:
+        """What the page draws: {connected, afc, error?, hint?}."""
+        with self._lock:
+            snap, source = self.snapshot, self.printer
+        afc = protocol.to_json(snap)
+        if not printer or source != printer:
+            afc["present"] = False
+        out = {"connected": bool(printer), "afc": afc}
+        if hint:
+            out["hint"] = hint
+        if error:
+            out["error"] = error
+        return out
+
+    # ------------------------------------------------------------ commands
+
+    def send(self, client: Moonraker, gcode) -> str:
+        """Run G-code on the printer, one command per line. Returns an error or ""."""
+        lines = [gcode] if isinstance(gcode, str) else list(gcode)
+        if not lines:
+            return ""
+        try:
+            client.gcode("\n".join(lines))
+        except MoonrakerError as error:
+            return str(error)
+        return ""
+
+    def edit_lane(self, client: Moonraker, params: dict) -> str:
+        gcode = protocol.build_lane_edit_gcode(self.snapshot, params.get("lane", ""), params.get("changes", {}))
+        return self.send(client, gcode)
+
+    def lane_action(self, client: Moonraker, params: dict) -> str:
+        gcode = protocol.build_lane_action_gcode(self.snapshot, params.get("lane", ""), params.get("action", ""))
+        # Filament moves only on an idle printer: never in the middle of a print.
+        busy = self._busy(client, "The printer is {state}; lane moves wait until it is idle",
+                          "Could not read the printer state, so nothing was moved")
+        return busy or self.send(client, gcode)
+
+    def dry(self, client: Moonraker, params: dict) -> str:
+        return self.send(client, protocol.build_dry_gcode(self.snapshot, params.get("unit", ""), params))
+
+    def apply_mapping(self, client: Moonraker, params: dict) -> str:
+        mapping = params.get("mapping")
+        if not isinstance(mapping, list):
+            raise AFCError("param [mapping] required")
+        pairs = []
+        for m in mapping:
+            if not isinstance(m, dict) or not protocol._is_integer(m.get("tool")) or not isinstance(m.get("lane"), str):
+                raise AFCError("mapping entries need an integer tool and a lane name")
+            pairs.append((m["tool"], m["lane"]))
+        gcode = protocol.build_tool_mapping_gcode(self.snapshot, pairs)
+        if params.get("idle_only"):
+            # An upload maps lanes for a print that starts later, so a print running now keeps its lanes.
+            busy = self._busy(client, "The printer is {state}, so AFC's lanes stay as they are. Upload without "
+                                      "lanes and map them when the print starts.",
+                              "Could not read the printer state, so AFC's lanes were not changed")
+            if busy:
+                return busy
+        return self.send(client, gcode)
+
+    def set_print_options(self, client: Moonraker, params: dict) -> str:
+        if not self.snapshot.u1_print.present:
+            raise AFCError("This printer has no U1 print options")
+        return self.send(client, protocol.u1_print_options_gcode(protocol.U1PrintOptions.from_page(params)))
+
+    @staticmethod
+    def _busy(client: Moonraker, printing: str, unknown: str) -> str:
+        """`printing` (with {state}) while a print runs or is paused, `unknown`
+        when the state cannot be read, "" when the printer is idle."""
+        try:
+            state = client.print_state()
+        except MoonrakerError:
+            state = ""
+        if state in ("printing", "paused"):
+            return printing.format(state=state)
+        return "" if state else unknown
