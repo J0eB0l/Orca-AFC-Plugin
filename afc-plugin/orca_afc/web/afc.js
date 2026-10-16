@@ -159,6 +159,7 @@
   let u1SetFailed = false;   // print view: the printer refused them once; the next try prints without
   let dryUnit = null;        // panel: unit name with the dry popup open
   let dryForm = null;        // panel: what the dry popup holds {material, temp, hours, rotate}
+  let dryStarting = null;    // panel: {unit, temp, until} from a start until the unit reports drying
 
   function lanes() { return (state && state.afc && state.afc.lanes) || []; }
   // Units with lanes; AFC also lists a toolchanger entry and unclaimed BridgeBox spares.
@@ -328,9 +329,29 @@
     return parts.join(' · ');
   }
 
+  // An ACE reports a start on its next status poll, a few seconds after the start
+  // command, so for a while after one the unit shows as starting.
+  function dryStartingFor(unit) {
+    if (!dryStarting || dryStarting.unit !== unit.name) return false;
+    if (unit.dryer && unit.dryer.drying) {
+      dryStarting = null;
+      return false;
+    }
+    if (Date.now() > dryStarting.until) {
+      dryStarting = null;
+      toast(unit.name.replace(/_/g, ' ') + ' has not reported drying. Check the unit and try again.', true);
+      return false;
+    }
+    return true;
+  }
+
   function dryChip(unit) {
     const d = unit.dryer;
     if (!d) return '';
+    if (!d.drying && dryStartingFor(unit)) {
+      return '<button class="dry-chip on" data-dry="' + esc(unit.name) + '" title="Starting: open the dryer">' +
+        '<span class="dot"></span>Starting at ' + Math.round(dryStarting.temp) + ' °C</button>';
+    }
     if (d.drying) {
       return '<button class="dry-chip on" data-dry="' + esc(unit.name) + '" title="Drying: open the dryer">' +
         '<span class="dot"></span>' + Math.round(d.target) + ' °C · ' + duration(d.remaining_s) + ' left</button>';
@@ -387,6 +408,10 @@
         (d.note ? '<div class="pill warn" style="margin-top:10px">' + esc(d.note) + '</div>' : '') +
         '<div class="actions"><div class="grow"></div><button class="btn ghost" id="dry-close">Close</button>' +
         '<button class="btn danger" id="dry-stop">Stop drying</button></div>';
+    } else if (dryStartingFor(unit)) {
+      body = '<div class="dry-live"><div class="dry-big">' + Math.round(dryStarting.temp) + ' °C</div>' +
+        '<div><div>Starting the dryer…</div><div class="hint">' + esc(climate(d) || 'Waiting for the unit') + '</div></div></div>' +
+        '<div class="actions"><div class="grow"></div><button class="btn ghost" id="dry-close">Close</button></div>';
     } else {
       body = '<div class="dry-climate">' + esc(climate(d) || 'No temperature or humidity reading') + '</div>' +
         '<div class="presets">' + DRY_PRESETS.map((p) => '<button class="preset' + (f.material === p.m ? ' cur' : '') + (mats.has(p.m) ? ' here' : '') +
@@ -418,10 +443,19 @@
     const max = Math.round(unit.dryer.max_temp || 85);
     if (unit.dryer.drying) {
       $('dry-stop').onclick = async () => {
-        await run(() => call('dry', { unit: unit.name, action: 'stop' }), 'Dryer stopped');
+        await run(() => call('dry', { unit: unit.name, action: 'stop' }).then((data) => {
+          // The unit may report the stop a few seconds later; the card catches up on the next read.
+          if (data && !data.error) {
+            dryUnit = null;
+            dryForm = null;
+            setTimeout(() => load(true), 1500);
+          }
+          return data;
+        }), 'Dryer stopped');
       };
       return;
     }
+    if (!$('dry-start')) return;  // starting: only Close
     for (const el of document.querySelectorAll('[data-preset]')) {
       el.onclick = () => { dryForm = Object.assign(presetFor(el.dataset.preset, max), { rotate: $('dry-rotate').checked }); render(); };
     }
@@ -434,8 +468,13 @@
       const temp = Math.round(dryForm.temp), minutes = Math.round(dryForm.hours * 60);
       if (!(temp >= 35 && temp <= max)) return toast('Temperature must be 35-' + max + ' °C', true);
       if (!(minutes >= 1 && minutes <= 2880)) return toast('Time must be up to 48 hours', true);
-      await run(() => call('dry', { unit: unit.name, action: 'start', temp: temp, minutes: minutes, rotate: dryForm.rotate }),
-        'Drying ' + unit.name.replace(/_/g, ' ') + ' at ' + temp + ' °C');
+      await run(() => call('dry', { unit: unit.name, action: 'start', temp: temp, minutes: minutes, rotate: dryForm.rotate }).then((data) => {
+        if (data && !data.error) {
+          dryStarting = { unit: unit.name, temp: temp, until: Date.now() + 30000 };
+          setTimeout(() => load(true), 1500);
+        }
+        return data;
+      }), 'Drying ' + unit.name.replace(/_/g, ' ') + ' at ' + temp + ' °C');
     };
   }
 
@@ -747,7 +786,9 @@
   })(30);
   if (VIEW === 'panel') {
     setInterval(() => {
-      const dryEditing = dryUnit && !((unitByName(dryUnit) || {}).dryer || {}).drying;
+      // A wait that ran out shows the form again even when the poll brings nothing new.
+      if (dryStarting && Date.now() > dryStarting.until) render();
+      const dryEditing = dryUnit && !((unitByName(dryUnit) || {}).dryer || {}).drying && !(dryStarting && dryStarting.unit === dryUnit);
       if (document.hidden || busy || editorDirty || dryEditing || pending.size) return;
       load(true);
     }, 5000);
