@@ -10,7 +10,24 @@ you can:
 - start and stop drying on an ACE, ACE 2 Pro, AMS 2 Pro or AMS HT;
 - see each spool's flow K, which AFC autocal saves in Spoolman.
 
-It talks to Moonraker over HTTP. Nothing here changes how OrcaSlicer slices.
+It talks to Moonraker over HTTP.
+
+The plugin also has an **AFC G-code** step that fits each exported or uploaded
+Klipper file to AFC:
+
+- a change between two lanes that feed one toolhead gets `PURGE_LENGTH=<mm>` on
+  its `T` line, so AFC's poop purges the flushing volume from the project's
+  flush volume table (the prime tower only primes when "single extruder
+  multi-material" is off). The first lane a toolhead loads and a switch to a
+  toolhead that already holds its filament get none;
+- a lane whose Spoolman spool has a saved flow K prints with it:
+  `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
+  lines for it take that K (filaments with adaptive pressure advance keep theirs).
+
+It reads AFC from the printer for which toolhead each T number feeds and its
+spool's K. A printer that does not answer still gets its file; on a single-nozzle
+printer the purges are still there, the spool K is not. Other G-code flavors are
+left as they are.
 
 ## Install
 
@@ -24,14 +41,27 @@ It talks to Moonraker over HTTP. Nothing here changes how OrcaSlicer slices.
 Installing a newer `orca_afc.whl` replaces the old one. Keep the file name as it
 is: OrcaSlicer names the plugin after the file.
 
+To turn on the G-code step, switch OrcaSlicer to Advanced mode, open the process
+settings, **Others**, and pick **AFC G-code** under **Slicing Pipeline Plugin**.
+It runs on **Export G-code** and on uploads to the printer (not on the preview).
+
+## Filament sync
+
+Plugins cannot change a project's filaments, so the sync is OrcaSlicer's own: set
+the printer's **Printer Agent** to Moonraker (printer settings, Basic information,
+Advanced mode) and the sync button appears next to **Filament** in the Prepare
+sidebar. It reads AFC's lane data and puts each lane in the slot of its T number
+(slot 1 is T0), so the file's T numbers are AFC's.
+
 ## Printer address
 
-The tab uses the selected printer's connection settings: **host type** Octo/Klipper
+The tab and the G-code step use the selected printer's connection settings: **host type** Octo/Klipper
 (or Moonraker), the **hostname or IP** and the **API key** if Moonraker needs one.
 That is the same address OrcaSlicer uploads to, so a printer that already uploads
 works as it is.
 
-To point the tab somewhere else, set the plugin's config in the Plugins dialog:
+To point them somewhere else, set the config of the AFC tab or of AFC G-code in the
+Plugins dialog (each has its own):
 
 ```json
 { "printer_url": "http://192.168.1.20:7125", "api_key": "" }
@@ -55,5 +85,9 @@ open `orca_afc/web/index.html?mock=1`; `afc-mock.js` answers with made-up lanes.
 | `orca_afc/protocol.py` | Reads AFC's answers and builds every G-code line the tab sends |
 | `orca_afc/moonraker.py` | The Moonraker HTTP client |
 | `orca_afc/manager.py` | Reads AFC (webhook first, Klipper objects as fallback) and runs the tab's commands |
-| `orca_afc/page.py` | The tab itself: page HTML, printer address, the worker thread |
+| `orca_afc/page.py` | The tab itself: the page HTML and its messages |
+| `orca_afc/gcode.py` | The G-code rewrite: T numbers, lane-change purges, spool PA |
+| `orca_afc/postprocess.py` | The AFC G-code step OrcaSlicer runs on exported files |
+| `orca_afc/connection.py` | Which Moonraker to talk to: the printer's settings or the plugin config |
+| `orca_afc/worker.py` | The plugin's own thread, where all printer traffic runs |
 | `orca_afc/web/` | The page (shared with the Snapmaker build's AFC page) |

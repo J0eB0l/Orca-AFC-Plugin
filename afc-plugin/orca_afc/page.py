@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import json
-import queue
-import threading
 import traceback
 import webbrowser
 from pathlib import Path
 
 import orca
 
-from . import protocol
-from .manager import AFCManager
-from .moonraker import Moonraker, base_url
+from . import manager as afc_manager
+from . import protocol, worker
+from .connection import printer_connection
+from .moonraker import Moonraker
 from .protocol import AFCError
 
 WEB = Path(__file__).resolve().parent / "web"
-
-# OrcaSlicer's connection types that are Moonraker, or usually are ("Octo/Klipper"
-# hosts are often Moonraker too; a real OctoPrint just answers 404).
-MOONRAKER_HOST_TYPES = ("moonraker", "octoprint")
 
 
 def page_html(view: str = "panel", mode: str = "") -> str:
@@ -35,61 +30,11 @@ def page_html(view: str = "panel", mode: str = "") -> str:
     return html.replace('<script src="afc.js"></script>', "<script>" + setup + "</script>\n<script>\n" + js + "</script>")
 
 
-def printer_connection(config: dict, bundle) -> tuple:
-    """(Moonraker URL, API key, hint) for the selected printer. The URL is
-    empty, and the hint says why, when there is none to use. An address in
-    the plugin's config wins over the printer's connection settings."""
-    if config.get("printer_url"):
-        return base_url(str(config["printer_url"])), str(config.get("api_key") or ""), ""
-    preset = bundle.current_printer_preset() if bundle is not None else None
-    if preset is None:
-        return "", "", "OrcaSlicer has no printer selected."
-    host_type = preset.config_value("host_type") or ""
-    host = preset.config_value("print_host") or ""
-    if host_type and host_type not in MOONRAKER_HOST_TYPES:
-        return "", "", ("This printer connects as %s. AFC runs on Klipper, so set its connection to "
-                        "Octo/Klipper with the Moonraker address." % host_type)
-    if not host:
-        return "", "", ("Set the printer's address in its connection settings (the button next to the "
-                        "printer's name), or put printer_url in the AFC plugin's config.")
-    return base_url(host), preset.config_value("printhost_apikey") or "", ""
-
-
-class Worker:
-    """One thread that runs the page's requests in order, so the network never
-    holds up OrcaSlicer's window."""
-
-    def __init__(self):
-        self._jobs = queue.Queue()
-        self._thread = None
-        self._lock = threading.Lock()
-
-    def submit(self, job) -> None:
-        with self._lock:
-            if self._thread is None or not self._thread.is_alive():
-                self._thread = threading.Thread(target=self._run, name="AFC plugin", daemon=True)
-                self._thread.start()
-        self._jobs.put(job)
-
-    def stop(self) -> None:
-        self._jobs.put(None)
-
-    def _run(self) -> None:
-        while True:
-            job = self._jobs.get()
-            if job is None:
-                return
-            try:
-                job()
-            except Exception:  # a job reports its own errors; this keeps the thread alive
-                traceback.print_exc()
-
-
 class AFCPage(orca.pages.PagesPluginCapabilityBase):
     def __init__(self):
         super().__init__()
-        self.manager = AFCManager()
-        self.worker = Worker()
+        self.manager = afc_manager.shared()
+        self.worker = worker.shared()
 
     def get_name(self):
         return "AFC"

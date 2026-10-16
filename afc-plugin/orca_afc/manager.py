@@ -98,6 +98,14 @@ class AFCManager:
             self.snapshot, self.printer = snap, client.url
         return ""
 
+    def read(self, client: Moonraker) -> Snapshot | None:
+        """A fresh read for the G-code step and the printer agent: what AFC
+        has now, or None when the printer or AFC did not answer."""
+        error = self.refresh(client)
+        with self._lock:
+            snap, source = self.snapshot, self.printer
+        return snap if not error and source == client.url and snap.present else None
+
     def _read_flow_k(self, client: Moonraker, snap: Snapshot) -> None:
         """Each spool's saved pressure advance, from Spoolman through Moonraker,
         or from AFC's own Spoolman address when Moonraker cannot ask it."""
@@ -202,3 +210,12 @@ class AFCManager:
         if state in ("printing", "paused"):
             return printing.format(state=state)
         return "" if state else unknown
+
+
+_shared = AFCManager()
+
+
+def shared() -> AFCManager:
+    """The one manager the tab, the G-code step and the printer agent share,
+    so the tab shows the latest read whoever made it."""
+    return _shared

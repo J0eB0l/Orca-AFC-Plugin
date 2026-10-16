@@ -44,6 +44,51 @@ class PagesPluginCapabilityBase(PythonPluginBase):
         return self.posted
 
 
+class SlicingPipelineCapabilityBase(PythonPluginBase):
+    pass
+
+
+class Step:
+    posSlice = "posSlice"
+    psGCodePostProcess = "psGCodePostProcess"
+
+
+class PluginResult:
+    Success = "Success"
+    Skipped = "Skipped"
+    RecoverableError = "RecoverableError"
+    FatalError = "FatalError"
+
+
+class ExecutionResult:
+    def __init__(self, status, message="", data=""):
+        self.status, self.message, self.data = status, message, data
+
+    @staticmethod
+    def success(message="", data=""):
+        return ExecutionResult(PluginResult.Success, message, data)
+
+    @staticmethod
+    def skipped(message=""):
+        return ExecutionResult(PluginResult.Skipped, message)
+
+    @staticmethod
+    def failure(status, message, data=""):
+        return ExecutionResult(status, message, data)
+
+
+class SlicingContext:
+    """What OrcaSlicer hands the post-process step: a G-code file and the slice's settings."""
+    def __init__(self, gcode_path="", step=Step.psGCodePostProcess, config=None, host="File"):
+        self.step, self.gcode_path, self.host, self.output_name = step, gcode_path, host, gcode_path
+        self.config = config or {}
+        self.print = None
+        self.object = None
+
+    def config_value(self, key):
+        return self.config.get(key)
+
+
 class base:
     def __init__(self):
         pass
@@ -72,6 +117,9 @@ orca = types.ModuleType("orca")
 orca.PythonPluginBase = PythonPluginBase
 orca.base = base
 orca.pages = types.SimpleNamespace(PagesPluginCapabilityBase=PagesPluginCapabilityBase)
+orca.slicing = types.SimpleNamespace(SlicingPipelineCapabilityBase=SlicingPipelineCapabilityBase, Step=Step)
+orca.ExecutionResult = ExecutionResult
+orca.PluginResult = PluginResult
 orca.plugins = []         # classes decorated with @orca.plugin
 orca.capabilities = []    # classes passed to orca.register_capability()
 orca.bundle = PresetBundle()

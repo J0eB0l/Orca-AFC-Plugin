@@ -60,7 +60,8 @@ class WheelTest(unittest.TestCase):
 
     def test_contents(self):
         for name in ("orca_afc/__init__.py", "orca_afc/page.py", "orca_afc/manager.py", "orca_afc/moonraker.py",
-                     "orca_afc/protocol.py", "orca_afc/web/index.html", "orca_afc/web/afc.js",
+                     "orca_afc/protocol.py", "orca_afc/gcode.py", "orca_afc/postprocess.py", "orca_afc/worker.py",
+                     "orca_afc/connection.py", "orca_afc/web/index.html", "orca_afc/web/afc.js",
                      "orca_afc/web/afc.css", "orca_afc/web/afc.svg"):
             self.assertIn(name, self.names)
         self.assertNotIn("orca_afc/web/afc-mock.js", self.names)
@@ -77,6 +78,8 @@ class WheelTest(unittest.TestCase):
                   "page = AFCPage(); html = page.get_ui()\n"
                   "assert '<style>' in html and 'orca.onMessage' in html\n"
                   "import os; assert os.path.isfile(page.get_icon())\n"
+                  "orca_afc.AFCPlugin().register_capabilities()\n"
+                  "assert [c.__name__ for c in fake_orca.orca.capabilities] == ['AFCPage', 'AFCGcode']\n"
                   "print('ok')\n") % (str(TESTS), str(target), str(TESTS.parent), str(target))
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
         self.assertEqual(result.stdout.strip(), "ok", result.stderr)

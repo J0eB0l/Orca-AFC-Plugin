@@ -9,6 +9,7 @@ import fake_orca
 from fake_moonraker import FakeMoonraker
 from orca_afc import page as afc_page
 from orca_afc.page import AFCPage, page_html, printer_connection
+from orca_afc.postprocess import AFCGcode
 from test_protocol import webhook_fixture
 
 orca = fake_orca.orca
@@ -157,12 +158,12 @@ class AFCPageTest(unittest.TestCase):
 
 
 class PluginEntryTest(unittest.TestCase):
-    def test_registers_the_tab(self):
+    def test_registers_the_tab_and_the_gcode_step(self):
         import orca_afc
         self.assertIn(orca_afc.AFCPlugin, orca.plugins)
         orca.capabilities.clear()
         orca_afc.AFCPlugin().register_capabilities()
-        self.assertEqual(orca.capabilities, [AFCPage])
+        self.assertEqual(orca.capabilities, [AFCPage, AFCGcode])
 
 
 if __name__ == "__main__":
