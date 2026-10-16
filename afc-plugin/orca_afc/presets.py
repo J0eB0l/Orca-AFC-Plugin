@@ -7,7 +7,9 @@ Creality agent: a preset of the spool's material scores 20 when its name
 holds the spool's product name, 10 when its vendor (or name) is the spool's
 vendor, and loses 5 for each word of its name the spool never mentioned. A
 spool that matches no preset by name or vendor gets the generic preset of its
-material, as OrcaSlicer's Moonraker agent does.
+material, as OrcaSlicer's Moonraker agent does. Support presets (breakaway,
+PVA) count only for a spool that names support or when nothing else is of its
+material.
 
 OrcaSlicer's presets are read on its UI thread (collect()); a preset's
 filament id is not one of its settings, so FilamentIds reads it from the
@@ -28,6 +30,9 @@ from .protocol import Lane, material_key
 # falls back to the generic preset of the tray's material.
 UNKNOWN_FILAMENT_ID = "__unknown__"
 
+# Words that make a spool support material, so support presets may fit it.
+SUPPORT_WORDS = {"support", "breakaway"}
+
 
 @dataclass
 class Candidate:
@@ -38,6 +43,7 @@ class Candidate:
     system: bool
     file: str          # the preset's JSON file
     inherits: str = ""
+    support: bool = False  # filament_is_support
 
 
 def _first(value) -> str:
@@ -63,6 +69,7 @@ def collect(bundle) -> list:
             system=bool(preset.is_system),
             file=str(preset.file or ""),
             inherits=_first(preset.config_value("inherits")),
+            support=_first(preset.config_value("filament_is_support")).split(",")[0].strip().lower() in ("1", "true"),
         ))
     return out
 
@@ -89,23 +96,35 @@ def lane_types(lane: Lane) -> list:
     return types
 
 
+def spool_words(lane: Lane) -> set:
+    """The words a preset's name may hold without losing score for them."""
+    words = {"generic"}
+    for text in (lane.vendor, lane.filament_name, lane.material, lane.sub_type):
+        words.update(name_words(text or ""))
+    return words
+
+
+def of_material(lane: Lane, candidates: list) -> list:
+    """The presets of the lane's most specific material that has any,
+    support presets left out unless the spool names support or nothing else
+    is of that material."""
+    for kind in lane_types(lane):
+        of_type = [c for c in candidates if c.type == kind]
+        if of_type:
+            plain = [c for c in of_type if not c.support]
+            return of_type if not plain or spool_words(lane) & SUPPORT_WORDS else plain
+    return []
+
+
 def rank(lane: Lane, candidates: list) -> list:
     """Presets of the lane's material its spool names, best first. Empty
     when the spool's vendor and product match no preset."""
-    types = lane_types(lane)
-    of_type = []
-    for kind in types:
-        of_type = [c for c in candidates if c.type == kind]
-        if of_type:
-            break
     vendor = (lane.vendor or "").strip().lower()
     product = (lane.filament_name or "").strip().lower()
-    spool_words = {"generic"}
-    for text in (lane.vendor, lane.filament_name, lane.material, lane.sub_type):
-        spool_words.update(name_words(text or ""))
+    words = spool_words(lane)
 
     scored = []
-    for c in of_type:
+    for c in of_material(lane, candidates):
         name = c.name.lower()
         score = 0
         if product and product in name:
@@ -114,7 +133,7 @@ def rank(lane: Lane, candidates: list) -> list:
             score += 10
         if score == 0:
             continue
-        score -= 5 * sum(1 for word in name_words(c.name) if word not in spool_words)
+        score -= 5 * sum(1 for word in name_words(c.name) if word not in words)
         scored.append((-score, not c.system, c.name, c))
     scored.sort(key=lambda item: item[:3])
     return [item[3] for item in scored]
@@ -122,12 +141,15 @@ def rank(lane: Lane, candidates: list) -> list:
 
 def generic(lane: Lane, candidates: list) -> list:
     """The presets to fall back on for the lane's material: OrcaSlicer's
-    "Generic <material>" first, then other system presets, then the user's."""
-    for kind in lane_types(lane):
-        of_type = [c for c in candidates if c.type == kind]
-        if of_type:
-            return sorted(of_type, key=lambda c: (not c.name.lower().startswith("generic "), not c.system, c.name))
-    return []
+    "Generic <material>" first, then other system presets, then the user's,
+    the plainest first in each ("Generic PLA" before "Generic PLA Silk")."""
+    words = spool_words(lane)
+
+    def key(c):
+        extra = sum(1 for word in name_words(c.name) if word not in words)
+        return not c.name.lower().startswith("generic "), not c.system, extra, c.name
+
+    return sorted(of_material(lane, candidates), key=key)
 
 
 class FilamentIds:

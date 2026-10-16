@@ -197,7 +197,10 @@ def _preset_bundle():
     return orca.bundle
 
 
-orca.host = types.SimpleNamespace(preset_bundle=_preset_bundle)
+orca.selected = None  # what host.selected_printer() answers: None, or the selected printer's dict
+
+
+orca.host = types.SimpleNamespace(preset_bundle=_preset_bundle, selected_printer=lambda: orca.selected)
 
 
 def _plugin(cls):

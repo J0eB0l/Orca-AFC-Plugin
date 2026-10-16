@@ -16,8 +16,8 @@ def lane(material="PLA", vendor="Polymaker", product="PolyLite", sub_type=""):
                 prep=True, load=True)
 
 
-def candidate(name, kind="PLA", vendor="Generic", system=True, file=""):
-    return Candidate(name=name, type=kind, vendor=vendor, system=system, file=file)
+def candidate(name, kind="PLA", vendor="Generic", system=True, file="", support=False):
+    return Candidate(name=name, type=kind, vendor=vendor, system=system, file=file, support=support)
 
 
 class RankTest(unittest.TestCase):
@@ -51,6 +51,25 @@ class RankTest(unittest.TestCase):
         self.assertTrue(ranked[0].system)
         self.assertIs(ranked[1], mine)
 
+    def test_support_presets_only_for_support_spools(self):
+        # A Snapmaker PLA spool once got Snapmaker's breakaway support preset.
+        breakaway = candidate("Snapmaker Breakaway Support For PLA @U1", support=True)
+        candidates = [breakaway, candidate("Generic PLA @U1")]
+        self.assertEqual(presets.rank(lane(vendor="Snapmaker", product=""), candidates), [])
+        self.assertEqual(self.names(presets.generic(lane(vendor="Snapmaker"), candidates)), ["Generic PLA @U1"])
+        self.assertEqual(self.names(presets.rank(lane(vendor="Snapmaker", product="Breakaway"), candidates)),
+                         ["Snapmaker Breakaway Support For PLA @U1"])
+
+    def test_support_material_keeps_its_presets(self):
+        pva = candidate("Generic PVA @U1", kind="PVA", support=True)
+        self.assertEqual(self.names(presets.generic(lane("PVA", "", ""), [pva])), ["Generic PVA @U1"])
+
+    def test_plainest_generic_first(self):
+        candidates = [candidate("Generic PLA Silk @U1"), candidate("Generic PLA High Speed @U1"),
+                      candidate("Generic PLA @U1")]
+        self.assertEqual(self.names(presets.generic(lane(vendor="Elegoo", product="Rapid"), candidates)),
+                         ["Generic PLA @U1", "Generic PLA Silk @U1", "Generic PLA High Speed @U1"])
+
     def test_name_words(self):
         self.assertEqual(presets.name_words("Generic PLA Matte @U1 0.4 nozzle"), ["generic", "pla", "matte"])
 
@@ -64,10 +83,13 @@ class CollectTest(unittest.TestCase):
             Preset({"filament_type": ["PLA"]}, name="Other printer", is_compatible=False),
             Preset({"filament_type": ["PLA"]}, name="Default Filament", is_default=True),
             Preset({"filament_type": "PETG", "filament_vendor": "Me", "inherits": "Generic PETG"}, name="My PETG"),
+            Preset({"filament_type": "PLA", "filament_is_support": "1"}, name="Breakaway"),
         ])
         found = presets.collect(bundle)
-        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits) for c in found],
-                         [("Generic PLA", "PLA", "Generic", True, ""), ("My PETG", "PETG", "Me", False, "Generic PETG")])
+        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits, c.support) for c in found],
+                         [("Generic PLA", "PLA", "Generic", True, "", False),
+                          ("My PETG", "PETG", "Me", False, "Generic PETG", False),
+                          ("Breakaway", "PLA", "", False, "", True)])
 
 
 class FilamentIdTest(unittest.TestCase):

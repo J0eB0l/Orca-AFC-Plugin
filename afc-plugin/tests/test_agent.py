@@ -193,6 +193,46 @@ class ConnectTest(Case):
         self.assertEqual(self.agent.get_filament_sync_mode(), "Subscription")
 
 
+class ClaimTest(Case):
+    """A printer OrcaSlicer met through another agent, announced so it moves to this one."""
+
+    def setUp(self):
+        super().setUp()
+        orca.bundle.printer.values.update({"print_host": "http://10.0.0.5/", "printhost_port": "7125"})
+        self.addCleanup(setattr, orca, "selected", None)
+
+    def test_announces_the_presets_printer_when_none_is_selected(self):
+        self.assertTrue(self.agent.start_discovery(True, False))
+        ssdp = self.calls.wait_for(lambda e: e[0] == "ssdp")[0][1]
+        self.assertEqual((ssdp["dev_id"], ssdp["dev_ip"], ssdp["dev_name"], ssdp["dev_type"]),
+                         ("10.0.0.5:7125", "10.0.0.5:7125", "Voron 2.4 300", "Voron2_300"))
+        self.assertEqual((ssdp["connect_type"], ssdp["bind_state"]), ("lan", "free"))
+
+    def test_leaves_a_selected_printer(self):
+        orca.selected = {"agent": "afc", "connection": "lan"}
+        self.agent.start_discovery(True, False)
+        self.assertEqual(self.calls.events, [])
+
+    def test_leaves_the_printer_it_is_connected_to(self):
+        self.connect()
+        count = len(self.calls.events)
+        self.agent.start_discovery(True, False)
+        self.assertEqual(len(self.calls.events), count)
+
+    def test_needs_a_print_host(self):
+        orca.bundle.printer.values["print_host"] = ""
+        self.agent.start_discovery(True, False)
+        self.agent.start_discovery(False, False)
+        self.assertEqual(self.calls.events, [])
+
+    def test_dev_id_from_address(self):
+        cases = {("10.0.0.5", ""): "10.0.0.5", ("http://10.0.0.5:7125/", ""): "10.0.0.5:7125",
+                 ("https://printer.local/moonraker", "443"): "printer.local:443",
+                 ("10.0.0.5:80", "7125"): "10.0.0.5:7125"}
+        for (host, port), dev_id in cases.items():
+            self.assertEqual(afc_agent.dev_id_from_address(host, port), dev_id)
+
+
 class StatusTest(Case):
     def test_trays_name_the_presets_that_fit(self):
         self.connect()

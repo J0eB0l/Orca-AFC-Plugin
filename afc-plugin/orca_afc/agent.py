@@ -122,6 +122,27 @@ def model_id(model: str, preset_file: str) -> str:
     return ""
 
 
+def dev_id_from_address(host: str, port: str) -> str:
+    """The id OrcaSlicer gives the printer at a print host, as
+    MachineObject::dev_id_from_address makes it: "http://10.0.0.5/" with
+    port 7125 is "10.0.0.5:7125"."""
+    for scheme in ("http://", "https://"):
+        if host.startswith(scheme):
+            host = host[len(scheme):]
+            break
+    host = host.split("/", 1)[0]
+    if port:
+        host = host.split(":", 1)[0] + ":" + port
+    return host
+
+
+def announcement(dev_id: str, name: str, dev_type: str) -> str:
+    """The discovery message that puts a printer in OrcaSlicer's device list."""
+    return json.dumps({
+        "dev_name": name, "dev_id": dev_id, "dev_ip": dev_id, "dev_type": dev_type, "dev_signal": "0",
+        "connect_type": "lan", "bind_state": "free", "sec_link": "secure", "ssdp_version": "v1"})
+
+
 # ------------------------------------------------------------------ messages
 
 
@@ -450,10 +471,7 @@ else:
             announce = None
             if not printer.announced:
                 printer.announced = True
-                announce = json.dumps({
-                    "dev_name": printer.name, "dev_id": printer.dev_id, "dev_ip": printer.dev_id,
-                    "dev_type": printer.model_id or printer.model, "dev_signal": "0", "connect_type": "lan",
-                    "bind_state": "free", "sec_link": "secure", "ssdp_version": "v1"})
+                announce = announcement(printer.dev_id, printer.name, printer.model_id or printer.model)
 
             def connected():
                 if self._current() is not printer:
@@ -712,7 +730,38 @@ else:
             return True
 
         def start_discovery(self, start, sending):
-            return True  # the printer is announced when it connects
+            if start:
+                self._on_main(self._claim)
+            return True
+
+        def _claim(self) -> None:
+            """Announce the printer preset's printer when OrcaSlicer selected
+            none. UI thread.
+
+            OrcaSlicer selects the preset's printer as it starts discovery, but
+            a printer it met through another agent (Moonraker, Snapmaker) stays
+            in that agent's device list, so the selection fails and filament
+            sync does nothing. Announcing the printer moves it to this agent's
+            list, where OrcaSlicer selects it then or on its next start. One
+            the other agent kept without an access code (Moonraker with no API
+            key) stays out of this agent's list all the same."""
+            ssdp = self._fn("ssdp")
+            if ssdp is None or self._current() is not None:
+                return
+            try:
+                if orca.host.selected_printer() is not None:
+                    return
+                bundle = orca.host.preset_bundle()
+                preset = bundle.current_printer_preset()
+                host = _first(preset.config_value("print_host")) if preset is not None else ""
+                port = _first(preset.config_value("printhost_port")) if host else ""
+            except Exception:  # starting up or closing
+                return
+            if not host:
+                return
+            model, model_file = printer_model(bundle)
+            dev_id = dev_id_from_address(host, port)
+            ssdp(announcement(dev_id, model or dev_id, model_id(model, model_file) or model))
 
         def bind_detect(self, dev_ip, sec_link, detect):
             printer = self._current()

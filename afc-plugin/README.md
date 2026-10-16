@@ -55,6 +55,11 @@ tab, filament sync and print dialog. To use it:
 2. In the printer settings (Advanced mode), **Basic information**, **Advanced**,
    set **Printer Agent** to **AFC (Klipper)**. The printer's connection settings
    still give its address and API key.
+3. If the printer was used before with another agent (Snapmaker, Moonraker) and
+   the Device tab shows no printer after the switch, restart OrcaSlicer once:
+   the printer moves to the AFC agent then. One that was on the Moonraker agent
+   without an API key needs a step before the switch: with the Moonraker agent
+   still selected, log out of the printer in the Device tab's printer list.
 
 Then:
 
