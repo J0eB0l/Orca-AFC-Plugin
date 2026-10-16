@@ -263,6 +263,7 @@ class StatusTest(Case):
         status = self.push()
         self.assertEqual((status["gcode_state"], status["mc_print_stage"]), ("IDLE", 0))
         self.assertEqual(status["home_flag"], afc_agent.SD_CARD_NORMAL | 1 | 2)
+        self.assertEqual(status["flag3"], afc_agent.FILAMENTS_32)  # more than 16 filaments may print
         self.assertTrue(status["sdcard"])
         # The active toolhead's nozzle.
         self.assertEqual((status["nozzle_temper"], status["nozzle_target_temper"]), (210.4, 215.0))

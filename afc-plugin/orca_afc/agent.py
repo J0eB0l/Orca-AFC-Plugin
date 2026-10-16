@@ -63,6 +63,9 @@ STAGE_CREATE, STAGE_UPLOAD, STAGE_SENDING = 0, 1, 3
 SD_CARD_NORMAL = 1 << 8
 FLOW_CALIBRATION = 1 << 15
 PA_CALIBRATION = 1 << 16
+# flag3 bit: the printer takes up to 32 filaments. Without it the print dialog
+# refuses a file with more than 16, the limit of Bambu's older firmware.
+FILAMENTS_32 = 1 << 17
 
 _STATES = {"printing": "RUNNING", "paused": "PAUSE", "complete": "FINISH", "error": "FAILED", "cancelled": "FAILED"}
 _STAGES = {"printing": 1, "paused": 2, "complete": 3, "error": 4}
@@ -197,7 +200,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict) -> dict:
         "gcode_state": _STATES.get(state, "IDLE"), "mc_print_stage": _STAGES.get(state, 0),
         # OrcaSlicer reads these as HMS codes; anything but 0 opens its error dialog.
         "mc_print_error_code": 0, "print_error": 0,
-        "home_flag": home_flag, "sdcard": True, "support_send_to_sd": True,
+        "home_flag": home_flag, "flag3": FILAMENTS_32, "sdcard": True, "support_send_to_sd": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
