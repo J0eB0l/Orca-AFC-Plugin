@@ -214,6 +214,9 @@ body input, body select { border: 1px solid var(--border-2); border-radius: 8px;
 .head .label .pill { padding: 0 6px; font-size: 10px; }
 .head .what { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .head:not(.loaded) .head-ic { color: var(--text-3); }
+.head .from { display: flex; align-items: center; gap: 4px; margin-top: 1px; color: var(--text-2); font-size: 11.5px; min-width: 0; }
+.head .from .ic { width: 16px; height: 16px; color: var(--text-2); }
+.head .from span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- units ---------- */
 .unit {

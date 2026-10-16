@@ -311,9 +311,13 @@
     let html = '<div class="section-label">Toolheads</div><div class="heads">';
     for (const [idx, lane] of [...heads.entries()].sort((a, b) => a[0] - b[0])) {
       const active = lane && lane.name === afc.current_lane;
+      // The unit the loaded lane comes from, when it has one.
+      const unit = lane && lane.unit ? unitByName(lane.unit) : null;
       html += '<div class="head' + (lane ? ' loaded' : '') + (active ? ' active' : '') + '"><span class="head-ic">' + icon('nozzle') + (lane ? spool(lane) : '') + '</span>' +
         '<div style="min-width:0"><div class="label">' + esc(headName(idx)) + (active ? '<span class="pill accent">Active</span>' : '') + '</div>' +
-        '<div class="what">' + (lane ? esc(lane.name) + ' · ' + esc(lane.material || '') : '<span class="hint">Empty</span>') + '</div></div></div>';
+        '<div class="what">' + (lane ? esc([lane.name, lane.material].filter(Boolean).join(' · ')) : '<span class="hint">Empty</span>') + '</div>' +
+        (unit ? '<div class="from" title="' + esc(prettyType(unit.type)) + '">' + icon(unitIconName(unit)) + '<span>' + esc(unit.name.replace(/_/g, ' ')) + '</span></div>' : '') +
+        '</div></div>';
     }
     return html + '</div>';
   }

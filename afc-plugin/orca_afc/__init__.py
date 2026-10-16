@@ -10,7 +10,7 @@ import orca
 from .page import AFCPage
 from .postprocess import AFCGcode
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 
 @orca.plugin
