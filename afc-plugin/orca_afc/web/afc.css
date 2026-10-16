@@ -23,6 +23,11 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 2px 6px rgba(16, 24, 40, 0.05);
   --shadow-lg: 0 16px 48px rgba(16, 24, 40, 0.18), 0 2px 8px rgba(16, 24, 40, 0.08);
   --spool-edge: rgba(0, 0, 0, 0.14);
+  --flange: #e3e6ea;
+  --flange-rim: #c3c8cf;
+  --flange-back: #cfd3d9;
+  --spool-core: #b8bec6;
+  --spool-hole: #6f767f;
   --tint: 0.13;
   color-scheme: light;
 }
@@ -52,6 +57,11 @@
   --shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.55);
   /* A black or near-black spool would vanish on the dark surface; ring it. */
   --spool-edge: rgba(255, 255, 255, 0.24);
+  --flange: #474e57;
+  --flange-rim: #343a41;
+  --flange-back: #3a4048;
+  --spool-core: #5f6670;
+  --spool-hole: #0e1012;
   --tint: 0.09;
   color-scheme: dark;
 }
@@ -182,12 +192,18 @@ body input, body select { border: 1px solid var(--border-2); border-radius: 8px;
 .spool.sm { width: 22px; height: 22px; }
 .spool.lg { width: 46px; height: 46px; box-shadow: inset 0 0 0 1px var(--spool-edge), 0 0 0 2px var(--surface); }
 
-/* A reel with a ring for what is left on it. */
-.reel {
-  width: 56px; height: 56px; border-radius: 50%; flex: none; padding: 5px;
-  display: grid; place-items: center;
-}
-.reel.none { background: none !important; }
+/* A lane's spool, drawn by reel() in afc.js. */
+.reel { width: 56px; height: 56px; flex: none; display: block; overflow: visible; }
+.reel .sp-rim { fill: var(--flange-rim); }
+.reel .sp-back { fill: var(--flange-back); }
+.reel .sp-face { fill: var(--flange); }
+.reel .sp-core { fill: var(--spool-core); }
+.reel .sp-hub { fill: var(--spool-core); stroke: rgba(0, 0, 0, 0.12); stroke-width: 0.6; }
+.reel .sp-hole { fill: var(--spool-hole); }
+.reel .sp-ring { fill: none; stroke: #000; stroke-opacity: 0.12; stroke-width: 0.5; }
+.reel .sp-edge { stroke: var(--spool-edge); stroke-width: 0.8; }
+.reel .sp-unknown { fill: var(--text-3); }
+.reel.none { opacity: 0.6; }
 
 .meter { height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; margin-top: 8px; }
 .meter > i { display: block; height: 100%; background: var(--ok); border-radius: 3px; }
@@ -273,6 +289,8 @@ body input, body select { border: 1px solid var(--border-2); border-radius: 8px;
 .lane.empty .lane-sub { color: var(--text-3); }
 .lane-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 10px; color: var(--text-3); font-size: 11.5px; }
 .lane-foot b { color: var(--text); font-weight: 600; font-size: 12.5px; }
+.lane-foot .low { color: var(--warn); font-weight: 600; }
+.lane-foot .out { color: var(--bad); font-weight: 600; }
 .lane-foot .where { display: inline-flex; align-items: center; gap: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .lane-foot .where .ic { width: 13px; height: 13px; }
 .lane-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; align-items: center; }

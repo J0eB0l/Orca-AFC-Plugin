@@ -105,12 +105,51 @@
     return Math.max(0, Math.min(100, (lane.weight / initial) * 100));
   }
 
-  // A lane's spool with a ring for what is left on it.
+  // A lane's spool, seen from the front and a little to the side, wound with what is left on it (all of it when AFC
+  // has no weight). The filament keeps its share of the spool's volume, so half the weight is not half the depth.
+  let reelSeq = 0;
   function reel(lane) {
+    const K = 0.46, CY = 28, R = 24, XF = 16, XB = 34, T = 2.2, CORE = 11.5, FULL = 22.5, HOLE = 6;
+    const id = 'reel' + (++reelSeq);
+    const n = (v) => +v.toFixed(2);
+    const ell = (x, ry, attrs) => '<ellipse cx="' + x + '" cy="' + CY + '" rx="' + n(ry * K) + '" ry="' + n(ry) + '" ' + attrs + '/>';
+    const barrel = (ry, attrs) => '<path d="M' + XF + ' ' + n(CY - ry) + 'H' + XB + 'A' + n(ry * K) + ' ' + n(ry) + ' 0 0 1 ' + XB + ' ' +
+      n(CY + ry) + 'H' + XF + 'Z" ' + attrs + '/>';
+    const loaded = !!(lane && lane.has_filament);
     const pct = remaining(lane);
-    const ring = pct < 0 ? '' : 'background: conic-gradient(var(' + (pct < 5 ? '--bad' : pct < 15 ? '--warn' : '--ok') + ') 0 ' +
-      pct.toFixed(1) + '%, var(--surface-3) 0)';
-    return '<span class="reel' + (pct < 0 ? ' none' : '') + '" style="' + ring + '">' + spool(lane, 'lg') + '</span>';
+    const ry = loaded ? Math.sqrt(CORE * CORE + (pct < 0 ? 1 : pct / 100) * (FULL * FULL - CORE * CORE)) : 0;
+    const colors = loaded ? ((lane.multi_colors || []).length > 1 ? lane.multi_colors.filter(hexOk) : [lane.color].filter(hexOk)) : [];
+    let defs = '<linearGradient id="' + id + 's" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#fff" stop-opacity=".34"/><stop offset=".32" stop-color="#fff" stop-opacity=".04"/>' +
+      '<stop offset=".62" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".38"/></linearGradient>' +
+      '<linearGradient id="' + id + 'g" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/></linearGradient>' +
+      '<pattern id="' + id + 'w" width="1.7" height="4" patternUnits="userSpaceOnUse"><rect width=".5" height="4" fill="#000" fill-opacity=".13"/></pattern>';
+    // Without a color AFC knows, the filament is hatched rather than painted a gray that could be real.
+    let fill = colors[0] || 'url(#' + id + 'u)';
+    if (!colors.length) {
+      defs += '<pattern id="' + id + 'u" width="2.6" height="2.6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+        '<rect width="2.6" height="2.6" class="sp-unknown"/><rect width="1.3" height="2.6" fill="#fff" fill-opacity=".3"/></pattern>';
+    } else if (colors.length > 1) {
+      const band = 100 / colors.length;
+      defs += '<linearGradient id="' + id + 'm" x1="' + XF + '" x2="' + (XF + 2.4 * colors.length) + '" gradientUnits="userSpaceOnUse" spreadMethod="repeat">' +
+        colors.map((c, i) => '<stop offset="' + n(i * band) + '%" stop-color="' + c + '"/><stop offset="' + n((i + 1) * band) + '%" stop-color="' + c + '"/>').join('') +
+        '</linearGradient>';
+      fill = 'url(#' + id + 'm)';
+    }
+    const paint = 'fill="' + fill + '"';
+    let svg = ell(XB + T, R, 'class="sp-rim"') + ell(XB, R, 'class="sp-back"') + barrel(CORE, 'class="sp-core"') +
+      barrel(CORE, 'fill="url(#' + id + 's)"');
+    if (loaded) svg += barrel(ry, paint) + barrel(ry, 'fill="url(#' + id + 'w)"') + barrel(ry, 'fill="url(#' + id + 's)"');
+    svg += ell(XF + T, R, 'class="sp-rim"') + ell(XF, R, 'class="sp-face"');
+    if (loaded) {
+      svg += ell(XF, ry, paint) + ell(XF, ry, 'fill="#000" fill-opacity=".14"');
+      for (let r = CORE + 2.2; r < ry - 0.8; r += 2.2) svg += ell(XF, r, 'class="sp-ring"');
+    }
+    svg += ell(XF, CORE, 'class="sp-hub"') + ell(XF, HOLE, 'class="sp-hole"') + ell(XF, R, 'fill="url(#' + id + 'g)" class="sp-edge"');
+    const what = !loaded ? 'Empty' : (colors.length ? '' : 'No color in AFC · ') + (pct < 0 ? 'no weight' : Math.round(pct) + '% left');
+    return '<svg class="reel' + (loaded ? '' : ' none') + '" viewBox="0 0 56 56" role="img" aria-label="' + esc(what) + '"><title>' + esc(what) +
+      '</title><defs>' + defs + '</defs>' + svg + '</svg>';
   }
 
   // The filament's color, to tint its lane card faintly.
@@ -346,7 +385,7 @@
       '" data-lane="' + esc(l.name) + '" style="' + tint(l) + '">' +
       '<div class="lane-top">' + reel(l) + '<div class="lane-id"><div class="lane-name"><span>' + esc(l.name) + '</span>' + maps + '</div>' +
       '<div class="lane-sub" title="' + esc(l.filament_name || '') + '">' + esc(laneSubtitle(l)) + '</div></div></div>' +
-      '<div class="lane-foot"><span>' + (pct >= 0 ? '<b>' + grams(l.weight) + '</b> · ' + Math.round(pct) + '%' : l.has_filament ? 'No weight' : '') + '</span>' + where + '</div>' +
+      '<div class="lane-foot"><span>' + (pct >= 0 ? '<b>' + grams(l.weight) + '</b> · <span class="' + (pct < 5 ? 'out' : pct < 15 ? 'low' : '') + '">' + Math.round(pct) + '%</span>' : l.has_filament ? 'No weight' : '') + '</span>' + where + '</div>' +
       (status ? '<div class="lane-meta">' + status + '</div>' : '') +
       '</div>';
   }
