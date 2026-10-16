@@ -1,6 +1,8 @@
 """Reading AFC and running the page's commands against a fake Moonraker."""
 
+import time
 import unittest
+from unittest import mock
 
 import fake_orca  # noqa: F401
 from fake_moonraker import FakeMoonraker, closed_port_url
@@ -146,7 +148,40 @@ class CommandTest(Case):
 
     def test_lane_action_idle(self):
         self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}), "")
+        self.assertTrue(self.manager.wait_lane_move(5))
         self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane1"])
+
+    def test_lane_action_does_not_wait_for_the_load(self):
+        # Moonraker answers a load only when Klipper is done; the page must not wait for it.
+        self.fake.gcode_delay = 1.0
+        started = time.monotonic()
+        self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}), "")
+        self.assertLess(time.monotonic() - started, 0.9)
+        self.assertEqual(self.manager.lane_moving(), "lane1 is loading")
+        self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane2", "action": "load"}),
+                         "lane1 is loading; wait until it is done")
+        self.assertEqual(self.manager.edit_lane(self.client, {"lane": "lane2", "changes": {"weight": 40}}),
+                         "lane1 is loading; try again when it is done")
+        # The page keeps reading AFC meanwhile.
+        self.assertEqual(self.manager.refresh(self.client), "")
+        self.assertTrue(self.manager.wait_lane_move(5))
+        self.assertEqual(self.manager.lane_moving(), "")
+        self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane1"])
+        self.assertNotIn("error", self.manager.state(self.client.url))
+
+    def test_lane_action_klipper_error_comes_once(self):
+        self.fake.gcode_error = "AFC: lane1 did not reach the toolhead"
+        self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}), "")
+        self.assertTrue(self.manager.wait_lane_move(5))
+        self.assertEqual(self.manager.state(self.client.url)["error"], "lane1: AFC: lane1 did not reach the toolhead")
+        self.assertNotIn("error", self.manager.state(self.client.url))
+
+    def test_lane_action_still_running_is_not_an_error(self):
+        self.fake.gcode_delay = 1.0
+        with mock.patch("orca_afc.manager.LANE_MOVE_TIMEOUT", 0.2):
+            self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}), "")
+            self.assertTrue(self.manager.wait_lane_move(5))
+        self.assertNotIn("error", self.manager.state(self.client.url))
 
     def test_lane_action_printing(self):
         self.fake.objects["print_stats"]["state"] = "printing"

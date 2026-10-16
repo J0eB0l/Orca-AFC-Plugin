@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,6 +16,7 @@ class FakeMoonraker:
     lane_data the lane_data namespace's value, or None for a 404
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
+    gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
     """
 
     def __init__(self):
@@ -24,6 +26,7 @@ class FakeMoonraker:
         self.spools = {}
         self.proxy = True
         self.gcode_error = ""
+        self.gcode_delay = 0.0
         self.api_key = ""
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
@@ -68,6 +71,8 @@ class FakeMoonraker:
             return 200, {"result": {"namespace": "lane_data", "key": None, "value": self.lane_data}}
         if method == "POST" and path == "/printer/gcode/script":
             self.scripts.append(body.get("script"))
+            if self.gcode_delay:
+                time.sleep(self.gcode_delay)
             if self.gcode_error:
                 return 400, {"error": {"code": 400, "message": self.gcode_error}}
             return 200, {"result": "ok"}

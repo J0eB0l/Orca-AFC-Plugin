@@ -17,6 +17,13 @@ from .protocol import AFCError, Snapshot
 # writes it after a calibration, so this mostly bounds how soon a new one shows.
 FLOW_K_MAX_AGE = 120.0
 
+# Moonraker answers a G-code script only once Klipper has run it, and a lane load
+# (a long bowden, an ACE feeding, a purge) can take minutes. A lane move waits this
+# long on its own thread; past it, Klipper is still at it and nothing is reported.
+LANE_MOVE_TIMEOUT = 900.0
+
+_ACTION_WORDS = {"load": "loading", "unload": "unloading", "eject": "ejecting"}
+
 
 def read_snapshot(client: Moonraker) -> Snapshot:
     """One AFC read: the webhook first, Klipper objects as the fallback, then
@@ -79,6 +86,8 @@ class AFCManager:
         self.snapshot = Snapshot()
         self.printer = ""       # the printer the snapshot came from
         self._flow_k = {}       # spool id -> (k, read at)
+        self._move = None       # (thread, "lane4 is loading") while a lane move runs
+        self._move_error = ""   # how the last lane move failed, until the page shows it
 
     # ------------------------------------------------------------ reading
 
@@ -136,9 +145,12 @@ class AFCManager:
         return -1.0  # counts as "no K" until it is due again
 
     def state(self, printer: str, hint: str = "", error: str = "") -> dict:
-        """What the page draws: {connected, afc, error?, hint?}."""
+        """What the page draws: {connected, afc, error?, hint?}. A lane move
+        that failed since the last state is reported here, once."""
         with self._lock:
             snap, source = self.snapshot, self.printer
+            if not error:
+                error, self._move_error = self._move_error, ""
         afc = protocol.to_json(snap)
         if not printer or source != printer:
             afc["present"] = False
@@ -156,6 +168,10 @@ class AFCManager:
         lines = [gcode] if isinstance(gcode, str) else list(gcode)
         if not lines:
             return ""
+        # Klipper runs one script at a time, so this one would wait behind the lane move.
+        moving = self.lane_moving()
+        if moving:
+            return moving + "; try again when it is done"
         try:
             client.gcode("\n".join(lines))
         except MoonrakerError as error:
@@ -167,11 +183,53 @@ class AFCManager:
         return self.send(client, gcode)
 
     def lane_action(self, client: Moonraker, params: dict) -> str:
-        gcode = protocol.build_lane_action_gcode(self.snapshot, params.get("lane", ""), params.get("action", ""))
+        """Start a lane load, unload or eject and return without waiting for
+        it: the page follows it on its next reads, and an error from Klipper
+        comes with the first state after it."""
+        lane, action = params.get("lane", ""), params.get("action", "")
+        gcode = protocol.build_lane_action_gcode(self.snapshot, lane, action)
+        moving = self.lane_moving()
+        if moving:
+            return moving + "; wait until it is done"
         # Filament moves only on an idle printer: never in the middle of a print.
         busy = self._busy(client, "The printer is {state}; lane moves wait until it is idle",
                           "Could not read the printer state, so nothing was moved")
-        return busy or self.send(client, gcode)
+        if busy:
+            return busy
+        what = "%s is %s" % (lane, _ACTION_WORDS.get(action, action))
+
+        def move():
+            try:
+                client.gcode(gcode, timeout=LANE_MOVE_TIMEOUT)
+            except PrinterUnreachable as error:
+                # A timeout only means Klipper is still at it; anything else is worth saying.
+                if "timed out" not in str(error):
+                    self._move_error = "%s: %s" % (lane, error)
+            except MoonrakerError as error:
+                self._move_error = "%s: %s" % (lane, error)
+            finally:
+                with self._lock:
+                    self._move = None
+
+        thread = threading.Thread(target=move, name="AFC lane move", daemon=True)
+        with self._lock:
+            self._move = (thread, what)
+        thread.start()
+        return ""
+
+    def lane_moving(self) -> str:
+        """"lane4 is loading" while a lane move from the page runs, else ""."""
+        with self._lock:
+            move = self._move
+        return move[1] if move is not None and move[0].is_alive() else ""
+
+    def wait_lane_move(self, timeout: float) -> bool:
+        """Wait for a running lane move to end (the tests use it). True once none runs."""
+        with self._lock:
+            move = self._move
+        if move is not None:
+            move[0].join(timeout)
+        return not self.lane_moving()
 
     def dry(self, client: Moonraker, params: dict) -> str:
         return self.send(client, protocol.build_dry_gcode(self.snapshot, params.get("unit", ""), params))

@@ -94,6 +94,7 @@ class AFCPageTest(unittest.TestCase):
         answer = self.ask("lane_action", {"lane": "lane1", "action": "load"}, afc_id=2)
         self.assertTrue(answer["ok"])
         self.assertNotIn("error", answer["data"])
+        self.assertTrue(self.page.manager.wait_lane_move(5))
         self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane1"])
 
     def test_command_error_comes_back_with_the_state(self):

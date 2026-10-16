@@ -429,6 +429,7 @@ body input, body select { border: 1px solid var(--border-2); border-radius: 8px;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.bad { background: var(--bad); }
+.toast.show.bad { pointer-events: auto; cursor: pointer; }
 
 .busy { opacity: 0.6; pointer-events: none; }
 

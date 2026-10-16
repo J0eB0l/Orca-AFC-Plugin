@@ -77,8 +77,10 @@
     $toast.textContent = text;
     $toast.className = 'toast show' + (bad ? ' bad' : '');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $toast.className = 'toast'; }, bad ? 5000 : 2600);
+    // An error stays long enough to read, and a click puts it away.
+    toastTimer = setTimeout(() => { $toast.className = 'toast'; }, bad ? 12000 : 2600);
   }
+  $toast.addEventListener('click', () => { clearTimeout(toastTimer); $toast.className = 'toast'; });
 
   function hexOk(c) { return /^#[0-9A-Fa-f]{6}$/.test(c || ''); }
 
@@ -645,7 +647,8 @@
     };
 
     const action = (name) => async () => {
-      await run(() => call('lane_action', { lane: l.name, action: name }), 'Sent to AFC');
+      // AFC runs the move on its own; the cards follow it on the next reads.
+      await run(() => call('lane_action', { lane: l.name, action: name }), { load: 'Loading ', unload: 'Unloading ', eject: 'Ejecting ' }[name] + l.name);
     };
     $('act-load').onclick = action('load');
     $('act-unload').onclick = action('unload');
