@@ -91,3 +91,4 @@ open `orca_afc/web/index.html?mock=1`; `afc-mock.js` answers with made-up lanes.
 | `orca_afc/connection.py` | Which Moonraker to talk to: the printer's settings or the plugin config |
 | `orca_afc/worker.py` | The plugin's own thread, where all printer traffic runs |
 | `orca_afc/web/` | The page (shared with the Snapmaker build's AFC page) |
+| `orca_afc/web/afc-icons.js` | Unit icons from Fluidd's AFC cards (GPL-3.0) and Material Design Icons (Apache-2.0) |

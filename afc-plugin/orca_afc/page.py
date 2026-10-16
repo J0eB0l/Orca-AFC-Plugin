@@ -19,13 +19,16 @@ WEB = Path(__file__).resolve().parent / "web"
 
 
 def page_html(view: str = "panel", mode: str = "") -> str:
-    """index.html with afc.css and afc.js put inline, since OrcaSlicer loads
-    a plugin page from a string and the page cannot fetch files next to it."""
+    """index.html with afc.css, afc-icons.js and afc.js put inline, since
+    OrcaSlicer loads a plugin page from a string and the page cannot fetch
+    files next to it."""
     html = (WEB / "index.html").read_text(encoding="utf-8")
     css = (WEB / "afc.css").read_text(encoding="utf-8")
+    icons = (WEB / "afc-icons.js").read_text(encoding="utf-8")
     js = (WEB / "afc.js").read_text(encoding="utf-8")
     setup = "window.AFC_VIEW = %s; window.AFC_MODE = %s;" % (json.dumps(view), json.dumps(mode))
     html = html.replace('<link rel="stylesheet" href="afc.css">', "<style>\n" + css + "</style>")
+    html = html.replace('<script src="afc-icons.js"></script>', "<script>\n" + icons + "</script>")
     html = html.replace('<script src="afc-mock.js"></script>\n', "")
     return html.replace('<script src="afc.js"></script>', "<script>" + setup + "</script>\n<script>\n" + js + "</script>")
 

@@ -21,6 +21,8 @@ class PageHtmlTest(unittest.TestCase):
         self.assertNotIn('href="afc.css"', html)
         self.assertNotIn('src="afc-mock.js"', html)
         self.assertNotIn('src="afc.js"', html)
+        self.assertNotIn('src="afc-icons.js"', html)
+        self.assertLess(html.index("window.AFC_ICONS"), html.index("orca.onMessage"))
         self.assertIn("<style>", html)
         self.assertIn('window.AFC_VIEW = "panel"; window.AFC_MODE = "";', html)
         self.assertIn("orca.onMessage", html)

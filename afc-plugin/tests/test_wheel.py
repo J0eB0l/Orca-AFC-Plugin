@@ -61,7 +61,7 @@ class WheelTest(unittest.TestCase):
     def test_contents(self):
         for name in ("orca_afc/__init__.py", "orca_afc/page.py", "orca_afc/manager.py", "orca_afc/moonraker.py",
                      "orca_afc/protocol.py", "orca_afc/gcode.py", "orca_afc/postprocess.py", "orca_afc/worker.py",
-                     "orca_afc/connection.py", "orca_afc/web/index.html", "orca_afc/web/afc.js",
+                     "orca_afc/connection.py", "orca_afc/web/index.html", "orca_afc/web/afc.js", "orca_afc/web/afc-icons.js",
                      "orca_afc/web/afc.css", "orca_afc/web/afc.svg"):
             self.assertIn(name, self.names)
         self.assertNotIn("orca_afc/web/afc-mock.js", self.names)
