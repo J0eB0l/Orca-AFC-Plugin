@@ -59,7 +59,10 @@ tab, filament sync and print dialog. To use it:
    the Device tab shows no printer after the switch, restart OrcaSlicer once:
    the printer moves to the AFC agent then. One that was on the Moonraker agent
    without an API key needs a step before the switch: with the Moonraker agent
-   still selected, log out of the printer in the Device tab's printer list.
+   still selected, open the Device tab's printer list (click the printer's name
+   at the top), hover over the printer and click the unlink icon at the end of
+   its row. Then switch the agent and restart OrcaSlicer: until the restart, no
+   agent can use the printer.
 
 Then:
 
