@@ -45,13 +45,33 @@ To turn on the G-code step, switch OrcaSlicer to Advanced mode, open the process
 settings, **Others**, and pick **AFC G-code** under **Slicing Pipeline Plugin**.
 It runs on **Export G-code** and on uploads to the printer (not on the preview).
 
-## Filament sync
+## Printer agent
 
-Plugins cannot change a project's filaments, so the sync is OrcaSlicer's own: set
-the printer's **Printer Agent** to Moonraker (printer settings, Basic information,
-Advanced mode) and the sync button appears next to **Filament** in the Prepare
-sidebar. It reads AFC's lane data and puts each lane in the slot of its T number
-(slot 1 is T0), so the file's T numbers are AFC's.
+The plugin is also a printer agent, **AFC (Klipper)**, for OrcaSlicer's Device
+tab, filament sync and print dialog. To use it:
+
+1. In **Preferences**, **Developer**, turn on **Use printer agents instead of
+   print hosts**.
+2. In the printer settings (Advanced mode), **Basic information**, **Advanced**,
+   set **Printer Agent** to **AFC (Klipper)**. The printer's connection settings
+   still give its address and API key.
+
+Then:
+
+- The **Device** tab shows the printer, with AFC's lanes as its AMS trays: one
+  tray per T number, four to a unit (the first unit holds T0 to T3).
+- The sync button next to **Filament** in the Prepare sidebar puts each loaded
+  lane in the slot of its T number (slot 1 is T0) with the filament preset that
+  fits its spool: the spool's own vendor and product preset when the printer has
+  one, else OrcaSlicer's generic preset of its material.
+- **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
+  lane. The agent renumbers the file's tool changes to those T numbers, adds the
+  lane-change purges and spool flow K the AFC G-code step adds, uploads the file
+  to Moonraker and starts it. On a Snapmaker U1, the dialog's bed leveling, flow
+  calibration and timelapse switches go into the file.
+
+Without the agent, OrcaSlicer's own Moonraker agent also syncs AFC's lanes by T
+number, with generic presets only.
 
 ## Printer address
 
@@ -88,7 +108,10 @@ open `orca_afc/web/index.html?mock=1`; `afc-mock.js` answers with made-up lanes.
 | `orca_afc/page.py` | The tab itself: the page HTML and its messages |
 | `orca_afc/gcode.py` | The G-code rewrite: T numbers, lane-change purges, spool PA |
 | `orca_afc/postprocess.py` | The AFC G-code step OrcaSlicer runs on exported files |
+| `orca_afc/agent.py` | The AFC printer agent: connecting, status pushes, requests and prints |
+| `orca_afc/trays.py` | AFC's lanes as OrcaSlicer's AMS trays, and the print dialog's tray choice |
+| `orca_afc/presets.py` | Which filament preset fits each lane's spool |
 | `orca_afc/connection.py` | Which Moonraker to talk to: the printer's settings or the plugin config |
-| `orca_afc/worker.py` | The plugin's own thread, where all printer traffic runs |
+| `orca_afc/worker.py` | The plugin's own threads, where all printer traffic runs |
 | `orca_afc/web/` | The page (shared with the Snapmaker build's AFC page) |
 | `orca_afc/web/afc-icons.js` | Unit icons from Fluidd's AFC cards (GPL-3.0) and Material Design Icons (Apache-2.0) |

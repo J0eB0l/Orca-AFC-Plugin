@@ -79,7 +79,7 @@ class WheelTest(unittest.TestCase):
                   "assert '<style>' in html and 'orca.onMessage' in html\n"
                   "import os; assert os.path.isfile(page.get_icon())\n"
                   "orca_afc.AFCPlugin().register_capabilities()\n"
-                  "assert [c.__name__ for c in fake_orca.orca.capabilities] == ['AFCPage', 'AFCGcode']\n"
+                  "assert [c.__name__ for c in fake_orca.orca.capabilities] == ['AFCPage', 'AFCGcode', 'AFCAgent']\n"
                   "print('ok')\n") % (str(TESTS), str(target), str(TESTS.parent), str(target))
         result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
         self.assertEqual(result.stdout.strip(), "ok", result.stderr)

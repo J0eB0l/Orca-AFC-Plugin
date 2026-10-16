@@ -98,19 +98,81 @@ class base:
 
 
 class Preset:
-    def __init__(self, values):
+    def __init__(self, values, name="", file="", is_system=False, is_visible=True, is_compatible=True,
+                 is_default=False):
         self.values = values
+        self.name, self.file = name, file
+        self.is_system, self.is_visible, self.is_compatible, self.is_default = (
+            is_system, is_visible, is_compatible, is_default)
 
     def config_value(self, key):
         return self.values.get(key)  # None for a key the preset lacks, as OrcaSlicer answers
 
 
+class PresetCollection:
+    def __init__(self, presets=()):
+        self.presets = list(presets)
+
+    def size(self):
+        return len(self.presets)
+
+    def preset(self, index):
+        return self.presets[index]
+
+    def find_preset(self, name):
+        return next((p for p in self.presets if p.name == name), None)
+
+
 class PresetBundle:
-    def __init__(self, printer=None):
+    """`printer` is the selected printer preset (a Preset, or a dict of its settings)."""
+    def __init__(self, printer=None, filaments=(), printers=()):
         self.printer = printer
+        self.filaments = PresetCollection(filaments)
+        self.printers = PresetCollection(printers)
 
     def current_printer_preset(self):
-        return None if self.printer is None else Preset(self.printer)
+        if self.printer is None or isinstance(self.printer, Preset):
+            return self.printer
+        return Preset(self.printer)
+
+
+# -- orca.printer_agent
+
+class FilamentSyncMode:
+    None_ = "None_"
+    Subscription = "Subscription"
+    Pull = "Pull"
+
+
+class AgentInfo:
+    def __init__(self, id="", name="", version="", description=""):
+        self.id, self.name, self.version, self.description = id, name, version, description
+
+
+class DetectResult:
+    def __init__(self):
+        self.result_msg = self.command = self.dev_id = self.model_id = self.dev_name = ""
+        self.version = self.bind_state = self.connect_type = ""
+
+
+class PrinterConnectionParams:
+    def __init__(self, dev_id="", host="", port="", username="", password="", use_ssl=False, ca_file=""):
+        self.dev_id, self.host, self.port, self.username = dev_id, host, port, username
+        self.password, self.use_ssl, self.ca_file = password, use_ssl, ca_file
+
+
+class PrintParams:
+    def __init__(self, **values):
+        self.dev_id = self.task_name = self.project_name = self.preset_name = self.filename = ""
+        self.config_filename = self.ams_mapping = self.ams_mapping2 = self.dst_file = ""
+        self.plate_index = 0
+        self.task_bed_leveling = self.task_flow_cali = self.task_record_timelapse = False
+        for key, value in values.items():
+            setattr(self, key, value)
+
+
+class PrinterAgentBase(PythonPluginBase):
+    pass
 
 
 orca = types.ModuleType("orca")
@@ -118,6 +180,9 @@ orca.PythonPluginBase = PythonPluginBase
 orca.base = base
 orca.pages = types.SimpleNamespace(PagesPluginCapabilityBase=PagesPluginCapabilityBase)
 orca.slicing = types.SimpleNamespace(SlicingPipelineCapabilityBase=SlicingPipelineCapabilityBase, Step=Step)
+orca.printer_agent = types.SimpleNamespace(
+    PrinterAgentBase=PrinterAgentBase, AgentInfo=AgentInfo, FilamentSyncMode=FilamentSyncMode,
+    DetectResult=DetectResult, PrinterConnectionParams=PrinterConnectionParams, PrintParams=PrintParams)
 orca.ExecutionResult = ExecutionResult
 orca.PluginResult = PluginResult
 orca.plugins = []         # classes decorated with @orca.plugin

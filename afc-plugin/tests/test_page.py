@@ -169,12 +169,13 @@ class AFCPageTest(unittest.TestCase):
 
 
 class PluginEntryTest(unittest.TestCase):
-    def test_registers_the_tab_and_the_gcode_step(self):
+    def test_registers_the_tab_the_gcode_step_and_the_agent(self):
         import orca_afc
+        from orca_afc.agent import AFCAgent
         self.assertIn(orca_afc.AFCPlugin, orca.plugins)
         orca.capabilities.clear()
         orca_afc.AFCPlugin().register_capabilities()
-        self.assertEqual(orca.capabilities, [AFCPage, AFCGcode])
+        self.assertEqual(orca.capabilities, [AFCPage, AFCGcode, AFCAgent])
 
 
 if __name__ == "__main__":

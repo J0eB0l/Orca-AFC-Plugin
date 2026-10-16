@@ -12,6 +12,13 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+
+_CHUNK = 64 * 1024
+
+
+class _Canceled(Exception):
+    pass
 
 
 class MoonrakerError(Exception):
@@ -98,6 +105,46 @@ class Moonraker:
             return str(status["status"]["print_stats"]["state"] or "")
         except (KeyError, TypeError):
             return ""
+
+    def upload(self, name: str, data: bytes, progress=None, timeout: float = 120.0):
+        """Upload a G-code file to Moonraker's gcodes root as `name`.
+        `progress(sent, total)` is called as the body goes out; when it
+        returns False the upload stops with MoonrakerError("canceled")."""
+        boundary = "----AFCPlugin" + uuid.uuid4().hex
+        head = ('--%s\r\nContent-Disposition: form-data; name="root"\r\n\r\ngcodes\r\n'
+                '--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
+                "Content-Type: application/octet-stream\r\n\r\n" % (boundary, boundary, name.replace('"', "_"))).encode("utf-8")
+        tail = ("\r\n--%s--\r\n" % boundary).encode("utf-8")
+        total = len(head) + len(data) + len(tail)
+
+        def body():
+            sent = 0
+            for part in [head] + [data[i:i + _CHUNK] for i in range(0, len(data), _CHUNK)] + [tail]:
+                if progress is not None and progress(sent, total) is False:
+                    raise _Canceled()
+                yield part
+                sent += len(part)
+            if progress is not None:
+                progress(total, total)
+
+        headers = {"Accept": "application/json", "Content-Type": "multipart/form-data; boundary=" + boundary,
+                   "Content-Length": str(total)}
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
+        request = urllib.request.Request(self.url + "/server/files/upload", data=body(), headers=headers, method="POST")
+        try:
+            with self._open(request, timeout=timeout, context=_ssl_context(self.url)) as answer:
+                answer.read()
+        except _Canceled:
+            raise MoonrakerError("canceled") from None
+        except urllib.error.HTTPError as error:
+            raise MoonrakerError(_http_error_message(error)) from None
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, _Canceled):
+                raise MoonrakerError("canceled") from None
+            raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error.reason)) from None
+        except (OSError, ValueError) as error:
+            raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error)) from None
 
     def spoolman_spool(self, spool_id: int, timeout: float = 4.0):
         """The spool record through Moonraker's Spoolman proxy."""

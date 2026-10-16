@@ -48,6 +48,7 @@ _START_TOOL = re.compile(r"(?<=[ \t])(TOOL|INITIAL_TOOL)=(\d+)", re.I)
 _START_TEMP = re.compile(r"(?<=[ \t])T(\d+)_TEMP=", re.I)
 _PA_LINE = re.compile(r"^[ \t]*SET_PRESSURE_ADVANCE(?=[ \t;\r\n]|$)", re.I)
 _PA_VALUE = re.compile(r"(?<=[ \t])ADVANCE=[^ \t;\r\n]*", re.I)
+PA_NOTE = "; AFC spool flow K"
 
 
 # ------------------------------------------------------------------ the file's settings
@@ -254,7 +255,7 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 line = "%sT%d%s%s%s" % (indent, plan.tools.get(number, number), purge_text, rest, newline)
                 out.append(line)
                 if number in plan.flow_k and not settings.adaptive(number):
-                    out.append("SET_PRESSURE_ADVANCE ADVANCE=%s ; AFC spool flow K\n" % _format(plan.flow_k[number], 4))
+                    out.append("SET_PRESSURE_ADVANCE ADVANCE=%s %s\n" % (_format(plan.flow_k[number], 4), PA_NOTE))
                     result.pressure_advance += 1
                 continue
 
@@ -264,6 +265,8 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
         if plan.tools and first in "PpSs" and _START_LINE.match(line):
             out.append(_renumber_start_line(line, plan.tools))
             continue
+        if first in "Ss" and PA_NOTE in line and _PA_LINE.match(line):
+            continue  # one this step wrote on an earlier pass; the T line above gets a new one
         if first in "Ss" and active in plan.flow_k and not settings.adaptive(active) and _PA_LINE.match(line):
             body = line.split(";", 1)[0]
             if "EXTRUDER=" not in body.upper():
@@ -272,3 +275,21 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
 
     result.text = "".join(out)
     return result
+
+
+def insert_after_header(text: str, line: str) -> str:
+    """`line` after the comments and blank lines a file opens with (its header
+    block and thumbnails), before its first command."""
+    pos = 0
+    while pos < len(text):
+        end = text.find("\n", pos)
+        end = len(text) if end < 0 else end + 1
+        stripped = text[pos:end].strip()
+        if stripped and not stripped.startswith(";"):
+            break
+        pos = end
+    newline = "\r\n" if "\r\n" in text[:pos or len(text)] else "\n"
+    head = text[:pos]
+    if head and not head.endswith("\n"):
+        head += newline
+    return head + line + newline + text[pos:]

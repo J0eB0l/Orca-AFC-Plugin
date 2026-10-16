@@ -17,6 +17,10 @@ class FakeMoonraker:
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
+    info      the /printer/info result
+    uploads   files uploaded to the gcodes root, by name
+    started   files /printer/print/start was asked to print
+    offline   True to answer everything 503, as Moonraker does while Klipper restarts
     """
 
     def __init__(self):
@@ -28,6 +32,10 @@ class FakeMoonraker:
         self.gcode_error = ""
         self.gcode_delay = 0.0
         self.api_key = ""
+        self.info = {"state": "ready", "hostname": "voron", "software_version": "v0.12.0-500"}
+        self.uploads = {}
+        self.started = []
+        self.offline = False
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self))
@@ -48,6 +56,8 @@ class FakeMoonraker:
     # -- answers
 
     def answer(self, method, path, query, body, headers):
+        if self.offline:
+            return 503, {"error": {"code": 503, "message": "Klippy Disconnected"}}
         if self.api_key and headers.get("X-Api-Key") != self.api_key:
             return 401, {"error": {"code": 401, "message": "Unauthorized"}}
         if method == "GET" and path == "/printer/afc/status":
@@ -76,6 +86,17 @@ class FakeMoonraker:
             if self.gcode_error:
                 return 400, {"error": {"code": 400, "message": self.gcode_error}}
             return 200, {"result": "ok"}
+        if method == "GET" and path == "/printer/info":
+            return 200, {"result": self.info}
+        if method == "POST" and path == "/server/files/upload":
+            self.uploads[body["filename"]] = body["data"]
+            return 201, {"result": {"item": {"path": body["filename"], "root": body.get("root")},
+                                    "action": "create_file"}}
+        if method == "POST" and path == "/printer/print/start":
+            self.started.append(body.get("filename"))
+            return 200, {"result": "ok"}
+        if method == "POST" and path in ("/printer/print/pause", "/printer/print/resume", "/printer/print/cancel"):
+            return 200, {"result": "ok"}
         if method == "POST" and path == "/server/spoolman/proxy":
             if not self.proxy:
                 return 404, {"error": {"code": 404, "message": "Spoolman not configured"}}
@@ -94,16 +115,24 @@ def _handler(fake):
         def _serve(self, method):
             parts = urllib.parse.urlsplit(self.path)
             length = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            raw = self.rfile.read(length) if length else b""
+            kind = self.headers.get("Content-Type") or ""
+            if kind.startswith("multipart/form-data"):
+                body = _form(raw, kind.split("boundary=", 1)[1])
+            else:
+                body = json.loads(raw.decode("utf-8")) if raw else {}
             query = dict(urllib.parse.parse_qsl(parts.query))
             fake.requests.append((method, parts.path, body))
             code, answer = fake.answer(method, parts.path, query, body, self.headers)
             raw = json.dumps(answer).encode("utf-8")
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
+            try:
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # the client gave up waiting, as a timed-out call does
 
         def do_GET(self):
             self._serve("GET")
@@ -115,6 +144,24 @@ def _handler(fake):
             pass
 
     return Handler
+
+
+def _form(raw: bytes, boundary: str) -> dict:
+    """A multipart upload's fields; the file's bytes go in "data", its name in "filename"."""
+    out = {}
+    for part in raw.split(b"--" + boundary.encode())[1:]:
+        if part.startswith(b"--"):
+            break
+        head, _, value = part[2:].partition(b"\r\n\r\n")
+        value = value[:-2] if value.endswith(b"\r\n") else value
+        disposition = head.decode("utf-8").split("\r\n")[0]
+        name = disposition.split('name="', 1)[1].split('"', 1)[0]
+        if 'filename="' in disposition:
+            out["filename"] = disposition.split('filename="', 1)[1].split('"', 1)[0]
+            out["data"] = value
+        else:
+            out[name] = value.decode("utf-8")
+    return out
 
 
 def closed_port_url():

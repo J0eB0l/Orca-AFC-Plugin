@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import traceback
 
 
@@ -20,13 +21,16 @@ class WorkerTimeout(Exception):
 
 class Worker:
     """One thread that runs jobs in order, so the network never holds up
-    OrcaSlicer's window. It starts on the first job and again after stop()."""
+    OrcaSlicer's window. It starts on the first job and again after stop().
+    With `tick`, it also calls tick() whenever it has been idle `every` seconds."""
 
-    def __init__(self, name: str = "AFC plugin"):
+    def __init__(self, name: str = "AFC plugin", tick=None, every: float = 5.0):
         self._name = name
         self._jobs = queue.Queue()
         self._thread = None
         self._lock = threading.Lock()
+        self._tick = tick
+        self._every = every
 
     def submit(self, job) -> None:
         with self._lock:
@@ -71,10 +75,13 @@ class Worker:
             self._thread = None
             self._jobs = queue.Queue()
 
-    @staticmethod
-    def _run(jobs) -> None:
+    def _run(self, jobs) -> None:
+        due = time.monotonic() + self._every
         while True:
-            job = jobs.get()
+            try:
+                job = jobs.get(timeout=max(0.0, due - time.monotonic()) if self._tick else None)
+            except queue.Empty:
+                job, due = self._tick, time.monotonic() + self._every
             if job is None:
                 return
             try:

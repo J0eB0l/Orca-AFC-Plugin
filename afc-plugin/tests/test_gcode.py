@@ -148,6 +148,14 @@ class PressureAdvanceTest(unittest.TestCase):
         self.assertEqual(lines[6], "SET_PRESSURE_ADVANCE ADVANCE=0.03 EXTRUDER=extruder1")  # another extruder's
         self.assertEqual(result.pressure_advance, 1)
 
+    def test_a_second_pass_keeps_one_spool_k(self):
+        # The agent rewrites files the AFC G-code step may already have rewritten.
+        text = "T1\nG1 X1 E1\n" + config_block()
+        once = g.transform(text, g.Plan(flow_k={1: 0.0223})).text
+        twice = g.transform(once, g.Plan(flow_k={1: 0.025})).text
+        self.assertEqual(twice.splitlines()[:3], ["T1", "SET_PRESSURE_ADVANCE ADVANCE=0.025 ; AFC spool flow K",
+                                                  "G1 X1 E1"])
+
     def test_adaptive_pressure_advance_stays(self):
         body = "T1\nSET_PRESSURE_ADVANCE ADVANCE=0.04\n"
         out = g.transform(body + config_block(adaptive="0,1,0"), g.Plan(flow_k={1: 0.02})).text
@@ -178,6 +186,18 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(g.plan_for(None, 2, None, one_nozzle).toolheads, {0: 0, 1: 0})
         self.assertEqual(g.plan_for(None, 2, None, g.FileSettings(nozzles=2)).toolheads, {})
         self.assertEqual(g.plan_for(Snapshot(), 2, None, one_nozzle).toolheads, {0: 0, 1: 0})
+
+
+
+class HeaderTest(unittest.TestCase):
+    def test_after_the_header_and_thumbnails(self):
+        text = "; HEADER_BLOCK_START\n; x\n; HEADER_BLOCK_END\n\n; THUMBNAIL_BLOCK_START\n; THUMBNAIL_BLOCK_END\nG28\n"
+        out = g.insert_after_header(text, "M117 hi")
+        self.assertEqual(out.splitlines()[6:8], ["M117 hi", "G28"])
+
+    def test_windows_newlines_and_comment_only_files(self):
+        self.assertEqual(g.insert_after_header("; a\r\nG28\r\n", "M1"), "; a\r\nM1\r\nG28\r\n")
+        self.assertEqual(g.insert_after_header("; only", "M1"), "; only\nM1\n")
 
 
 if __name__ == "__main__":
