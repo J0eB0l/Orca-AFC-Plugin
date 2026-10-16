@@ -138,6 +138,14 @@ class AFCPageTest(unittest.TestCase):
         self.assertEqual([c.args[0] for c in browser.call_args_list],
                          ["http://spoolman:7912/spool/show/12", "http://spoolman:7912/spool"])
 
+    def test_spoolman_on_the_printer(self):
+        # AFC reports Spoolman as the printer sees it; from this computer that is the printer's address.
+        self.fake.webhook["status:"]["AFC"]["system"]["spoolman"] = "http://localhost:7912"
+        self.ask("get_state")
+        with mock.patch.object(afc_page.webbrowser, "open") as browser:
+            self.assertTrue(self.ask("open_spoolman", {"spool_id": 12})["ok"])
+        self.assertEqual(browser.call_args.args[0], "http://127.0.0.1:7912/spool/show/12")
+
     def test_answers_in_order(self):
         for i in range(5):
             self.page.on_message({"afc_id": i, "cmd": "get_state", "params": {"refresh": i == 0}})

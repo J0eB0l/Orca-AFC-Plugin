@@ -303,6 +303,14 @@ class GcodeTest(unittest.TestCase):
         self.assertEqual(p.spoolman_page("http://s:7912/", 12), "http://s:7912/spool/show/12")
         self.assertEqual(p.spoolman_page("http://s:7912", 0), "http://s:7912/spool")
 
+    def test_spoolman_for_printer(self):
+        self.assertEqual(p.spoolman_for_printer("http://localhost:7912", "http://192.168.1.20:7125"), "http://192.168.1.20:7912")
+        self.assertEqual(p.spoolman_for_printer("http://127.0.0.1:7912/", "https://voron.local"), "http://voron.local:7912/")
+        self.assertEqual(p.spoolman_for_printer("http://[::1]:7912", "http://[fd00::5]:7125"), "http://[fd00::5]:7912")
+        self.assertEqual(p.spoolman_for_printer("http://spoolman:7912", "http://192.168.1.20"), "http://spoolman:7912")
+        self.assertEqual(p.spoolman_for_printer("http://localhost:7912", ""), "http://localhost:7912")
+        self.assertEqual(p.spoolman_for_printer("", "http://192.168.1.20"), "")
+
 
 class DryerTest(unittest.TestCase):
     def test_read_from_unit_objects(self):

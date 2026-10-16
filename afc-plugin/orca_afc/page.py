@@ -85,7 +85,7 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
             error = manager.refresh(client) if client and params.get("refresh", True) else ""
             return manager.state(printer, hint, error)
         if cmd == "open_spoolman":
-            url = manager.snapshot.spoolman_url
+            url = protocol.spoolman_for_printer(manager.snapshot.spoolman_url, printer)
             if not url:
                 raise AFCError("AFC did not report a Spoolman address")
             spool = params.get("spool_id")

@@ -115,7 +115,8 @@ class AFCManager:
                 continue
             known = self._flow_k.get(lane.spool_id)
             if known is None or now - known[1] >= FLOW_K_MAX_AGE:
-                known = (self._spool_flow_k(client, lane.spool_id, snap.spoolman_url), now)
+                spoolman = protocol.spoolman_for_printer(snap.spoolman_url, client.url)
+                known = (self._spool_flow_k(client, lane.spool_id, spoolman), now)
                 self._flow_k[lane.spool_id] = known
             lane.flow_k = known[0]
 

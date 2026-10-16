@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 
 # ------------------------------------------------------------------ model
@@ -848,6 +849,27 @@ def u1_file_print_options_gcode(options: U1PrintOptions) -> str:
         return "1" if on else "0"
     return "SET_PRINT_PREFERENCES BED_LEVEL=%s FLOW_CALIBRATE=%s TIME_LAPSE_CAMERA=%s FORCE=1" % (
         flag(options.bed_level), flag(options.flow_calibrate), flag(options.time_lapse))
+
+
+def spoolman_for_printer(spoolman_url: str, printer_url: str) -> str:
+    """Spoolman's address as this computer reaches it. AFC reports it as the
+    printer sees it, so a Spoolman on the printer itself ("localhost",
+    127.0.0.1) is at the printer's address, on Spoolman's own port."""
+    parts = urllib.parse.urlsplit(spoolman_url)
+    host = (parts.hostname or "").lower()
+    if host not in ("localhost", "0.0.0.0", "::1", "::") and not host.startswith("127."):
+        return spoolman_url
+    printer_host = urllib.parse.urlsplit(printer_url).hostname if printer_url else ""
+    if not printer_host:
+        return spoolman_url
+    netloc = "[%s]" % printer_host if ":" in printer_host else printer_host
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port:
+        netloc += ":%d" % port
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 def spoolman_page(spoolman_url: str, spool_id: int) -> str:
