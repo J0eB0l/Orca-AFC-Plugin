@@ -71,7 +71,9 @@ Then:
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with the filament preset that
   fits its spool: the spool's own vendor and product preset when the printer has
-  one, else OrcaSlicer's generic preset of its material.
+  one, else OrcaSlicer's generic preset of its material. OrcaSlicer's sync only
+  picks system presets and user presets that inherit from nothing, so a user
+  preset made from a system preset is synced as that system preset.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges and spool flow K the AFC G-code step adds, uploads the file
@@ -119,6 +121,7 @@ open `orca_afc/web/index.html?mock=1`; `afc-mock.js` answers with made-up lanes.
 | `orca_afc/agent.py` | The AFC printer agent: connecting, status pushes, requests and prints |
 | `orca_afc/trays.py` | AFC's lanes as OrcaSlicer's AMS trays, and the print dialog's tray choice |
 | `orca_afc/presets.py` | Which filament preset fits each lane's spool |
+| `orca_afc/opc.py` | Reads the filament ids out of OrcaSlicer's packed vendor profiles (`system/<vendor>.opc`) |
 | `orca_afc/connection.py` | Which Moonraker to talk to: the printer's settings or the plugin config |
 | `orca_afc/worker.py` | The plugin's own threads, where all printer traffic runs |
 | `orca_afc/web/` | The page (shared with the Snapmaker build's AFC page) |

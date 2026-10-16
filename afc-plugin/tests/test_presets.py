@@ -78,18 +78,38 @@ class CollectTest(unittest.TestCase):
     def test_visible_compatible_filaments(self):
         Preset = fake_orca.Preset
         bundle = fake_orca.PresetBundle(filaments=[
-            Preset({"filament_type": ["pla"], "filament_vendor": ["Generic"]}, name="Generic PLA", is_system=True),
+            Preset({"filament_type": ["pla"], "filament_vendor": ["Generic"]}, name="Generic PLA", file="pla.json",
+                   is_system=True),
+            Preset({"filament_type": ["PETG"]}, name="Generic PETG", file="petg.json", is_system=True, is_visible=False),
             Preset({"filament_type": ["PLA"]}, name="Hidden", is_visible=False),
             Preset({"filament_type": ["PLA"]}, name="Other printer", is_compatible=False),
             Preset({"filament_type": ["PLA"]}, name="Default Filament", is_default=True),
-            Preset({"filament_type": "PETG", "filament_vendor": "Me", "inherits": "Generic PETG"}, name="My PETG"),
-            Preset({"filament_type": "PLA", "filament_is_support": "1"}, name="Breakaway"),
+            Preset({"filament_type": "PETG", "filament_vendor": "Me", "inherits": "Generic PETG"}, name="My PETG",
+                   file="mine.json"),
+            Preset({"filament_type": "PLA", "filament_is_support": "1"}, name="Breakaway", file="breakaway.json"),
         ])
         found = presets.collect(bundle)
-        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits, c.support) for c in found],
-                         [("Generic PLA", "PLA", "Generic", True, "", False),
-                          ("My PETG", "PETG", "Me", False, "Generic PETG", False),
-                          ("Breakaway", "PLA", "", False, "", True)])
+        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits, c.support, c.base, c.file) for c in found],
+                         [("Generic PLA", "PLA", "Generic", True, "", False, "Generic PLA", "pla.json"),
+                          ("My PETG", "PETG", "Me", False, "Generic PETG", False, "Generic PETG", "petg.json"),
+                          ("Breakaway", "PLA", "", False, "", True, "Breakaway", "breakaway.json")])
+
+    def test_user_presets_stand_for_their_system_preset(self):
+        Preset = fake_orca.Preset
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA"}, name="Bambu PLA Basic @BBL X1C", is_system=True, is_visible=False,
+                   is_compatible=False),
+            Preset({"filament_type": "PLA", "inherits": "Bambu PLA Basic @BBL X1C"}, name="My Bambu PLA"),
+            Preset({"filament_type": "PLA", "inherits": "Gone"}, name="Orphan"),
+            Preset({"filament_type": "PLA", "inherits": "My Generic PLA"}, name="My PLA #13", file="13.json"),
+            Preset({"filament_type": "PLA", "inherits": "Generic PLA @System"}, name="My Generic PLA",
+                   file="mine.json", is_visible=False),
+            Preset({"filament_type": "PLA"}, name="Generic PLA @System", file="generic.json", is_system=True,
+                   is_visible=False),
+        ])
+        # The sync never picks a preset whose system preset does not fit the printer.
+        self.assertEqual([(c.name, c.base, c.file) for c in presets.collect(bundle)],
+                         [("My PLA #13", "Generic PLA @System", "generic.json")])
 
 
 class FilamentIdTest(unittest.TestCase):
@@ -110,14 +130,26 @@ class FilamentIdTest(unittest.TestCase):
                    {"filament_id": "GFL01"})
         u1 = self.write(os.path.join(self.system, "Snapmaker", "filament", "Polymaker PolyLite PLA @U1.json"),
                         {"inherits": "Polymaker PolyLite PLA @base"})
-        mine = self.write(os.path.join(self.root, "user", "1234", "filament", "My PolyLite.json"),
-                          {"inherits": "Polymaker PolyLite PLA @U1"})
         ids = FilamentIds()
         system = candidate("Polymaker PolyLite PLA @U1", file=u1)
         ids.learn([system])
         self.assertEqual(ids.of(system), "GFL01")
-        # A user preset sits outside the system folder; its parent is found there all the same.
-        self.assertEqual(ids.of(candidate("My PolyLite", system=False, file=mine)), "GFL01")
+
+    def test_a_user_presets_own_id_is_stale(self):
+        # Joe's user presets still held ids from older OrcaSlicer versions (OGFL99), which 2.5 ignores.
+        generic = self.write(os.path.join(self.system, "OrcaFilamentLibrary", "filament", "Generic PLA @System.json"),
+                             {"filament_id": "OFDSrzZ8"})
+        mine = self.write(os.path.join(self.root, "user", "1", "filament", "Inland PLA.json"),
+                          {"inherits": "Generic PLA @System", "filament_id": "OGFL99"})
+        root = self.write(os.path.join(self.root, "user", "1", "filament", "Spool 7.json"), {"filament_id": "P5ba6812"})
+        Preset = fake_orca.Preset
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA"}, name="Generic PLA @System", file=generic, is_system=True, is_visible=False),
+            Preset({"filament_type": "PLA", "inherits": "Generic PLA @System"}, name="Inland PLA", file=mine),
+            Preset({"filament_type": "PLA"}, name="Spool 7", file=root),
+        ])
+        ids = FilamentIds()
+        self.assertEqual([ids.of(c) for c in presets.collect(bundle)], ["OFDSrzZ8", "P5ba6812"])
 
     def test_loops_and_missing_files(self):
         a = self.write(os.path.join(self.system, "V", "filament", "a.json"), {"inherits": "b"})

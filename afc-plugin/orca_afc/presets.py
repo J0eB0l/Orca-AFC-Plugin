@@ -11,10 +11,16 @@ material, as OrcaSlicer's Moonraker agent does. Support presets (breakaway,
 PVA) count only for a spool that names support or when nothing else is of its
 material.
 
+The sync only picks a preset that is its own base: a system preset, or a
+user preset that inherits nothing. A user preset that inherits stands for the
+system preset it comes from and has that preset's filament id (an id still in
+its own file is stale), so it only counts when that preset fits the printer.
+
 OrcaSlicer's presets are read on its UI thread (collect()); a preset's
-filament id is not one of its settings, so FilamentIds reads it from the
-preset's file on the plugin's thread, following "inherits" to the preset that
-sets it.
+filament id is not one of its settings, so FilamentIds reads it on the
+plugin's thread: from the preset's file, following "inherits" to the preset
+that sets it, or, for a system preset OrcaSlicer 2.5 keeps packed
+(system/<vendor>.opc), from that file.
 """
 
 from __future__ import annotations
@@ -24,11 +30,15 @@ import os
 import re
 from dataclasses import dataclass
 
+from . import opc
 from .protocol import Lane, material_key
 
 # What OrcaSlicer's sync reads as "a filament it does not know": it then
 # falls back to the generic preset of the tray's material.
 UNKNOWN_FILAMENT_ID = "__unknown__"
+
+# The vendor every other vendor's filament presets may inherit from.
+LIBRARY = "OrcaFilamentLibrary"
 
 # Words that make a spool support material, so support presets may fit it.
 SUPPORT_WORDS = {"support", "breakaway"}
@@ -41,9 +51,10 @@ class Candidate:
     type: str          # filament_type, upper case
     vendor: str        # filament_vendor
     system: bool
-    file: str          # the preset's JSON file
+    file: str          # the file OrcaSlicer names for the preset the sync matches for it
     inherits: str = ""
     support: bool = False  # filament_is_support
+    base: str = ""     # that preset's name: this one's, or the system preset it comes from
 
 
 def _first(value) -> str:
@@ -53,23 +64,43 @@ def _first(value) -> str:
     return "" if value is None else str(value)
 
 
+def _base(filaments, preset):
+    """The preset the sync matches for `preset`, as PresetCollection::get_preset_base
+    finds it: itself when it is a system preset or inherits nothing, else the
+    one it inherits from, all the way up. None when a parent is missing."""
+    seen = set()
+    while preset is not None and not preset.is_system:
+        parent = _first(preset.config_value("inherits"))
+        if not parent:
+            return preset
+        if preset.name in seen:
+            return None
+        seen.add(preset.name)
+        preset = filaments.find_preset(parent)
+    return preset
+
+
 def collect(bundle) -> list:
-    """The visible filament presets compatible with the selected printer.
-    Runs on OrcaSlicer's UI thread."""
+    """The visible filament presets compatible with the selected printer that
+    the sync can pick. Runs on OrcaSlicer's UI thread."""
     out = []
     filaments = bundle.filaments
     for index in range(filaments.size()):
         preset = filaments.preset(index)
         if preset is None or not preset.is_visible or not preset.is_compatible or preset.is_default:
             continue
+        base = _base(filaments, preset)
+        if base is None or not base.is_compatible:
+            continue
         out.append(Candidate(
             name=str(preset.name),
             type=_first(preset.config_value("filament_type")).upper(),
             vendor=_first(preset.config_value("filament_vendor")),
             system=bool(preset.is_system),
-            file=str(preset.file or ""),
+            file=str(base.file or ""),
             inherits=_first(preset.config_value("inherits")),
             support=_first(preset.config_value("filament_is_support")).split(",")[0].strip().lower() in ("1", "true"),
+            base=str(base.name),
         ))
     return out
 
@@ -161,6 +192,7 @@ class FilamentIds:
         self._names = {}     # file name -> path, under the profile folders indexed so far
         self._roots = set()  # profile folders indexed
         self._system = ""    # OrcaSlicer's system profile folder, once a system preset showed it
+        self._packs = {}     # .opc file -> {preset name: opc.Entry}
 
     def learn(self, candidates: list) -> None:
         """Note where the system presets live: a user preset's parent is one."""
@@ -168,9 +200,42 @@ class FilamentIds:
             self._system = next((r for r in (_profiles_root(c.file) for c in candidates if c.system) if r), "")
 
     def of(self, candidate: Candidate) -> str:
-        if candidate.file not in self._ids:
-            self._ids[candidate.file] = self._read(candidate.file)
-        return self._ids[candidate.file]
+        path = candidate.file
+        if path not in self._ids:
+            if os.path.isfile(path):
+                self._ids[path] = self._read(path)
+            else:
+                self._ids[path] = self._packed(path, candidate.base or candidate.name)
+        return self._ids[path]
+
+    def _packed(self, path: str, name: str) -> str:
+        """A system preset's id from its vendor's .opc: the path OrcaSlicer
+        gives it is system/<vendor>/<sub path>, which no longer exists."""
+        root = _profiles_root(path)
+        if not root or not name:
+            return ""
+        vendor = os.path.relpath(path, root).split(os.sep)[0]
+        return self._packed_id(root, vendor, name, set())
+
+    def _packed_id(self, root: str, vendor: str, name: str, seen: set) -> str:
+        """As OrcaSlicer resolves it: the preset's own id, else its parent's,
+        looked up in its own vendor first, then in the filament library."""
+        entries = self._pack(root, vendor)
+        entry = entries.get(name)
+        if entry is None or (vendor, name) in seen:
+            return ""
+        seen.add((vendor, name))
+        if entry.filament_id or not entry.inherits:
+            return entry.filament_id
+        parent_vendor = vendor if entry.inherits in entries else LIBRARY
+        return self._packed_id(root, parent_vendor, entry.inherits, seen)
+
+    def _pack(self, root: str, vendor: str) -> dict:
+        path = os.path.join(root, vendor + ".opc")
+        if path not in self._packs:
+            packed = opc.read(path)
+            self._packs[path] = {e.name: e for e in packed.filaments} if packed is not None else {}
+        return self._packs[path]
 
     def _read(self, path: str) -> str:
         seen = set()

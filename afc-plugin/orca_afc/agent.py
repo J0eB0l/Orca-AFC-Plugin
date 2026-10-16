@@ -448,6 +448,10 @@ else:
                 self._printer = printer
             if bundle is not None:
                 self._read_presets(bundle)
+            with self._lock:
+                # Read again on the first poll: OrcaSlicer may connect before it has
+                # marked which presets fit a printer it is switching to.
+                self._presets_due = 0.0
             # OrcaSlicer lets a plugin start threads on its UI thread only, so both start here.
             self._gcode.submit(lambda: None)
             self._worker.submit(lambda: self._connect(printer))
