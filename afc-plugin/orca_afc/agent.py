@@ -77,8 +77,9 @@ def _first(value) -> str:
 
 
 def printer_model(bundle) -> tuple:
-    """(printer_model, the file of the system preset the printer preset comes
-    from), read on OrcaSlicer's UI thread."""
+    """(printer_model, the file of a system printer preset: the one the
+    printer preset comes from, else any, which shows where the vendors'
+    profiles are), read on OrcaSlicer's UI thread."""
     preset = bundle.current_printer_preset() if bundle is not None else None
     if preset is None:
         return "", ""
@@ -88,7 +89,14 @@ def printer_model(bundle) -> tuple:
         seen.add(preset.name)
         parent = _first(preset.config_value("inherits"))
         preset = bundle.printers.find_preset(parent) if parent else None
-    return model, str(preset.file or "") if preset is not None else ""
+    if preset is not None and preset.file:
+        return model, str(preset.file)
+    printers = bundle.printers
+    for index in range(printers.size()):
+        other = printers.preset(index)
+        if other is not None and other.is_system and other.file:
+            return model, str(other.file)
+    return model, ""
 
 
 def _https(bundle) -> bool:
@@ -102,23 +110,31 @@ def _https(bundle) -> bool:
 
 def model_id(model: str, preset_file: str) -> str:
     """The printer model's model_id, which OrcaSlicer matches printers and
-    their presets by. The vendor's profile names each model's file
-    (machine_model_list); the model's own file holds the id."""
+    their presets by. Like OrcaSlicer, it looks the model up by name among
+    every vendor's models (machine_model_list, the preset's own vendor
+    first); the model's own file holds the id. preset_file is a system
+    printer preset's file, which shows where the vendors' profiles are."""
     if not model or not preset_file:
         return ""
     machine_dir = os.path.dirname(preset_file)
     vendor_dir = os.path.dirname(machine_dir)
-    files = []
-    vendor = presets._load(vendor_dir + ".json")
-    if isinstance(vendor, dict):
-        for entry in vendor.get("machine_model_list") or []:
-            if isinstance(entry, dict) and entry.get("name") == model and entry.get("sub_path"):
-                files.append(os.path.join(vendor_dir, str(entry["sub_path"])))
-    files.append(os.path.join(machine_dir, model + ".json"))
-    for path in files:
-        data = presets._load(path)
-        if isinstance(data, dict) and data.get("model_id"):
-            return str(data["model_id"])
+    own = vendor_dir + ".json"
+    root = os.path.dirname(vendor_dir)
+    try:
+        others = sorted(os.path.join(root, name) for name in os.listdir(root) if name.endswith(".json"))
+    except OSError:
+        others = []
+    for vendor_file in [own] + [f for f in others if f != own]:
+        vendor = presets._load(vendor_file)
+        entries = (vendor.get("machine_model_list") or []) if isinstance(vendor, dict) else []
+        files = [os.path.join(vendor_file[:-len(".json")], str(e["sub_path"])) for e in entries
+                 if isinstance(e, dict) and e.get("name") == model and e.get("sub_path")]
+        if vendor_file == own:
+            files.append(os.path.join(machine_dir, model + ".json"))
+        for path in files:
+            data = presets._load(path)
+            if isinstance(data, dict) and data.get("model_id"):
+                return str(data["model_id"])
     return ""
 
 
@@ -471,7 +487,9 @@ else:
             announce = None
             if not printer.announced:
                 printer.announced = True
-                announce = announcement(printer.dev_id, printer.name, printer.model_id or printer.model)
+                # No model_id is announced as none: OrcaSlicer then skips its check that the
+                # printer is the preset's model, which a model's name would always fail.
+                announce = announcement(printer.dev_id, printer.name, printer.model_id)
 
             def connected():
                 if self._current() is not printer:
@@ -761,7 +779,7 @@ else:
                 return
             model, model_file = printer_model(bundle)
             dev_id = dev_id_from_address(host, port)
-            ssdp(announcement(dev_id, model or dev_id, model_id(model, model_file) or model))
+            ssdp(announcement(dev_id, model or dev_id, model_id(model, model_file)))
 
         def bind_detect(self, dev_ip, sec_link, detect):
             printer = self._current()

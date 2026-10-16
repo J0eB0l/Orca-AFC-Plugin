@@ -154,6 +154,12 @@ class ConnectTest(Case):
         self.assertEqual((ssdp["connect_type"], ssdp["bind_state"]), ("lan", "free"))
         self.assertEqual(self.calls.events[1][1:], (0, self.dev_id, "0"))
 
+    def test_unknown_model_is_announced_as_none(self):
+        # A model name never matches the preset's model_id, so OrcaSlicer's sync would refuse it.
+        orca.bundle.printer.values["printer_model"] = "Nobody's Printer"
+        self.connect()
+        self.assertEqual(self.calls.events[0][1]["dev_type"], "")
+
     def test_api_key_is_the_access_code(self):
         self.fake.api_key = "secret"
         self.params.password = "secret"
@@ -455,6 +461,19 @@ class FileTest(unittest.TestCase):
         self.assertEqual(afc_agent.upload_name("../../etc", 1), "etc_plate_1.gcode")
         self.assertEqual(afc_agent.upload_name("", 0), "print_plate_1.gcode")
         self.assertEqual(afc_agent.upload_name("Würfel", 1), "Würfel_plate_1.gcode")
+
+    def test_model_id_of_a_preset_with_no_system_parent(self):
+        # Printer 1: its own printer preset, of a model another vendor (Custom) lists.
+        bundle = profiles(self.folder)
+        custom = os.path.join(self.folder, "system", "Custom")
+        write(custom + ".json", {"machine_model_list": [
+            {"name": "Generic ToolChanger Printer", "sub_path": "machine/MyToolChanger.json"}]})
+        write(os.path.join(custom, "machine", "MyToolChanger.json"), {"model_id": "my_toolchanger_01"})
+        bundle.printer = Preset({"printer_model": "Generic ToolChanger Printer"}, name="Printer 1")
+        model, model_file = afc_agent.printer_model(bundle)
+        self.assertEqual(model, "Generic ToolChanger Printer")
+        self.assertEqual(afc_agent.model_id(model, model_file), "my_toolchanger_01")
+        self.assertEqual(afc_agent.model_id("Nobody's Printer", model_file), "")
 
     def test_model_id_without_the_vendor_list(self):
         machine = os.path.join(self.folder, "system", "Voron", "machine")
