@@ -856,15 +856,19 @@ else:
         def _tray_k(self, printer: _Printer, job: dict) -> int:
             """The tray popup's Factor K: saved on the lane's Spoolman spool as
             its flow K, which filament sync puts in the slot and AFC autocal
-            applies when the lane loads. A lane without a spool has nowhere to keep it."""
+            applies when the lane loads. A lane without a spool has nowhere to keep
+            it, so its K is dropped: the popup sends K with every Confirm, and a
+            warning there would follow a filament change that worked."""
             tray, k = job.get("tray_id"), _number(job.get("k_value"))
             # The popup names the tray unit * 4 + slot, an AMS HT's too.
             tool = self._layout(printer).tool(tray // 4, tray % 4) if isinstance(tray, int) and tray >= 0 else -1
             lane = controls.lane_of(printer.snapshot, tool)
-            if lane is None or k is None or not 0 < k < 2:
+            if lane is None:
                 return ERR_INVALID_RESULT
             if lane.spool_id <= 0:
-                return ERR_CAP_NOT_AVAILABLE
+                return SUCCESS
+            if k is None or not 0 < k < 2:
+                return ERR_INVALID_RESULT
             # The popup shows K to four places: one confirmed unchanged keeps the spool's own.
             if lane.flow_k >= 0 and abs(k - lane.flow_k) < 0.00005:
                 return SUCCESS

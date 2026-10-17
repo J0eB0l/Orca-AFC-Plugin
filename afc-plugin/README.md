@@ -94,8 +94,8 @@ Then:
 - On the Device tab, a tray's edit popup lists the printer's presets and sets
   the lane's color and material; the preset picked there is what sync uses
   until the lane gets another spool. In the AFC build of OrcaSlicer the popup
-  also has the spool's Factor K, saved as its Spoolman `flow_k` (a lane needs a
-  Spoolman spool for that). A tray's refresh button reads the spool's
+  also has the spool's Factor K, saved as its Spoolman `flow_k`; on a lane
+  without a Spoolman spool the K is not kept. A tray's refresh button reads the spool's
   tag again with the command of the lane's unit (AFC_BAMBU_SCAN, ACE_RFID_RESCAN,
   AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
   FILAMENT_DT_UPDATE); a lane with no reader says so. **Load** and **Unload** run

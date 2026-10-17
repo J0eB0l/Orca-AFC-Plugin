@@ -463,8 +463,12 @@ class DeviceTabTest(Case):
         self.assertEqual(self.cali_set(0, 0.03251), 0)
         self.agent._worker.call(lambda: None, 5)
         self.assertEqual(len(self.fake.requests), writes)
-        # A lane with no Spoolman spool has nowhere to keep a K, and K stays within the popup's range.
-        self.assertEqual(self.cali_set(1, 0.04), afc_agent.ERR_CAP_NOT_AVAILABLE)
+        # A lane with no Spoolman spool has nowhere to keep a K: it is dropped without a warning.
+        writes = len(self.fake.requests)
+        self.assertEqual(self.cali_set(1, 0.04), 0)
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(len(self.fake.requests), writes)
+        # K stays within the popup's range.
         self.assertEqual(self.cali_set(0, 2.5), afc_agent.ERR_INVALID_RESULT)
 
     def test_camera_plays_the_first_webcam(self):
