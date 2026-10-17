@@ -3256,7 +3256,8 @@ void StatusPanel::update_temp_ctrl(MachineObject *obj)
     }
 
     // support current temp for chamber
-    if (obj->get_printer_series() == PrinterSeries::SERIES_X1)
+    // Orca: also a printer that says it has a chamber (a printer agent's chamber sensor).
+    if (obj->get_printer_series() == PrinterSeries::SERIES_X1 || obj->GetConfig()->SupportChamberTempDisplay())
     {
         m_tempCtrl_chamber->SetCurrTemp(obj->chamber_temp);
     }
