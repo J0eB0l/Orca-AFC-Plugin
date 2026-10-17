@@ -280,6 +280,41 @@ class StatusTest(Case):
         self.assertEqual((status["subtask_name"], status["mc_percent"], status["mc_remaining_time"]),
                          ("cube.gcode", 25, 30))
 
+    def test_printing_with_the_files_metadata(self):
+        self.fake.objects["print_stats"] = {"state": "printing", "filename": "parts/cube.gcode", "print_duration": 600,
+                                            "info": {"total_layer": 50, "current_layer": 12}}
+        self.fake.objects["display_status"] = {"progress": 0.4}  # the slicer's M73
+        self.fake.objects["virtual_sdcard"] = {"progress": 0.3}
+        self.fake.metadata["parts/cube.gcode"] = {
+            "estimated_time": 3600, "layer_count": 50, "first_layer_height": 0.2, "layer_height": 0.2,
+            "thumbnails": [{"width": 32, "height": 32, "relative_path": ".thumbs/cube-32x32.png"},
+                           {"width": 300, "height": 300, "relative_path": ".thumbs/cube-300x300.png"}]}
+        self.fake.files.add("parts/.thumbs/cube-300x300.png")
+        self.connect()
+        status = self.push()
+        # The slicer's estimate for the part left, and the layers the file sets.
+        self.assertEqual((status["mc_percent"], status["mc_remaining_time"]), (40, 36))
+        self.assertEqual((status["layer_num"], status["total_layer_num"]), (12, 50))
+        self.assertEqual(status["thumbnail_url"], self.fake.url + "/server/files/gcodes/parts/.thumbs/cube-300x300.png")
+        self.push(2)
+        self.assertEqual(self.fake.paths().count("/server/files/metadata"), 1)  # once per file
+
+    def test_layers_from_the_nozzle_height(self):
+        # A file that does not set Klipper's layer info: the layer comes from Z once the print extrudes.
+        self.fake.objects["print_stats"] = {"state": "printing", "filename": "cube.gcode", "print_duration": 0,
+                                            "info": {"total_layer": None, "current_layer": None}}
+        self.fake.objects["gcode_move"] = {"gcode_position": [10.0, 10.0, 2.0, 0.0]}
+        self.fake.metadata["cube.gcode"] = {"layer_count": 100, "first_layer_height": 0.2, "layer_height": 0.2,
+                                            "thumbnails": [{"width": 300, "relative_path": ".thumbs/cube.png"}]}
+        self.connect()
+        status = self.push()
+        self.assertEqual((status["layer_num"], status["total_layer_num"]), (0, 100))  # still heating
+        self.assertEqual(status["thumbnail_url"], "")  # the printer does not serve it without the API key
+        self.fake.objects["print_stats"]["print_duration"] = 100
+        self.assertEqual(self.push(2)["layer_num"], 10)
+        self.fake.objects["print_stats"]["state"] = "complete"
+        self.assertEqual(self.push(3)["layer_num"], 100)
+
     def test_u1_print_switches(self):
         self.fake.objects["print_task_config"] = {"auto_bed_leveling": True, "flow_calibrate": False,
                                                   "time_lapse_camera": False}

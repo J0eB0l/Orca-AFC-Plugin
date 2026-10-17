@@ -24,11 +24,14 @@ hear on its UI thread goes through its queue_on_main.
 from __future__ import annotations
 
 import json
+import math
 import os
+import posixpath
 import re
 import threading
 import time
 import traceback
+import urllib.parse
 import zipfile
 from dataclasses import dataclass, field
 
@@ -36,7 +39,7 @@ import orca
 
 from . import controls, gcode, presets, protocol, trays
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
-from .moonraker import Moonraker, MoonrakerError, base_url
+from .moonraker import Moonraker, MoonrakerError, base_url, opens_without_key
 from .protocol import AFCError
 from .worker import Worker
 
@@ -44,6 +47,7 @@ AGENT_ID = "afc"
 POLL = 5.0            # seconds between status pushes
 PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
+JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 
 # What OrcaSlicer sends as the access code when the printer's API key is empty.
 NO_ACCESS_CODE = "88888888"
@@ -173,8 +177,10 @@ def announcement(dev_id: str, name: str, dev_type: str) -> str:
 
 
 def status_query(extruders: list, lights=()) -> dict:
-    query = {"print_stats": ["state", "filename", "print_duration"], "toolhead": ["homed_axes", "extruder"],
-             "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"]}
+    # display_status holds the slicer's M73 progress, print_stats.info the layers SET_PRINT_STATS_INFO sets.
+    query = {"print_stats": ["state", "filename", "print_duration", "info"], "toolhead": ["homed_axes", "extruder"],
+             "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"],
+             "display_status": ["progress"], "gcode_move": ["gcode_position"]}
     for name in extruders or ["extruder"]:
         query[name] = ["temperature", "target"]
     query.update(controls.light_query(list(lights)))
@@ -186,11 +192,52 @@ def _number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=()) -> dict:
+def job_info(metadata, filename: str, url: str) -> dict:
+    """What the Device tab shows of a print besides Klipper's status, from
+    Moonraker's metadata for its file: the slicer's time estimate, the layer
+    count and heights, and the URL of the largest thumbnail."""
+    meta = metadata if isinstance(metadata, dict) else {}
+    info = {}
+    for key in ("estimated_time", "layer_count", "first_layer_height", "layer_height"):
+        value = _number(meta.get(key))
+        if value is not None and value > 0:
+            info[key] = value
+    thumbs = [t for t in meta.get("thumbnails") or [] if isinstance(t, dict) and isinstance(t.get("relative_path"), str)]
+    if thumbs and url:
+        best = max(thumbs, key=lambda t: _number(t.get("width")) or 0)
+        path = posixpath.join(posixpath.dirname(filename), best["relative_path"])
+        info["thumbnail_url"] = "%s/server/files/gcodes/%s" % (url, urllib.parse.quote(path))
+    return info
+
+
+def _layers(state: str, stats: dict, position, job: dict):
+    """(current layer, total layers) of the print, None when not known. Klipper's
+    own count when the file sets it (SET_PRINT_STATS_INFO), else the file's
+    layer count with the current layer from the nozzle's height, once the print
+    has extruded."""
+    info = stats.get("info") if isinstance(stats.get("info"), dict) else {}
+    total = _number(info.get("total_layer")) or job.get("layer_count")
+    if not total:
+        return None
+    current = _number(info.get("current_layer"))
+    if state == "complete":
+        current = total
+    elif current is None:
+        z = _number(position[2]) if isinstance(position, list) and len(position) > 2 else None
+        first, height = job.get("first_layer_height"), job.get("layer_height")
+        current = 0
+        if z is not None and first and height and (_number(stats.get("print_duration")) or 0) > 0:
+            current = math.ceil((z - first) / height + 1 - 1e-6)
+    return max(0, min(int(current), int(total))), int(total)
+
+
+def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras` and `reading` go to the trays (trays.ams_json()), `lights`
-    are the printer's lights, which the lamp shows."""
+    are the printer's lights, which the lamp shows, and `job` the print file's
+    job_info()."""
+    job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
         return value if isinstance(value, dict) else {}
@@ -230,12 +277,25 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         out["fan_gear"] = max(0, min(255, int(round(speed * 255))))
     if isinstance(stats.get("filename"), str):
         out["subtask_name"] = out["gcode_file"] = stats["filename"]
-    progress = _number(obj("virtual_sdcard").get("progress"))
+    out["thumbnail_url"] = job.get("thumbnail_url", "")
+    # The slicer's M73 progress, which runs by print time; Klipper falls back to the file position without it.
+    progress = _number(obj("display_status").get("progress"))
+    if progress is None:
+        progress = _number(obj("virtual_sdcard").get("progress"))
     if progress is not None and progress >= 0:
-        out["mc_percent"] = max(0, min(100, int(round(progress * 100))))
+        progress = min(progress, 1.0)
+        out["mc_percent"] = int(round(progress * 100))
         elapsed = _number(stats.get("print_duration"))
-        if state in ("printing", "paused") and elapsed and progress > 0:
-            out["mc_remaining_time"] = max(0, int((elapsed / progress - elapsed) / 60))
+        if state in ("printing", "paused"):
+            if job.get("estimated_time"):
+                out["mc_remaining_time"] = int(job["estimated_time"] * (1 - progress) / 60)
+            elif elapsed and progress > 0:
+                out["mc_remaining_time"] = int((elapsed / progress - elapsed) / 60)
+    layers = None
+    if state in ("printing", "paused", "complete"):
+        layers = _layers(state, stats, obj("gcode_move").get("gcode_position"), job)
+    if layers is not None:
+        out["layer_num"], out["total_layer_num"] = layers
     lit = controls.lights_on(objects, list(lights)) if isinstance(objects, dict) else None
     if lit is not None:
         out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
@@ -351,6 +411,7 @@ class _Printer:
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
     reading: set = field(default_factory=set)         # trays whose tag is being read
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
+    job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
 
 
 def spool_key(lane) -> tuple:
@@ -589,7 +650,28 @@ else:
             ids, extras = self._trays(printer, snapshot) if snapshot is not None else ({}, {})
             with self._lock:
                 reading = set(printer.reading)
-            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights))
+            job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
+            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job))
+
+        def _job(self, printer: _Printer, filename) -> dict:
+            """job_info() of the file being printed, read once per file, and
+            again every JOB_RETRY s while Moonraker has no estimate for it (its
+            metadata comes a moment after an upload)."""
+            if not isinstance(filename, str) or not filename:
+                return {}
+            known = printer.job
+            if known is not None and known[0] == filename and ("estimated_time" in known[1] or time.monotonic() < known[2]):
+                return known[1]
+            try:
+                metadata = printer.client.file_metadata(filename)
+            except MoonrakerError:
+                metadata = None
+            info = job_info(metadata, filename, printer.client.url)
+            # OrcaSlicer loads the thumbnail without the API key: one the printer refuses shows as a broken image.
+            if "thumbnail_url" in info and not opens_without_key(info["thumbnail_url"]):
+                del info["thumbnail_url"]
+            printer.job = (filename, info, time.monotonic() + JOB_RETRY)
+            return info
 
         def _trays(self, printer: _Printer, snapshot) -> tuple:
             """For each loaded tray: the filament id of the preset that fits its

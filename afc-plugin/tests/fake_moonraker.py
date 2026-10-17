@@ -19,6 +19,8 @@ class FakeMoonraker:
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
     info      the /printer/info result
     uploads   files uploaded to the gcodes root, by name
+    metadata  /server/files/metadata results by file name (404 for any other)
+    files     paths under the gcodes root that a GET serves (thumbnails)
     started   files /printer/print/start was asked to print
     offline   True to answer everything 503, as Moonraker does while Klipper restarts
     """
@@ -34,6 +36,8 @@ class FakeMoonraker:
         self.api_key = ""
         self.info = {"state": "ready", "hostname": "voron", "software_version": "v0.12.0-500"}
         self.uploads = {}
+        self.metadata = {}
+        self.files = set()
         self.started = []
         self.offline = False
         self.requests = []   # (method, path, body)
@@ -92,6 +96,13 @@ class FakeMoonraker:
             self.uploads[body["filename"]] = body["data"]
             return 201, {"result": {"item": {"path": body["filename"], "root": body.get("root")},
                                     "action": "create_file"}}
+        if method == "GET" and path == "/server/files/metadata":
+            meta = self.metadata.get(query.get("filename"))
+            return (404, {"error": {"code": 404, "message": "Metadata not available"}}) if meta is None else (
+                200, {"result": meta})
+        if method == "GET" and path.startswith("/server/files/gcodes/"):
+            name = urllib.parse.unquote(path[len("/server/files/gcodes/"):])
+            return (200, {"path": name}) if name in self.files else (404, {"error": {"code": 404, "message": "No file"}})
         if method == "POST" and path == "/printer/print/start":
             self.started.append(body.get("filename"))
             return 200, {"result": "ok"}

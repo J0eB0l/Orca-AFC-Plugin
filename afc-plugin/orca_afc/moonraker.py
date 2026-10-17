@@ -98,6 +98,11 @@ class Moonraker:
         # A lane load can run for a while before Klipper answers.
         return self.post("/printer/gcode/script", {"script": script}, timeout=timeout)
 
+    def file_metadata(self, filename: str):
+        """Moonraker's metadata for a file in the gcodes root: the slicer's time
+        estimate, layer count and heights, thumbnails."""
+        return self.get("/server/files/metadata", {"filename": filename})
+
     def print_state(self) -> str:
         """print_stats.state: "standby", "printing", "paused", ... Empty when unknown."""
         status = self.objects_query({"print_stats": ["state"]})
@@ -165,6 +170,16 @@ def fetch_json(url: str, timeout: float = 4.0, opener=None):
             return json.loads(answer.read().decode("utf-8"))
     except (OSError, ValueError) as error:
         raise MoonrakerError("Cannot read %s: %s" % (url, error)) from None
+
+
+def opens_without_key(url: str, timeout: float = 4.0, opener=None) -> bool:
+    """Whether a GET of `url` without the API key succeeds, as OrcaSlicer's
+    own requests (a print's thumbnail) are made."""
+    try:
+        with (opener or urllib.request.urlopen)(urllib.request.Request(url), timeout=timeout, context=_ssl_context(url)):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def _ssl_context(url: str):
