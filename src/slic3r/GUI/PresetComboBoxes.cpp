@@ -1068,10 +1068,16 @@ bool PlaterPresetComboBox::switch_to_tab()
     const Preset* selected_filament_preset = nullptr;
     if (m_type == Preset::TYPE_FILAMENT)
     {
-        const std::string& selected_preset = GetString(GetSelection()).ToUTF8().data();
+        const int          selection       = GetSelection();
+        const std::string& selected_preset = GetString(selection).ToUTF8().data();
         if (!boost::algorithm::starts_with(selected_preset, Preset::suffix_modified()))
         {
-            const std::string& preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
+            // Prefer the internal preset name stored per item: a user preset can share its display alias with a
+            // system preset (e.g. "Bambu PLA Wood @Printer - Copy" and "Bambu PLA Wood @System").
+            const wxString    stored_name = GetItemAlias(selection);
+            const std::string preset_name = stored_name.empty() ?
+                                                wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset) :
+                                                into_u8(stored_name);
             if (wxGetApp().get_tab(m_type)->select_preset(preset_name))
                 wxGetApp().get_tab(m_type)->get_combo_box()->set_filament_idx(m_filament_idx);
             else {
