@@ -3255,6 +3255,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     }
                 }
 
+                if (jj.contains("support_upload_only") && jj["support_upload_only"].is_boolean()) {
+                    is_support_upload_only = jj["support_upload_only"].get<bool>();
+                }
+
               m_fan->ParseV2_0(jj);
                 m_fila_switch->ParseFilaSwitchInfo(jj);
 

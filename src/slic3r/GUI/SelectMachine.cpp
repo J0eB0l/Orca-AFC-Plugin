@@ -753,10 +753,21 @@ SelectMachineDialog::SelectMachineDialog(Plater *plater)
 
     m_button_ensure = new Button(m_panel_prepare, _L("Send"));
     m_button_ensure->SetStyle(ButtonStyle::Confirm, ButtonType::Choice);
-    m_button_ensure->Bind(wxEVT_BUTTON, &SelectMachineDialog::on_ok_btn, this);
+    m_button_ensure->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) { m_upload_only = false; on_ok_btn(e); });
+
+    // Orca: a printer agent that applies the tray mapping to a file it stores without starting it
+    // (support_upload_only) also gets Upload; update_show_status() shows it.
+    m_button_upload = new Button(m_panel_prepare, _L("Upload"));
+    m_button_upload->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
+    m_button_upload->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) { m_upload_only = true; on_ok_btn(e); });
+    m_button_upload->Hide();
+
+    wxBoxSizer *sizer_send_buttons = new wxBoxSizer(wxHORIZONTAL);
+    sizer_send_buttons->Add(m_button_upload, 0, wxRIGHT, FromDIP(10));
+    sizer_send_buttons->Add(m_button_ensure, 0, 0, 0);
 
     m_sizer_pcont->Add(0, 0, 1, wxEXPAND, 0);
-    m_sizer_pcont->Add(m_button_ensure, 0,wxALIGN_CENTER, 0);
+    m_sizer_pcont->Add(sizer_send_buttons, 0,wxALIGN_CENTER, 0);
 
     m_sizer_prepare->Add(0, 0, 1, wxTOP, FromDIP(12));
     m_sizer_prepare->Add(m_sizer_pcont, 0, wxALIGN_CENTER, 0);
@@ -3703,6 +3714,7 @@ void SelectMachineDialog::on_send_print()
         }
     }
 
+    m_print_job->upload_only           = m_upload_only && obj_->is_support_upload_only;
     m_print_job->task_ams_mapping      = ams_mapping_array;
     m_print_job->task_ams_mapping2     = ams_mapping_array2;
     m_print_job->task_ams_mapping_info = ams_mapping_info;
@@ -4768,6 +4780,12 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
         return;
     }
 
+    const bool show_upload = obj_->is_support_upload_only && m_print_type == PrintFromType::FROM_NORMAL;
+    if (m_button_upload->IsShown() != show_upload) {
+        m_button_upload->Show(show_upload);
+        m_panel_prepare->Layout();
+    }
+
     /*combobox check*/
     if (m_print_type == PrintFromType::FROM_SDCARD_VIEW) {
         m_printer_box->GetPrinterComboBox()->Disable();
@@ -5395,6 +5413,7 @@ void SelectMachineDialog::Enable_Send_Button(bool en)
             // ORCA no need to set colors again
         }
     }
+    m_button_upload->Enable(en);
 }
 
 void SelectMachineDialog::on_dpi_changed(const wxRect &suggested_rect)
@@ -5410,6 +5429,7 @@ void SelectMachineDialog::on_dpi_changed(const wxRect &suggested_rect)
         if (img_amsmapping_tip)img_amsmapping_tip->SetBitmap(ams_mapping_help_icon->bmp());
     }
     m_button_ensure->Rescale(); // ORCA
+    m_button_upload->Rescale();
     m_status_bar->msw_rescale();
 
     for (auto material1 : m_materialList) {

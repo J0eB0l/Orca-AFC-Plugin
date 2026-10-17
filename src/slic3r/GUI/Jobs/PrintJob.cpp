@@ -578,7 +578,13 @@ void PrintJob::process(Ctl &ctl)
             return true;
     };
 
-    if (m_print_type == "from_sdcard_view") {
+    if (upload_only) {
+        // Orca: the printer agent applies params.ams_mapping to the file it stores.
+        BOOST_LOG_TRIVIAL(info) << "print_job: upload without starting the print";
+        ctl.update_status(curr_percent, _u8L("Sending G-code file over LAN"));
+        mark_lifecycle_started();
+        result = m_agent->start_send_gcode_to_sdcard(params, update_fn, cancel_fn, nullptr);
+    } else if (m_print_type == "from_sdcard_view") {
         BOOST_LOG_TRIVIAL(info) << "print_job: try to send with cloud, model is sdcard view";
         ctl.update_status(curr_percent, _u8L("Sending print job through cloud service"));
         mark_lifecycle_started();

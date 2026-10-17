@@ -324,6 +324,7 @@ private:
     bool                                m_is_rename_mode{ false };
     bool                                m_check_flag {false};
     bool                                m_ext_change_assist{ false };
+    bool                                m_upload_only{ false }; // Orca: the Upload button was pressed, not Send
     PrintPageMode                       m_print_page_mode{PrintPageMode::PrintPageModePrepare};
     std::string                         m_print_error_msg;
     std::string                         m_print_error_extra;
@@ -388,6 +389,7 @@ protected:
     wxBoxSizer*                         m_change_filament_times_sizer{ nullptr };
     wxBoxSizer*                         m_warn_when_drying_sizer{ nullptr };
     Button*                             m_button_ensure{ nullptr };
+    Button*                             m_button_upload{ nullptr };
     wxStaticBitmap *                    m_rename_button{nullptr};
     wxStaticBitmap*                     m_staticbitmap{ nullptr };
     wxStaticBitmap*                     m_bitmap_last_plate{ nullptr };
