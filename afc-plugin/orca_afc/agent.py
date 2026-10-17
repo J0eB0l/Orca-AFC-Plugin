@@ -5,8 +5,10 @@ OrcaSlicer talks to the printer through this agent as it talks to a Bambu
 printer on the LAN, in Bambu's JSON messages:
 
 - AFC's lanes are the printer's AMS trays, one tray per T number (trays.py).
-  Each loaded tray names the filament preset that fits its spool best
-  (presets.py), so filament sync picks that preset.
+  Each loaded tray describes its spool, so filament sync picks (or makes) the
+  spool's own preset, and names the filament id of the preset that fits it
+  best, which an OrcaSlicer without spool presets picks instead (presets.py).
+- The Device tab's controls run AFC's own commands (controls.py).
 - A print from the print dialog prints each filament from the tray the dialog
   picked for it: the file's tool changes are renumbered to those T numbers,
   with AFC's lane-change purges and spool flow K written in (gcode.py), and the
@@ -32,9 +34,10 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import gcode, presets, protocol, trays
+from . import controls, gcode, presets, protocol, trays
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, base_url
+from .protocol import AFCError
 from .worker import Worker
 
 AGENT_ID = "afc"
@@ -53,6 +56,8 @@ ERR_CANCELED = -18
 ERR_INVALID_RESULT = -19
 ERR_UPLOAD_FAILED = -4020
 ERR_START_FAILED = -4030
+# The printer has no hardware for a Device tab control (IPrinterAgent.hpp).
+ERR_CAP_NOT_AVAILABLE = -7020
 CONNECT_OK, CONNECT_LOST = 0, 2
 # The print job shows these; its "finished" stage counts down to the Device tab
 # itself once the agent returns, so the agent never sends that one.
@@ -66,6 +71,8 @@ PA_CALIBRATION = 1 << 16
 # flag3 bit: the printer takes up to 32 filaments. Without it the print dialog
 # refuses a file with more than 16, the limit of Bambu's older firmware.
 FILAMENTS_32 = 1 << 17
+# flag3 bit: a tray's filament may be set while printing (AFC takes a lane edit any time).
+FILAMENT_EDIT_PRINTING = 1 << 3
 
 _STATES = {"printing": "RUNNING", "paused": "PAUSE", "complete": "FINISH", "error": "FAILED", "cancelled": "FAILED"}
 _STAGES = {"printing": 1, "paused": 2, "complete": 3, "error": 4}
@@ -165,11 +172,13 @@ def announcement(dev_id: str, name: str, dev_type: str) -> str:
 # ------------------------------------------------------------------ messages
 
 
-def status_query(extruders: list) -> dict:
+def status_query(extruders: list, lights=()) -> dict:
     query = {"print_stats": ["state", "filename", "print_duration"], "toolhead": ["homed_axes", "extruder"],
              "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"]}
     for name in extruders or ["extruder"]:
         query[name] = ["temperature", "target"]
+    query.update(controls.light_query(list(lights)))
+    query.update(controls.reader_query())
     return query
 
 
@@ -177,10 +186,11 @@ def _number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def push_status(objects: dict, snapshot, filament_ids: dict) -> dict:
+def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=()) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
-    has)."""
+    has). `extras` and `reading` go to the trays (trays.ams_json()), `lights`
+    are the printer's lights, which the lamp shows."""
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
         return value if isinstance(value, dict) else {}
@@ -200,7 +210,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict) -> dict:
         "gcode_state": _STATES.get(state, "IDLE"), "mc_print_stage": _STAGES.get(state, 0),
         # OrcaSlicer reads these as HMS codes; anything but 0 opens its error dialog.
         "mc_print_error_code": 0, "print_error": 0,
-        "home_flag": home_flag, "flag3": FILAMENTS_32, "sdcard": True, "support_send_to_sd": True,
+        "home_flag": home_flag, "flag3": FILAMENTS_32 | FILAMENT_EDIT_PRINTING, "sdcard": True,
+        "support_send_to_sd": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
@@ -223,8 +234,11 @@ def push_status(objects: dict, snapshot, filament_ids: dict) -> dict:
         elapsed = _number(stats.get("print_duration"))
         if state in ("printing", "paused") and elapsed and progress > 0:
             out["mc_remaining_time"] = max(0, int((elapsed / progress - elapsed) / 60))
+    lit = controls.lights_on(objects, list(lights)) if isinstance(objects, dict) else None
+    if lit is not None:
+        out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
     if snapshot is not None:
-        out["ams"] = trays.ams_json(snapshot, filament_ids)
+        out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading)
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -330,6 +344,17 @@ class _Printer:
     announced: bool = False
     failures: int = 0
     extruders: list = field(default_factory=lambda: ["extruder"])
+    lights: list = field(default_factory=list)        # Klipper objects the lamp switches
+    snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
+    readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
+    reading: set = field(default_factory=set)         # trays whose tag is being read
+    lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
+
+
+def spool_key(lane) -> tuple:
+    """What tells one spool from the next in a lane: a preset picked for the
+    lane holds until the lane gets another spool."""
+    return lane.spool_id, (lane.vendor or "").lower(), (lane.filament_name or "").lower()
 
 
 _Base = getattr(getattr(orca, "printer_agent", None), "PrinterAgentBase", None)
@@ -488,6 +513,12 @@ else:
             info = info if isinstance(info, dict) else {}
             printer.version = str(info.get("software_version") or "")
             printer.name = str(info.get("hostname") or "") or printer.model or "AFC printer"
+            try:
+                listed = printer.client.objects_list()
+                objects = listed.get("objects") if isinstance(listed, dict) else listed
+                printer.lights = controls.find_lights(objects if isinstance(objects, list) else [])
+            except MoonrakerError:
+                pass
             if not printer.model_id:
                 printer.model_id = model_id(printer.model, printer.model_file)
             printer.connected, printer.failures = True, 0
@@ -534,7 +565,7 @@ else:
             if snapshot is not None and snapshot.extruders:
                 printer.extruders = list(snapshot.extruders)
             try:
-                objects = printer.client.objects_query(status_query(printer.extruders))
+                objects = printer.client.objects_query(status_query(printer.extruders, printer.lights))
             except MoonrakerError:
                 printer.failures += 1
                 if printer.failures >= LOST_AFTER:
@@ -549,21 +580,42 @@ else:
                 return
             printer.failures = 0
             status = (objects or {}).get("status") if isinstance(objects, dict) else None
-            ids = self._filament_ids(snapshot) if snapshot is not None else {}
-            self._send(printer, push_status(status or {}, snapshot, ids))
+            status = status if isinstance(status, dict) else {}
+            printer.readers = controls.reader_lanes(status)
+            if snapshot is not None:
+                printer.snapshot = snapshot
+            ids, extras = self._trays(printer, snapshot) if snapshot is not None else ({}, {})
+            with self._lock:
+                reading = set(printer.reading)
+            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights))
 
-        def _filament_ids(self, snapshot) -> dict:
+        def _trays(self, printer: _Printer, snapshot) -> tuple:
+            """For each loaded tray: the filament id of the preset that fits its
+            spool best, and the fields OrcaSlicer's sync makes the spool's own
+            preset from, with the preset picked for the lane in the tray popup."""
             with self._lock:
                 candidates, cache = self._candidates, self._match
-            out = {}
+                for name, (_, key) in list(printer.lane_presets.items()):
+                    lane = snapshot.find_lane(name)
+                    if lane is None or not lane.has_filament or spool_key(lane) != key:
+                        del printer.lane_presets[name]
+                picked = {name: preset for name, (preset, _) in printer.lane_presets.items()}
+            ids, extras = {}, {}
             for tray, lane in trays.lanes_by_tray(snapshot).items():
                 if not lane.has_filament:
                     continue
                 key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name)
                 if key not in cache:
-                    cache[key] = presets.match(lane, candidates, self._ids)
-                out[tray] = cache[key]
-            return out
+                    cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates))
+                ids[tray], base = cache[key]
+                extra = {}
+                names = presets.spool_preset_names(lane)
+                if names:
+                    extra["spool"] = trays.spool_json(lane, names, base)
+                if lane.name in picked:
+                    extra["filament_preset"] = picked[lane.name]
+                extras[tray] = extra
+            return ids, extras
 
         # -------------------------------------------------------- requests
 
@@ -595,6 +647,8 @@ else:
                                   "module": [{"name": "ota", "sw_ver": printer.version or "1.0.0",
                                               "product_name": "Klipper"}]}}
                 self._worker.submit(lambda: self._send(printer, reply))
+            elif system.get("command") == "ledctrl":
+                return self._lamp(printer, system)
             elif system.get("command") == "get_access_code":
                 reply = {"system": {"command": "get_access_code", "sequence_id": system.get("sequence_id", ""),
                                     "access_code": printer.access_code}}
@@ -635,10 +689,88 @@ else:
                 self._run(printer, "SET_HEATER_TEMPERATURE HEATER=%s TARGET=%d" % (heater, job["target_temp"]))
             elif command == "home":
                 self._run(printer, "G28")
+            elif command == "ams_filament_setting":
+                return self._filament_setting(printer, job)
+            elif command == "ams_change_filament":
+                try:
+                    script = controls.change_filament_gcode(printer.snapshot, job) if printer.snapshot else ""
+                except AFCError:
+                    script = ""
+                if not script:
+                    return FAILED
+                self._run(printer, script, push=True)
             return SUCCESS
 
-        def _run(self, printer: _Printer, script: str) -> None:
-            self._gcode.submit(lambda: self._quietly(lambda: printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT)))
+        def _run(self, printer: _Printer, script: str, push: bool = False) -> None:
+            def run():
+                self._quietly(lambda: printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT))
+                if push:
+                    self._worker.submit(lambda: self._push(printer))
+
+            self._gcode.submit(run)
+
+        # -------------------------------------------------------- the Device tab's controls
+
+        def _filament_setting(self, printer: _Printer, job: dict) -> int:
+            """The tray popup: the lane takes its color and material, and the
+            preset picked for it until it gets another spool. A reset (no
+            filament) drops the pick."""
+            lane = controls.lane_of(printer.snapshot, controls.tray_of(job.get("ams_id"), job.get("slot_id")))
+            if lane is None:
+                return FAILED
+            reset = not job.get("tray_info_idx")
+            preset = job.get("filament_preset")
+            try:
+                script = [] if reset else controls.filament_setting_gcode(printer.snapshot, lane, job)
+            except AFCError:
+                return ERR_INVALID_RESULT
+            with self._lock:
+                if reset:
+                    printer.lane_presets.pop(lane.name, None)
+                elif isinstance(preset, str) and preset:
+                    printer.lane_presets[lane.name] = (preset, spool_key(lane))
+            if script:
+                self._run(printer, "\n".join(script), push=True)
+            else:
+                self._worker.submit(lambda: self._push(printer))
+            return SUCCESS
+
+        def _lamp(self, printer: _Printer, system: dict) -> int:
+            """The lamp switches every light find_lights() found. OrcaSlicer sends
+            chamber_light2 alongside chamber_light; the one switch does both."""
+            mode = system.get("led_mode")
+            if system.get("led_node") != "chamber_light" or mode not in ("on", "off"):
+                return SUCCESS
+            if not printer.lights:
+                return ERR_CAP_NOT_AVAILABLE
+            self._run(printer, "\n".join(controls.light_gcode(printer.lights, mode == "on")), push=True)
+            return SUCCESS
+
+        def command_ams_refresh_rfid(self, dev_id, ams_id, slot_id, sequence_id, lan_mode):
+            """A tray's refresh button: the lane's unit reads the spool's tag
+            again (controls.rfid_scan_gcode()), the tray spinning meanwhile."""
+            printer = self._current()
+            if printer is None or not printer.connected:
+                return FAILED
+            tray = slot_id if isinstance(ams_id, int) and ams_id < 0 else controls.tray_of(ams_id, slot_id)
+            lane = controls.lane_of(printer.snapshot, tray if isinstance(tray, int) else -1)
+            script = controls.rfid_scan_gcode(lane, printer.readers) if lane is not None else ""
+            if not script:
+                return ERR_CAP_NOT_AVAILABLE
+            with self._lock:
+                printer.reading.add(tray)
+
+            def run():
+                try:
+                    self._quietly(lambda: printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT))
+                finally:
+                    with self._lock:
+                        printer.reading.discard(tray)
+                    self._worker.submit(lambda: self._push(printer))
+
+            self._worker.submit(lambda: self._push(printer))
+            self._gcode.submit(run)
+            return SUCCESS
 
         @staticmethod
         def _quietly(call) -> None:

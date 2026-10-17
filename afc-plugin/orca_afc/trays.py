@@ -43,7 +43,9 @@ def remaining(lane: Lane) -> int:
     return max(0, min(100, int(round(lane.weight / initial * 100))))
 
 
-def tray_json(slot: int, lane: Lane | None, filament_id: str) -> dict:
+def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None = None) -> dict:
+    """A tray of the "ams" object. `extra` adds the spool and preset fields the
+    agent works out for a loaded tray (see spool_json())."""
     tray = {"id": str(slot), "tag_uid": "0000000000000000"}
     if lane is None or not lane.has_filament:
         tray.update(tray_info_idx="", tray_type="", tray_color="00000000", tray_slot_placeholder="1")
@@ -62,15 +64,36 @@ def tray_json(slot: int, lane: Lane | None, filament_id: str) -> dict:
     left = remaining(lane)
     if left >= 0:
         tray["remain"] = left
+    if lane.flow_k >= 0:
+        tray["k"] = lane.flow_k
+    tray.update(extra or {})
     return tray
 
 
-def ams_json(snapshot: Snapshot, filament_ids: dict) -> dict:
+def spool_json(lane: Lane, names: list, base: str) -> dict:
+    """What OrcaSlicer's filament sync makes the spool's own preset from: the
+    names it may have (presets.spool_preset_names()), the preset to copy when
+    there is none (`base`), and the spool's values to put in it."""
+    return {"names": list(names), "base": base, "vendor": lane.vendor, "nozzle_temp": lane.nozzle_temp,
+            "bed_temp": lane.bed_temp, "density": lane.density, "diameter": lane.diameter,
+            "pressure_advance": lane.flow_k}
+
+
+def current_tray(snapshot: Snapshot) -> int:
+    """The tray of the lane AFC has in the active toolhead, NO_TRAY for none."""
+    lane = snapshot.find_lane(snapshot.current_lane) if snapshot.current_lane else None
+    tools = [tool_number(m) for m in lane.maps] if lane is not None else []
+    return next((t for t in tools if 0 <= t <= MAX_TRAY), NO_TRAY)
+
+
+def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None, reading=()) -> dict:
     """The "ams" object of a push_status message for AFC's lanes.
-    `filament_ids` holds the filament id for each loaded T number."""
+    `filament_ids` holds the filament id for each loaded T number, `extras`
+    more tray fields by T number, `reading` the trays whose tag is being read."""
     trays = lanes_by_tray(snapshot)
     if not trays:
         return {"ams": [], "ams_exist_bits": "0", "tray_exist_bits": "0"}
+    extras = extras or {}
     last = max(trays)
     units, ams_bits, tray_bits = [], 0, 0
     for unit in range(last // 4 + 1):
@@ -81,10 +104,13 @@ def ams_json(snapshot: Snapshot, filament_ids: dict) -> dict:
             lane = trays.get(tray)
             if lane is not None and lane.has_filament:
                 tray_bits |= 1 << tray
-            slots.append(tray_json(slot, lane, filament_ids.get(tray, "")))
+            slots.append(tray_json(slot, lane, filament_ids.get(tray, ""), extras.get(tray)))
         # "0002": an AMS lite on the first extruder, as OrcaSlicer's Moonraker agent reports lanes.
         units.append({"id": str(unit), "info": "0002", "tray": slots})
-    return {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits}
+    now = str(current_tray(snapshot))
+    reading_bits = sum(1 << t for t in set(reading) if 0 <= t <= MAX_TRAY)
+    return {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits,
+            "tray_now": now, "tray_tar": now, "tray_reading_bits": "%X" % reading_bits}
 
 
 def mapping_from_print(ams_mapping: str, ams_mapping2: str, filaments: int) -> dict:

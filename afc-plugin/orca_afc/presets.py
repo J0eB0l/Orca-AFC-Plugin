@@ -287,6 +287,105 @@ def _load(path: str):
         return None
 
 
+# ------------------------------------------------------------------ the spool's own preset
+#
+# OrcaSlicer's filament sync looks for a preset named like the spool (and makes
+# one, "<name> @<printer>", copied from the best fitting preset, when there is
+# none), as the Snapmaker build's AFCProtocol::spool_preset_name does.
+
+
+def clean_preset_part(text: str) -> str:
+    """Single spaces, no ends, and "-" for what a preset file name or its " @" cannot hold."""
+    out = re.sub(r"[\x00- ]+", " ", text or "").strip()
+    return re.sub(r'[<>:"/\\|?*@]', "-", out)
+
+
+def _is_unknown(text: str) -> bool:
+    return not text or text in ("NONE", "None", "none")
+
+
+def filament_display_name(vendor: str, material: str, sub_type: str) -> str:
+    if sub_type == "Support":
+        return "%s Support For %s" % (vendor, material)
+    return "%s %s%s" % (vendor, material, "" if _is_unknown(sub_type) else " " + sub_type)
+
+
+def _without_vendor(name: str, vendor: str) -> str:
+    """"Polymaker PolyLite PLA" without its "Polymaker "."""
+    low, vendor = name.lower(), vendor.lower()
+    if low == vendor:
+        return ""
+    if low.startswith(vendor + " "):
+        return clean_preset_part(name[len(vendor) + 1:])
+    return name
+
+
+def _names_material(name: str, material: str) -> bool:
+    """A word of `name` starts with the material: "PLA" in "PolyLite PLA" or "Tough PLA-CF"."""
+    material = material.lower()
+    return any(word.startswith(material) for word in name.lower().split(" "))
+
+
+def _spool_parts(lane: Lane) -> tuple:
+    """(vendor, filament name without the vendor, material), cleaned; no vendor
+    for none or "Generic"."""
+    vendor = clean_preset_part(lane.vendor)
+    if _is_unknown(vendor) or vendor.lower() == "generic":
+        vendor = ""
+    material = "" if _is_unknown(lane.material) else clean_preset_part(lane.material)
+    filament = clean_preset_part(lane.filament_name)
+    filament = _without_vendor(filament, vendor) if vendor and not _is_unknown(filament) else ""
+    return vendor, filament, material
+
+
+def spool_preset_name(lane: Lane) -> str:
+    """The name of the spool's own preset: "Polymaker PolyLite PLA", "" without a vendor."""
+    vendor, filament, material = _spool_parts(lane)
+    if not vendor:
+        return ""
+    if not filament:
+        if not material:
+            return ""
+        return clean_preset_part(filament_display_name(vendor, material, clean_preset_part(lane.sub_type)))
+    if material and not _names_material(filament, material):
+        return "%s %s %s" % (vendor, material, filament)
+    return "%s %s" % (vendor, filament)
+
+
+def afc_lane_preset_name(lane: Lane) -> str:
+    """The preset for a spool AFC knows only the material and temperatures of:
+    "AFC PLA 210C bed 60C"."""
+    if _is_unknown(lane.material) or (lane.nozzle_temp <= 0 and lane.bed_temp <= 0):
+        return ""
+    name = "AFC " + lane.material + ("" if _is_unknown(lane.sub_type) else " " + lane.sub_type)
+    if lane.nozzle_temp > 0:
+        name += " %dC" % lane.nozzle_temp
+    if lane.bed_temp > 0:
+        name += " bed %dC" % lane.bed_temp
+    return clean_preset_part(name)
+
+
+def spool_preset_names(lane: Lane) -> list:
+    """Names the spool's own preset may have, best first: its full name, then
+    the filament name alone; for a spool with no vendor, AFC's lane preset."""
+    name = spool_preset_name(lane)
+    if not name:
+        afc = afc_lane_preset_name(lane)
+        return [afc] if afc else []
+    out = [name]
+    _, filament, material = _spool_parts(lane)
+    if filament and filament.lower() not in (material.lower(), name.lower()):
+        out.append(filament)
+    return out
+
+
+def best(lane: Lane, candidates: list) -> str:
+    """The name of the preset that fits the lane's spool best: the one a
+    spool's own preset is copied from. "" when none is of its material."""
+    found = rank(lane, candidates) or generic(lane, candidates)
+    return found[0].name if found else ""
+
+
 def match(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     """The filament id the sync should pick for a loaded lane: the best
     scored preset's, else the generic one's, else UNKNOWN_FILAMENT_ID so the

@@ -169,5 +169,38 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.match(lane("TPU"), candidates, ids), presets.UNKNOWN_FILAMENT_ID)
 
 
+
+class SpoolPresetNameTest(unittest.TestCase):
+    """The names OrcaSlicer's sync looks for the spool's own preset by, as the Snapmaker build names them."""
+
+    def test_vendor_and_filament(self):
+        self.assertEqual(presets.spool_preset_names(lane(product="PolyLite PLA")),
+                         ["Polymaker PolyLite PLA", "PolyLite PLA"])
+
+    def test_material_added_when_the_filament_name_lacks_it(self):
+        self.assertEqual(presets.spool_preset_names(lane()), ["Polymaker PLA PolyLite", "PolyLite"])
+
+    def test_vendor_already_in_the_filament_name(self):
+        self.assertEqual(presets.spool_preset_name(lane(product="Polymaker PolyLite PLA")), "Polymaker PolyLite PLA")
+
+    def test_vendor_and_material_only(self):
+        self.assertEqual(presets.spool_preset_names(lane(product="", sub_type="Support")), ["Polymaker Support For PLA"])
+        self.assertEqual(presets.spool_preset_names(lane(product="", sub_type="Matte")), ["Polymaker PLA Matte"])
+
+    def test_no_vendor_is_afcs_lane_preset(self):
+        spool = lane(vendor="Generic", product="")
+        spool.nozzle_temp, spool.bed_temp = 210, 60
+        self.assertEqual(presets.spool_preset_names(spool), ["AFC PLA 210C bed 60C"])
+        spool.nozzle_temp = spool.bed_temp = 0
+        self.assertEqual(presets.spool_preset_names(spool), [])
+
+    def test_characters_a_preset_name_cannot_hold(self):
+        self.assertEqual(presets.spool_preset_name(lane(vendor="A/B  Co", product="Silk@Gold")), "A-B Co PLA Silk-Gold")
+
+    def test_best_is_the_spools_preset_else_the_generic(self):
+        self.assertEqual(presets.best(lane(), RankTest.CANDIDATES), "Polymaker PolyLite PLA @U1")
+        self.assertEqual(presets.best(lane(vendor="Elegoo", product="Rapid"), RankTest.CANDIDATES), "Generic PLA @U1")
+        self.assertEqual(presets.best(lane(material="ASA"), RankTest.CANDIDATES), "")
+
 if __name__ == "__main__":
     unittest.main()

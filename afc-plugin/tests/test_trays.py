@@ -30,6 +30,25 @@ class AmsTest(unittest.TestCase):
         self.assertEqual((t6["id"], t6["tray_type"], t6["cols"]), ("2", "PETG", ["FF0000FF", "0000FFFF"]))
         self.assertNotIn("remain", t6)  # no weight from AFC
 
+    def test_loaded_tray_reading_and_spool(self):
+        snap = Snapshot(present=True, current_lane="lane5", lanes=[
+            loaded("lane1", 0, material="PLA", flow_k=0.035),
+            loaded("lane5", 5, material="PETG", tool_loaded=True),
+        ])
+        extra = {0: {"spool": trays.spool_json(snap.lanes[0], ["Polymaker PolyLite PLA"], "Generic PLA"),
+                     "filament_preset": "Mine"}}
+        ams = trays.ams_json(snap, {0: "GFL99", 5: "GFG99"}, extra, reading={0, 99})
+        self.assertEqual((ams["tray_now"], ams["tray_tar"], ams["tray_reading_bits"]), ("5", "5", "1"))
+        t0 = ams["ams"][0]["tray"][0]
+        self.assertEqual((t0["k"], t0["filament_preset"], t0["spool"]["names"], t0["spool"]["base"]),
+                         (0.035, "Mine", ["Polymaker PolyLite PLA"], "Generic PLA"))
+        self.assertEqual(t0["spool"]["pressure_advance"], 0.035)
+        self.assertNotIn("k", ams["ams"][1]["tray"][1])  # no K saved on that spool
+
+    def test_nothing_loaded_is_tray_255(self):
+        snap = Snapshot(present=True, lanes=[loaded("lane1", 0)])
+        self.assertEqual(trays.ams_json(snap, {})["tray_now"], "255")
+
     def test_no_lanes(self):
         self.assertEqual(trays.ams_json(Snapshot(present=True), {}),
                          {"ams": [], "ams_exist_bits": "0", "tray_exist_bits": "0"})

@@ -69,11 +69,26 @@ Then:
 - The **Device** tab shows the printer, with AFC's lanes as its AMS trays: one
   tray per T number, four to a unit (the first unit holds T0 to T3).
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
-  lane in the slot of its T number (slot 1 is T0) with the filament preset that
-  fits its spool: the spool's own vendor and product preset when the printer has
-  one, else OrcaSlicer's generic preset of its material. OrcaSlicer's sync only
-  picks system presets and user presets that inherit from nothing, so a user
-  preset made from a system preset is synced as that system preset.
+  lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
+  named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a
+  lane with no Spoolman spool). When there is none, sync makes it as
+  "<name> @<printer>", copied from the preset that fits the spool best, with the
+  spool's temperatures, density, diameter and pressure advance. A preset sync
+  made takes the spool's values again on each sync until you delete the first
+  line of its notes. Each slot also keeps its spool's flow K (Spoolman
+  `flow_k`), which the slice uses over the preset's. This needs the AFC build of
+  OrcaSlicer; official OrcaSlicer 2.5 picks the best fitting existing preset, or
+  the generic one of the material.
+- On the Device tab, a tray's edit popup lists the printer's presets and sets
+  the lane's color and material; the preset picked there is what sync uses
+  until the lane gets another spool. A tray's refresh button reads the spool's
+  tag again with the command of the lane's unit (AFC_BAMBU_SCAN, ACE_RFID_RESCAN,
+  AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
+  FILAMENT_DT_UPDATE); a lane with no reader says so. **Load** and **Unload** run
+  AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
+  Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
+  objects named with main, chamber, case, cabinet, enclosure, light or lamp
+  (`[led main_led]`, `[output_pin caselight]`), full white on or off.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges and spool flow K the AFC G-code step adds, uploads the file

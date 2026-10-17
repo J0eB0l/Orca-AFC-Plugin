@@ -263,7 +263,8 @@ class StatusTest(Case):
         status = self.push()
         self.assertEqual((status["gcode_state"], status["mc_print_stage"]), ("IDLE", 0))
         self.assertEqual(status["home_flag"], afc_agent.SD_CARD_NORMAL | 1 | 2)
-        self.assertEqual(status["flag3"], afc_agent.FILAMENTS_32)  # more than 16 filaments may print
+        # More than 16 filaments may print, and a tray's filament may be set while printing.
+        self.assertEqual(status["flag3"], afc_agent.FILAMENTS_32 | afc_agent.FILAMENT_EDIT_PRINTING)
         self.assertTrue(status["sdcard"])
         # The active toolhead's nozzle.
         self.assertEqual((status["nozzle_temper"], status["nozzle_target_temper"]), (210.4, 215.0))
@@ -345,6 +346,93 @@ class RequestTest(Case):
         self.connect()
         self.assertEqual(self.agent.send_message_to_printer(self.dev_id, "{", 0, 0), afc_agent.ERR_INVALID_RESULT)
 
+
+class DeviceTabTest(Case):
+    """The Device tab's tray popup, refresh buttons, lamp, Load and Unload."""
+
+    def popup(self, **values):
+        request = {"command": "ams_filament_setting", "ams_id": 0, "slot_id": 0, "tray_info_idx": "OGFG99",
+                   "tray_color": "FF0000FF", "tray_type": "PLA", "nozzle_temp_min": 220, "nozzle_temp_max": 250}
+        request.update(values)
+        return self.send({"print": request})
+
+    def test_trays_describe_the_spool(self):
+        self.connect()
+        ams = self.push()["ams"]
+        self.assertEqual((ams["tray_now"], ams["tray_reading_bits"]), ("4", "0"))  # AFC has lane5 (T4) loaded
+        spool = ams["ams"][0]["tray"][0]["spool"]
+        self.assertEqual((spool["names"], spool["base"]), (["Polymaker PLA PolyLite", "PolyLite"],
+                                                           "Polymaker PolyLite PLA @Voron"))
+        self.assertEqual((spool["vendor"], spool["nozzle_temp"], spool["bed_temp"], spool["pressure_advance"]),
+                         ("Polymaker", 215, 60, -1.0))
+        self.assertNotIn("filament_preset", ams["ams"][0]["tray"][0])
+
+    def test_popup_sets_the_lane_and_keeps_the_preset(self):
+        self.connect()
+        self.push()
+        self.assertEqual(self.popup(tray_color="00FF00FF", tray_type="PETG", filament_preset="Generic PETG @System"), 0)
+        tray = self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][0]
+        self.assertEqual(tray["filament_preset"], "Generic PETG @System")
+        self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_COLOR LANE=lane1 COLOR=00FF00", self.fake.scripts)
+        # The popup's reset drops the pick.
+        self.assertEqual(self.popup(tray_info_idx="", tray_type="", tray_color="00000000"), 0)
+        tray = self.calls.messages("print", "push_status", 3)[-1]["ams"]["ams"][0]["tray"][0]
+        self.assertNotIn("filament_preset", tray)
+
+    def test_preset_pick_ends_with_the_spool(self):
+        self.connect()
+        self.push()
+        self.popup(filament_preset="Generic PLA @System")
+        self.calls.messages("print", "push_status", 2)
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane1"]["spool_id"] = 99  # another spool
+        self.assertNotIn("filament_preset", self.push(3)["ams"]["ams"][0]["tray"][0])
+
+    def test_refresh_reads_the_tag_with_the_units_command(self):
+        self.connect()
+        self.push()
+        self.fake.gcode_delay = 0.5
+        self.assertEqual(self.agent.command_ams_refresh_rfid(self.dev_id, 1, 0, 1, True), 0)  # T4: lane5, Bambu AMS
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_SCAN LANE=lane5"])
+        statuses = self.calls.messages("print", "push_status", 3)
+        self.assertEqual(statuses[1]["ams"]["tray_reading_bits"], "10")  # the tray spins while it reads
+        self.assertEqual(statuses[-1]["ams"]["tray_reading_bits"], "0")
+
+    def test_refresh_needs_a_reader(self):
+        self.connect()
+        self.push()
+        # Bambu's older command names the tray alone: T0 is a Box Turtle lane with no reader.
+        self.assertEqual(self.agent.command_ams_refresh_rfid(self.dev_id, -1, 0, 1, True), afc_agent.ERR_CAP_NOT_AVAILABLE)
+        self.fake.objects["AFC_BoxTurtle_rfid"] = {"lane_slot_map": {"lane1": "reader0"}}
+        self.push(2)
+        self.assertEqual(self.agent.command_ams_refresh_rfid(self.dev_id, -1, 0, 1, True), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_BT_RFID_STAGE LANE=lane1"])
+
+    def test_lamp(self):
+        self.fake.objects["led main_led"] = {"color_data": [[0.0, 0.0, 0.0, 1.0]]}
+        self.connect()
+        self.assertEqual(self.push()["lights_report"], [{"node": "chamber_light", "mode": "on"}])
+        self.assertEqual(self.send({"system": {"command": "ledctrl", "led_node": "chamber_light", "led_mode": "off"}}), 0)
+        self.assertEqual(self.send({"system": {"command": "ledctrl", "led_node": "chamber_light2", "led_mode": "off"}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["SET_LED LED=main_led RED=0 GREEN=0 BLUE=0 WHITE=0"])
+
+    def test_no_lamp(self):
+        self.connect()
+        self.assertNotIn("lights_report", self.push())
+        self.assertEqual(self.send({"system": {"command": "ledctrl", "led_node": "chamber_light", "led_mode": "on"}}),
+                         afc_agent.ERR_CAP_NOT_AVAILABLE)
+
+    def test_load_and_unload(self):
+        self.connect()
+        self.push()
+        load = {"command": "ams_change_filament", "ams_id": 0, "slot_id": 1, "target": 1, "curr_temp": 215, "tar_temp": 215}
+        self.assertEqual(self.send({"print": load}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane2"])
+        unload = dict(load, slot_id=255, target=255)
+        self.assertEqual(self.send({"print": unload}), afc_agent.FAILED)  # no lane is in a toolhead
 
 class PrintTest(Case):
     def project(self, text=PLATE, plate=1):
