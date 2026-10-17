@@ -1758,13 +1758,6 @@ void CalibrationPresetPage::update_show_status()
         }
     }
 
-    bool has_optional_printer_model = DevPrinterConfigUtil::is_optional_printer_model_id(obj_->printer_type);
-    if (PresetBundle *preset_bundle = wxGetApp().preset_bundle) {
-        has_optional_printer_model = has_optional_printer_model ||
-            DevPrinterConfigUtil::is_optional_printer_model_id(
-                preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle));
-    }
-
     if (obj_->is_connecting() || !obj_->is_connected()) {
         show_status(CaliPresetPageStatus::CaliPresetStatusInConnecting);
         return;
@@ -1816,9 +1809,8 @@ void CalibrationPresetPage::update_show_status()
         return;
     }
 
-    show_status(has_optional_printer_model ?
-        CaliPresetPageStatus::CaliPresetStatusOptionalPrinterModel :
-        CaliPresetPageStatus::CaliPresetStatusNormal);
+    // Orca: no warning for a printer with an unknown model, as in SelectMachineDialog.
+    show_status(CaliPresetPageStatus::CaliPresetStatusNormal);
 }
 
 

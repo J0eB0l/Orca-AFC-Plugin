@@ -4930,21 +4930,8 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
         return;
     }
 
-    bool has_optional_printer_model = DevPrinterConfigUtil::is_optional_printer_model_id(obj_->printer_type);
-    if (m_print_type == PrintFromType::FROM_NORMAL) {
-        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
-        has_optional_printer_model = has_optional_printer_model ||
-            (preset_bundle && DevPrinterConfigUtil::is_optional_printer_model_id(
-                preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle)));
-    } else if (m_print_type == PrintFromType::FROM_SDCARD_VIEW && !m_required_data_plate_data_list.empty()) {
-        has_optional_printer_model = has_optional_printer_model ||
-            DevPrinterConfigUtil::is_optional_printer_model_id(
-                m_required_data_plate_data_list[m_print_plate_idx]->printer_model_id);
-    }
-
-    if (has_optional_printer_model) {
-        show_status(PrintDialogStatus::PrintStatusOptionalPrinterModel);
-    }
+    // Orca: no warning for a printer with an unknown model (printer agents report none); the
+    // incompatible-printer check below still blocks a known mismatch.
 
     if (is_blocking_printing(obj_)) {
         show_status(PrintDialogStatus::PrintStatusUnsupportedPrinter);

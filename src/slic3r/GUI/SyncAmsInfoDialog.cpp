@@ -2315,18 +2315,7 @@ void SyncAmsInfoDialog::update_show_status()
 
     reset_timeout();
 
-    bool has_optional_printer_model = DevPrinterConfigUtil::is_optional_printer_model_id(obj_->printer_type);
-    if (m_print_type == PrintFromType::FROM_NORMAL) {
-        if (PresetBundle *preset_bundle = wxGetApp().preset_bundle) {
-            has_optional_printer_model = has_optional_printer_model ||
-                DevPrinterConfigUtil::is_optional_printer_model_id(
-                    preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle));
-        }
-    } else if (m_print_type == PrintFromType::FROM_SDCARD_VIEW && !m_required_data_plate_data_list.empty()) {
-        has_optional_printer_model = has_optional_printer_model ||
-            DevPrinterConfigUtil::is_optional_printer_model_id(m_required_data_plate_data_list[m_print_plate_idx]->printer_model_id);
-    }
-
+    // Orca: no warning for a printer with an unknown model, as in SelectMachineDialog.
     if (!obj_->GetConfig()->SupportPrintAllPlates() && m_print_plate_idx == PLATE_ALL_IDX) {
         show_status(PrintDialogStatus::PrintStatusNotSupportedPrintAll);
         return;
@@ -2420,9 +2409,6 @@ void SyncAmsInfoDialog::update_show_status()
             }
         }
     }
-
-    if (has_optional_printer_model)
-        show_status(PrintDialogStatus::PrintStatusOptionalPrinterModel);
 }
 
 bool SyncAmsInfoDialog::has_timelapse_warning()
