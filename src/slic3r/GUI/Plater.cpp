@@ -6145,11 +6145,13 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
         for (int i = 0; i < tray.cols.size(); ++i) {
             tray_config.opt<ConfigOptionStrings>("filament_multi_colour")->values.push_back(into_u8(wxColour("#" + tray.cols[i]).GetAsString(wxC2S_HTML_SYNTAX)));
         }
-        // Orca: the preset a printer agent names for the tray, and the pressure advance of its spool.
+        // Orca: the preset a printer agent names for the tray, the pressure advance of its spool and the toolhead it feeds.
         if (!tray.filament_preset.empty())
             tray_config.set_key_value("filament_preset", new ConfigOptionStrings{tray.filament_preset});
         if (tray.spool && tray.spool->pressure_advance >= 0)
             tray_config.set_key_value("spool_pressure_advance", new ConfigOptionFloats{tray.spool->pressure_advance});
+        if (tray.toolhead >= 0)
+            tray_config.set_key_value("filament_toolhead", new ConfigOptionInts{tray.toolhead});
         return tray_config;
     };
 

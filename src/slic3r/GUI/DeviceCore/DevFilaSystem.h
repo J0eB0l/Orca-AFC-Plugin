@@ -86,6 +86,7 @@ public:
     bool            is_slot_placeholder = false;  // Orca: True for empty tray slots from pull-mode agents
     std::string     filament_preset;              // Orca: the filament preset a printer agent names for the tray
     std::optional<TraySpool> spool;               // Orca: the spool on the tray, as a printer agent describes it
+    int             toolhead = -1;                // Orca: the toolhead the tray feeds, as a printer agent reports it (-1 = not known)
     int             hold_count = 0;
     int             remain = 0;         // filament remain: 0 ~ 100
 

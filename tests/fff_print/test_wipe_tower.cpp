@@ -459,3 +459,39 @@ TEST_CASE("A tower printed without a tool change is still validated against the 
     CHECK(print.wipe_tower_data(1).depth > 0.f);
     CHECK_THAT(print.validate().string, Catch::Matchers::ContainsSubstring("printable area"));
 }
+
+// Filament the tower purges for wipe_tower_toolchange_config's two filaments, which swap every
+// layer, on a printer with Multi-material per toolhead whose filaments feed `toolheads` (-1 = not
+// known). The flush between them is 280 mm3 (multifilament_config), the prime 15 mm3.
+static double tower_purge(const char *toolheads, bool purge_in_prime_tower)
+{
+    DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+                                    { "multi_extruder_multi_material", "1" },
+                                    { "purge_in_prime_tower", purge_in_prime_tower ? "1" : "0" },
+                                    { "prime_volume", "15" },
+                                    { "flush_multiplier", "1" },
+                                    { "filament_toolhead", toolheads } });
+    Print print;
+    Model model;
+    init_print({ cube(10) }, print, model, config);
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    REQUIRE(print.wipe_tower_data().number_of_toolchanges > 0);
+    double used = 0.;
+    for (float length : print.wipe_tower_data().used_filament)
+        used += length;
+    return used;
+}
+
+TEST_CASE("Purge in prime tower flushes a lane change on a toolhead and only primes a tool switch", "[WipeTower]")
+{
+    const double unknown = tower_purge("-1,-1", true);
+    // Both filaments feed toolhead 0, so every change swaps its lane and flushes 280 mm3, not 15.
+    CHECK(tower_purge("0,0", true) > 2. * unknown);
+    // Each toolhead keeps its filament loaded, so a change only primes.
+    CHECK_THAT(tower_purge("0,1", true), Catch::Matchers::WithinRel(unknown, 1e-3));
+    // Unchecked, a lane change only primes, as with SEMM off before.
+    CHECK_THAT(tower_purge("0,0", false), Catch::Matchers::WithinRel(unknown, 1e-3));
+}

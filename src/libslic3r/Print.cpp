@@ -488,6 +488,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "tool_change_on_wipe_tower"
             || opt_key == "wait_for_temp_on_wipe_tower"
             || opt_key == "purge_in_prime_tower"
+            || opt_key == "filament_toolhead"
             || opt_key == "z_offset"
             || opt_key == "support_multi_bed_types"
             ) {
@@ -5043,6 +5044,45 @@ bool Print::enable_timelapse_print() const
 }
 
 
+// Orca: which filament each toolhead holds on a multi-toolhead printer fed by a filament switcher,
+// from the toolhead of each filament slot (filament_toolhead, -1 = not known).
+namespace {
+class ToolheadLoads
+{
+public:
+    explicit ToolheadLoads(std::vector<int> toolheads) : m_toolheads(std::move(toolheads)) {}
+
+    // Records a change to `filament` and returns the filament its toolhead held before when that is a lane
+    // change, else -1: a switch to a toolhead that already holds it, the toolhead's first use in the print
+    // (what it holds then is not known), or a filament with no known toolhead.
+    int change_to(unsigned int filament)
+    {
+        if (filament >= m_toolheads.size() || m_toolheads[filament] < 0)
+            return -1;
+        const auto [held, first_use] = m_held.try_emplace(m_toolheads[filament], int(filament));
+        const int before             = first_use ? -1 : held->second;
+        held->second                 = int(filament);
+        return before != int(filament) ? before : -1;
+    }
+
+private:
+    std::vector<int>   m_toolheads;
+    std::map<int, int> m_held; // toolhead -> the filament it holds
+};
+} // namespace
+
+// Orca: the flush volume (mm3) of a lane change from filament `from` to `to`, from the flushing volume
+// matrix of the nozzle `to` feeds (the last one past the matrix) times that nozzle's flush multiplier.
+static float lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to)
+{
+    const size_t nozzles = std::max<size_t>(config.nozzle_diameter.size(), 1);
+    const size_t head    = std::min<size_t>(size_t(std::max(config.filament_toolhead.get_at(to), 0)), nozzles - 1);
+    const size_t n       = config.filament_colour.size();
+    const std::vector<double> matrix = get_flush_volumes_matrix(config.flush_volumes_matrix.values, head, nozzles);
+    const size_t index   = size_t(from) * n + to;
+    return index < matrix.size() ? float(matrix[index] * config.flush_multiplier.get_at(head)) : 0.f;
+}
+
 void Print::_make_wipe_tower()
 {
     m_wipe_tower_data.clear();
@@ -5334,6 +5374,18 @@ void Print::_make_wipe_tower()
         // to pass to wipe_tower (so that it can use it for planning the layout of the tower)
         {
             unsigned int current_extruder_id = m_wipe_tower_data.tool_ordering.all_extruders().back();
+            // Orca: with Purge in prime tower on a multi-toolhead printer fed by a filament switcher, a lane change
+            // on a toolhead flushes on the tower from the filament that toolhead held, and a switch to a toolhead
+            // that already holds its filament only primes. The changes are followed in the order GCode makes them:
+            // priming loads every extruder, else the print starts on the last one.
+            const bool    flush_lane_changes = m_config.purge_in_prime_tower && !m_config.single_extruder_multi_material &&
+                                            m_config.multi_extruder_multi_material;
+            ToolheadLoads toolhead_loads(flush_lane_changes ? m_config.filament_toolhead.values : std::vector<int>());
+            if (m_config.single_extruder_multi_material_priming)
+                for (unsigned int extruder_id : m_wipe_tower_data.tool_ordering.all_extruders())
+                    toolhead_loads.change_to(extruder_id);
+            else
+                toolhead_loads.change_to(current_extruder_id);
             for (auto &layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
                 if (!layer_tools.has_wipe_tower)
                     continue;
@@ -5343,15 +5395,22 @@ void Print::_make_wipe_tower()
                 for (const auto extruder_id : layer_tools.extruders) {
                     if ((first_layer && extruder_id == m_wipe_tower_data.tool_ordering.all_extruders().back()) || extruder_id !=
                         current_extruder_id) {
-                        float volume_to_wipe = m_config.prime_volume;
-                        if (m_config.purge_in_prime_tower && m_config.single_extruder_multi_material) {
-                            volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
-                            volume_to_wipe *= m_config.flush_multiplier.get_at(0);
+                        float     volume_to_wipe = m_config.prime_volume;
+                        const int lane_from      = toolhead_loads.change_to(extruder_id);
+                        if ((m_config.purge_in_prime_tower && m_config.single_extruder_multi_material) || lane_from >= 0) {
+                            // The filament flushed out: the lane this toolhead held, or the previous tool on a single nozzle.
+                            const unsigned int flushed_id = lane_from >= 0 ? unsigned(lane_from) : current_extruder_id;
+                            if (lane_from >= 0) {
+                                volume_to_wipe = std::max(volume_to_wipe, lane_change_flush(m_config, flushed_id, extruder_id));
+                            } else {
+                                volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
+                                volume_to_wipe *= m_config.flush_multiplier.get_at(0);
+                            }
                             // Not all of that can be used for infill purging:
                             volume_to_wipe -= (float) m_config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id);
 
                             // try to assign some infills/objects for the wiping:
-                            volume_to_wipe = layer_tools.wiping_extrusions().mark_wiping_extrusions(*this, current_extruder_id, extruder_id,
+                            volume_to_wipe = layer_tools.wiping_extrusions().mark_wiping_extrusions(*this, flushed_id, extruder_id,
                                                                                                     volume_to_wipe);
 
                             // add back the minimal amount toforce on the wipe tower:

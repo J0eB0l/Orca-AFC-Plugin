@@ -3096,6 +3096,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{-1});
 
+    // The toolhead the tray each filament slot was synced from feeds, on a multi-toolhead printer
+    // fed by a filament switcher, as a printer agent reports it; -1 = not known. Kept with the
+    // project like the filament colors. With "Purge in prime tower" it tells the wipe tower which
+    // tool changes swap the lane on a toolhead (Print::_make_wipe_tower).
+    // Internal use only, no translation.
+    def = this->add("filament_toolhead", coInts);
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{-1});
+
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");
     def->tooltip = L("Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range.");
@@ -7104,7 +7113,8 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("purge_in_prime_tower", coBool);
     def->label = L("Purge in prime tower");
-    def->tooltip = L("Purge remaining filament into prime tower.");
+    def->tooltip = L("Purge remaining filament into prime tower. With Multi-material per toolhead, a lane change on a "
+                     "toolhead is flushed on the prime tower, and a switch to a toolhead that already holds its filament only primes.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 

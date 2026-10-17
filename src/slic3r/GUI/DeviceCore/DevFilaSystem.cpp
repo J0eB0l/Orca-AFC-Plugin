@@ -120,6 +120,7 @@ void DevAmsTray::reset()
     remain              = 0;
     filament_preset.clear();
     spool.reset();
+    toolhead = -1;
 }
 
 
@@ -820,10 +821,13 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             // The tray objects are reused across status updates. Reset this
                             // state when a previously empty slot receives a filament again.
                             curr_tray->is_slot_placeholder = tray_it->contains("tray_slot_placeholder");
-                            // Orca: a printer agent may name the tray's filament preset and describe its spool.
+                            // Orca: a printer agent may name the tray's filament preset, describe its spool and
+                            // say which toolhead the tray feeds.
                             auto preset_it = tray_it->find("filament_preset");
                             curr_tray->filament_preset = preset_it != tray_it->end() && preset_it->is_string() ? preset_it->get<std::string>() : std::string();
                             curr_tray->spool = parse_tray_spool(*tray_it);
+                            auto toolhead_it = tray_it->find("toolhead");
+                            curr_tray->toolhead = toolhead_it != tray_it->end() && toolhead_it->is_number_integer() ? toolhead_it->get<int>() : -1;
                             int ams_id_int = 0;
                             int tray_id_int = 0;
                             try
