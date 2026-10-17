@@ -14,6 +14,7 @@
 #include "MsgDialog.hpp"
 #include "bambu_networking.hpp"
 #include "slic3r/Utils/Http.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include "DeviceErrorDialog.hpp"
 
 #include "RecenterDialog.hpp"
@@ -4824,7 +4825,9 @@ void StatusPanel::on_ams_refresh_rfid(wxCommandEvent &event)
             if (it->second->GetExtruderId() < obj->GetExtderSystem()->GetTotalExtderSize()) {
                 has_filament_at_extruder = obj->GetExtderSystem()->HasFilamentInExt(it->second->GetExtruderId());
             }
-        } else {
+        } else if (obj->printer_agent_id.empty() || obj->printer_agent_id == BBL_PRINTER_AGENT_ID) {
+            // Orca: a printer agent's units read each tray on their own and refuse what they cannot read, so a loaded lane
+            // does not stop the refresh.
             has_filament_at_extruder = obj->is_filament_at_extruder();
         }
 
