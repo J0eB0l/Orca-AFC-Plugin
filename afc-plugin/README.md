@@ -106,8 +106,9 @@ Then:
   AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
   FILAMENT_DT_UPDATE); a lane with no reader says so. The lane in the active
   toolhead shows its filament path to the extruder, as a Bambu printer's loaded
-  tray does, and as there OrcaSlicer refuses the refresh buttons while it is
-  loaded. **Load** and **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
+  tray does. Official OrcaSlicer 2.5 then refuses the refresh buttons while a
+  lane is loaded, as on a Bambu printer; the AFC build does not. **Load** and
+  **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
   Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
   objects named with main, chamber, case, cabinet, enclosure, light or lamp
   (`[led main_led]`, `[output_pin caselight]`), full white on or off.
