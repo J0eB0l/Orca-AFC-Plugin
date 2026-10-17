@@ -4685,6 +4685,7 @@ void StatusPanel::on_filament_edit(wxCommandEvent &event)
                 for (auto col : tray->cols) { cols.push_back(DevAmsTray::decode_color(col)); }
                 m_filament_setting_dlg->set_ctype(tray->ctype);
                 m_filament_setting_dlg->ams_filament_id = tray->setting_id;
+                m_filament_setting_dlg->ams_filament_preset = tray->filament_preset;
 
                 if (m_filament_setting_dlg->ams_filament_id.empty())
                 {
@@ -4747,6 +4748,7 @@ void StatusPanel::on_ext_spool_edit(wxCommandEvent &event)
             n_val                                   = wxString::Format("%.3f", obj->vt_slot[nozzle_index].n);
             wxColor color                           = DevAmsTray::decode_color(obj->vt_slot[nozzle_index].color);
             m_filament_setting_dlg->ams_filament_id = obj->vt_slot[nozzle_index].setting_id;
+            m_filament_setting_dlg->ams_filament_preset = obj->vt_slot[nozzle_index].filament_preset;
 
             std::vector<wxColour> cols;
             for (auto col : obj->vt_slot[nozzle_index].cols) {

@@ -1799,7 +1799,8 @@ int MachineObject::command_ams_calibrate(int ams_id)
 }
 
 int MachineObject::command_ams_filament_settings(int ams_id, int slot_id, std::string filament_id, std::string setting_id, std::string tray_color, std::string tray_type,
-                                                 int nozzle_temp_min, int nozzle_temp_max, const std::vector<std::string>& tray_colors, int tray_ctype)
+                                                 int nozzle_temp_min, int nozzle_temp_max, const std::vector<std::string>& tray_colors, int tray_ctype,
+                                                 const std::string& filament_preset)
 {
     int tag_tray_id = 0;
     int tag_ams_id  = ams_id;
@@ -1832,6 +1833,8 @@ int MachineObject::command_ams_filament_settings(int ams_id, int slot_id, std::s
         j["print"]["cols"]  = tray_colors;
         j["print"]["ctype"] = tray_ctype;
     }
+    if (!filament_preset.empty())
+        j["print"]["filament_preset"] = filament_preset;
 
     return this->publish_json(j);
 }

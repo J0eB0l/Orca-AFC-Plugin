@@ -18,6 +18,7 @@
 #include <set>
 #include <utility>
 #include "DevFilaSystem.h"
+#include "libslic3r/SpoolPreset.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "DevNozzleSystem.h" // DevNozzle / DevNozzleSystem for GetNozzleFlowStringByAmsId
 
@@ -34,6 +35,39 @@ using namespace nlohmann;
 
 namespace Slic3r {
 static int _hex_digit_to_int(const char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1; }
+
+// Orca: a tray's "spool" object, which a printer agent sends to have the filament sync give the
+// tray that spool's own preset; none without a preset name to look for.
+static std::optional<TraySpool> parse_tray_spool(const json &tray)
+{
+    auto it = tray.find("spool");
+    if (it == tray.end() || !it->is_object())
+        return std::nullopt;
+    const json &j     = *it;
+    auto        text  = [&j](const char *key) {
+        auto v = j.find(key);
+        return v != j.end() && v->is_string() ? v->get<std::string>() : std::string();
+    };
+    auto number = [&j](const char *key, double fallback) {
+        auto v = j.find(key);
+        return v != j.end() && v->is_number() ? v->get<double>() : fallback;
+    };
+    TraySpool spool;
+    if (auto names = j.find("names"); names != j.end() && names->is_array())
+        for (const json &name : *names)
+            if (name.is_string() && !name.get<std::string>().empty())
+                spool.names.push_back(name.get<std::string>());
+    if (spool.names.empty())
+        return std::nullopt;
+    spool.base             = text("base");
+    spool.vendor           = text("vendor");
+    spool.nozzle_temp      = int(number("nozzle_temp", 0));
+    spool.bed_temp         = int(number("bed_temp", 0));
+    spool.density          = number("density", 0);
+    spool.diameter         = number("diameter", 0);
+    spool.pressure_advance = number("pressure_advance", -1);
+    return spool;
+}
 
 wxColour DevAmsTray::decode_color(const std::string &color)
 {
@@ -84,6 +118,8 @@ void DevAmsTray::reset()
     is_bbl              = false;
     hold_count          = 0;
     remain              = 0;
+    filament_preset.clear();
+    spool.reset();
 }
 
 
@@ -784,6 +820,10 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             // The tray objects are reused across status updates. Reset this
                             // state when a previously empty slot receives a filament again.
                             curr_tray->is_slot_placeholder = tray_it->contains("tray_slot_placeholder");
+                            // Orca: a printer agent may name the tray's filament preset and describe its spool.
+                            auto preset_it = tray_it->find("filament_preset");
+                            curr_tray->filament_preset = preset_it != tray_it->end() && preset_it->is_string() ? preset_it->get<std::string>() : std::string();
+                            curr_tray->spool = parse_tray_spool(*tray_it);
                             int ams_id_int = 0;
                             int tray_id_int = 0;
                             try

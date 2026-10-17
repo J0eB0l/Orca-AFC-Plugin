@@ -151,6 +151,7 @@ public:
 
     std::string    ams_filament_id;
     std::string    ams_setting_id;
+    std::string    ams_filament_preset; // Orca: the preset a printer agent names for the tray
 
     bool           m_is_third;
     // Orca: view-only mode (laser/cut). When set, the dialog is inspectable but every
@@ -179,7 +180,8 @@ protected:
     void on_clr_picker(wxMouseEvent &event);
     bool is_virtual_tray();
     void update_widgets();
-    void rebuild_filament_dropdown_items(const std::string& selected_filament_id);
+    // selected: the filament id of the row to select, or its preset name in a list by preset name
+    void rebuild_filament_dropdown_items(const std::string& selected);
     void update_favorite_stars();
     std::set<std::string> load_favorite_filament_ids() const;
     void save_favorite_filament_ids(const std::set<std::string>& favorite_ids);
@@ -188,6 +190,10 @@ protected:
     void update_filament_editing(bool is_printing);
     // Orca: the variant index of the filament's per-variant options on the nozzle this tray feeds
     int  get_filament_variant_index(const Preset &filament, const std::string &nozzle_diameter_str);
+    // Orca: the filament presets the tray can be set to. A printer with no system printer preset for
+    // its model, as a printer agent drives, offers those its selected printer preset can use, by
+    // preset name (by_name), since user presets share their filament ids.
+    std::vector<Preset *> filaments_for_tray(const std::string &nozzle_diameter_str, bool &by_name) const;
 
 protected:
     StateColor          m_btn_bg_green;
@@ -230,6 +236,8 @@ protected:
     struct FilamentInfos {
         std::string filament_id;
         std::string setting_id;
+        std::string preset; // Orca: the preset's name in a list by preset name, else empty
+        const std::string &key() const { return preset.empty() ? filament_id : preset; }
     };
     struct FilamentListItem {
         FilamentInfos filament;

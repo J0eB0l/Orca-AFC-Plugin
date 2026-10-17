@@ -178,6 +178,7 @@
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/SpoolPreset.hpp"
 #include "libslic3r/IMEXHelpers.hpp"
 #include "libslic3r/PublishSettings.hpp"
 #include "slic3r/Utils/CrealityPrint.hpp"
@@ -6144,6 +6145,11 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
         for (int i = 0; i < tray.cols.size(); ++i) {
             tray_config.opt<ConfigOptionStrings>("filament_multi_colour")->values.push_back(into_u8(wxColour("#" + tray.cols[i]).GetAsString(wxC2S_HTML_SYNTAX)));
         }
+        // Orca: the preset a printer agent names for the tray, and the pressure advance of its spool.
+        if (!tray.filament_preset.empty())
+            tray_config.set_key_value("filament_preset", new ConfigOptionStrings{tray.filament_preset});
+        if (tray.spool && tray.spool->pressure_advance >= 0)
+            tray_config.set_key_value("spool_pressure_advance", new ConfigOptionFloats{tray.spool->pressure_advance});
         return tray_config;
     };
 
@@ -6320,6 +6326,19 @@ void Sidebar::load_ams_list(MachineObject* obj)
     p->combo_printer->update();
 }
 
+// Orca: puts a filament preset in the filament lists, a system one through the installed
+// filaments so it stays there after a restart. Returns whether it was hidden.
+static bool show_filament_preset(const std::string &name)
+{
+    Preset *preset = name.empty() ? nullptr : wxGetApp().preset_bundle->filaments.find_preset(name);
+    if (preset == nullptr || preset->is_visible)
+        return false;
+    preset->is_visible = true;
+    if (preset->is_system)
+        wxGetApp().app_config->set(AppConfig::SECTION_FILAMENTS, preset->name, "true");
+    return true;
+}
+
 void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
 {
     wxBusyCursor cursor;
@@ -6412,6 +6431,28 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     std::vector<std::pair<DynamicPrintConfig *,std::string>> unknowns;
     auto enable_append  = wxGetApp().app_config->get_bool("enable_append_color_by_sync_ams");
     auto sync_color_only = wxGetApp().app_config->get("sync_ams_filament_mode") == "1";
+    // Orca: a tray whose spool the printer agent describes syncs as the spool's own preset, made
+    // from the spool's data when there is none yet, unless the agent names a preset for the tray.
+    bool filament_presets_changed = false;
+    for (auto &[tray_key, tray_config] : list) {
+        const DevAmsTray *tray = sync_color_only ? nullptr :
+                                     obj->GetFilaSystem()->GetAmsTray(tray_config.opt_string("ams_id", 0u), tray_config.opt_string("slot_id", 0u));
+        if (tray == nullptr || tray_config.opt_string("filament_id", 0u).empty())
+            continue;
+        std::string preset = tray->filament_preset;
+        if (preset.empty() && tray->spool) {
+            const SpoolPreset spool = spool_filament_preset(*wxGetApp().preset_bundle, *tray->spool);
+            filament_presets_changed |= spool.created || spool.updated;
+            preset = spool.name;
+        }
+        if (preset.empty())
+            continue;
+        filament_presets_changed |= show_filament_preset(preset);
+        tray_config.set_key_value("filament_preset", new ConfigOptionStrings{preset});
+    }
+    if (filament_presets_changed)
+        if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_FILAMENT))
+            tab->update_tab_ui();
     auto n              = wxGetApp().preset_bundle->sync_ams_list(unknowns, !sync_result.direct_sync, sync_result.sync_maps, enable_append, merge_info, sync_color_only);
     wxString detail;
     for (auto & uk : unknowns) {

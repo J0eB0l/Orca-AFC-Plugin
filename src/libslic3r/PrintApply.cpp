@@ -15,6 +15,8 @@
 #include "PrintBase.hpp"
 #include "libslic3r_version.h"
 #include "TriangleSelector.hpp"
+#include "calib.hpp"
+#include "SpoolPreset.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1404,6 +1406,11 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
 
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", has_scarf_joint_seam:" << has_scarf_joint_seam;
     }
+
+    // A synced slot prints with its spool's pressure advance; calibration prints set their own.
+    // Before the variants are resolved, so the expansions made from m_ori_full_print_config keep it.
+    if (m_calib_params.mode == CalibMode::Calib_None)
+        apply_spool_pressure_advance(new_full_config);
 
     //apply extruder related values
     std::vector<int> print_variant_index;

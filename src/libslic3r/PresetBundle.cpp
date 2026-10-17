@@ -150,6 +150,8 @@ static std::vector<std::string> s_project_options {
     // Per-filament physical-nozzle choice the grouping engine writes back; project-level so a
     // saved project round-trips the assignment alongside filament_map/filament_volume_map.
     "filament_nozzle_map",
+    // Pressure advance of the spool each filament slot was synced from (-1 = the preset's).
+    "spool_pressure_advance",
     // Filament Track Switch device state: whether the switch is installed and ready, and
     // whether dynamic per-nozzle filament mapping is active. Persisted with the project and
     // restored from a saved 3mf; reset to false on load and set true only by live device sync.
@@ -3967,6 +3969,7 @@ void PresetBundle::update_selections(AppConfig &config)
 
     std::vector<int> filament_volume_maps(filament_colors.size(), static_cast<int>(NozzleVolumeType::nvtStandard));
     project_config.option<ConfigOptionInts>("filament_volume_map")->values = filament_volume_maps;
+    project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.assign(filament_colors.size(), -1.);
 
     std::vector<std::string> extruder_ams_count_str;
     if (config.has_printer_setting(initial_printer_profile_name, "extruder_ams_count")) {
@@ -4130,6 +4133,7 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
 
     std::vector<int> filament_volume_maps(filament_colors.size(), static_cast<int>(NozzleVolumeType::nvtStandard));
     project_config.option<ConfigOptionInts>("filament_volume_map")->values = filament_volume_maps;
+    project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.assign(filament_colors.size(), -1.);
 
     std::vector<std::string> extruder_ams_count_str;
     if (config.has_printer_setting(initial_printer_profile_name, "extruder_ams_count")) {
@@ -4354,6 +4358,7 @@ void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
     filament_map->values.resize(n, 1);
     filament_nozzle_map->values.resize(n, 0);
     filament_volume_map->values.resize(n, static_cast<int>(NozzleVolumeType::nvtStandard));
+    project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.resize(n, -1.);
     ams_multi_color_filment.resize(n);
 
     resize_mixed_filament_metadata(project_config, old_slot_count, n);
@@ -4414,6 +4419,8 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
         filament_nozzle_map->values.resize(to_del_flament_id, 0);
         filament_volume_map->values.resize(to_del_flament_id, static_cast<int>(NozzleVolumeType::nvtStandard));
     }
+    if (auto &spool_pa = project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values; spool_pa.size() > to_del_flament_id)
+        spool_pa.erase(spool_pa.begin() + to_del_flament_id);
 
     // lambda function to erase or resize the container
     auto erase_or_resize = [to_del_flament_id](auto& container) {
@@ -4585,6 +4592,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
     };
     auto is_double_extruder = get_printer_extruder_count() == 2;
     std::vector<AmsInfo> ams_infos;
+    // The preset, color and spool pressure advance (-1 = none) each loaded tray syncs as.
+    struct TraySpool
+    {
+        std::string preset;
+        std::string color;
+        double      pressure_advance;
+    };
+    std::vector<TraySpool> tray_spools;
+    const std::vector<std::string> presets_before_sync = this->filament_presets;
     int                  index = 0;
     for (auto &entry : filament_ams_list) {
         auto & ams = entry.second;
@@ -4596,6 +4612,8 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto ams_id     = ams.opt_string("ams_id", 0u);
         auto slot_id    = ams.opt_string("slot_id", 0u);
         auto is_placeholder = ams.has("filament_slot_placeholder") && ams.opt_bool("filament_slot_placeholder", 0u);
+        const auto *spool_pa = ams.option<ConfigOptionFloats>("spool_pressure_advance");
+        const double tray_pa = spool_pa != nullptr && !spool_pa->values.empty() ? spool_pa->values.front() : -1.;
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};
         ams_array_maps.push_back(temp);
@@ -4629,6 +4647,18 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             ams_filament_colors.push_back(filament_color);
             ams_filament_color_types.push_back(filament_color_type);
             ams_multi_color_filment.push_back(filament_multi_color);
+            tray_spools.push_back({ams_filament_presets.back(), filament_color, tray_pa});
+            continue;
+        }
+        // A preset the printer agent names for the tray (the spool's own, or one picked for it)
+        // comes before matching the filament id.
+        const std::string tray_preset = ams.has("filament_preset") ? ams.opt_string("filament_preset", 0u) : std::string();
+        if (const Preset *named = tray_preset.empty() ? nullptr : filaments.find_preset(tray_preset); named != nullptr && named->is_compatible) {
+            ams_filament_presets.push_back(named->name);
+            ams_filament_colors.push_back(filament_color);
+            ams_filament_color_types.push_back(filament_color_type);
+            ams_multi_color_filment.push_back(filament_multi_color);
+            tray_spools.push_back({named->name, filament_color, tray_pa});
             continue;
         }
         bool has_type = false;
@@ -4683,6 +4713,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     ams_filament_colors.push_back(filament_color);
                     ams_filament_color_types.push_back(filament_color_type);
                     ams_multi_color_filment.push_back(filament_multi_color);
+                    tray_spools.push_back({ams_filament_presets.back(), filament_color, tray_pa});
                     unknowns.emplace_back(&ams, has_type ? L("The filament may not be compatible with the current machine settings. Generic filament presets will be used.") :
                                                            L("The filament model is unknown. Still using the previous filament preset."));
                     continue;
@@ -4709,6 +4740,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         ams_filament_colors.push_back(filament_color);
         ams_filament_color_types.push_back(filament_color_type);
         ams_multi_color_filment.push_back(filament_multi_color);
+        tray_spools.push_back({iter->name, filament_color, tray_pa});
     }
     if (ams_filament_presets.empty())
         return 0;
@@ -5054,6 +5086,26 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             if (mixed_grad_curve_opt) mixed_grad_curve_opt->values.push_back(snap.mixed_gradient_curve);
             if (mixed_per_part_opt)   mixed_per_part_opt->values.push_back((unsigned char)snap.mixed_gradient_per_part);
         }
+    }
+
+    // Each slot takes the pressure advance of the spool it was synced from, the tray with its
+    // preset and color; a slot no tray matches keeps its own only while it keeps its preset.
+    if (!color_only) {
+        auto &spool_pa = project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values;
+        std::vector<double> synced_pa(this->filament_presets.size(), -1.);
+        for (size_t i = 0; i < synced_pa.size(); ++i) {
+            if (is_mixed_opt && i < is_mixed_opt->values.size() && is_mixed_opt->values[i])
+                continue;
+            const std::string &color = i < filament_color->values.size() ? filament_color->values[i] : std::string();
+            auto spool = std::find_if(tray_spools.begin(), tray_spools.end(), [this, i, &color](const TraySpool &tray) {
+                return tray.preset == this->filament_presets[i] && boost::iequals(tray.color, color);
+            });
+            if (spool != tray_spools.end())
+                synced_pa[i] = spool->pressure_advance;
+            else if (i < presets_before_sync.size() && presets_before_sync[i] == this->filament_presets[i] && i < spool_pa.size())
+                synced_pa[i] = spool_pa[i];
+        }
+        spool_pa = std::move(synced_pa);
     }
 
     // Update ams_multi_color_filment
@@ -6392,6 +6444,12 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         // Older projects inherit one-element mixed defaults, regardless of their filament count.
         if (!is_published)
             resize_mixed_filament_metadata(this->project_config, num_filaments, num_filaments);
+        // A project saved without synced spools keeps none from the one open before it.
+        if (auto &spool_pa = this->project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values;
+            is_published || !config.has("spool_pressure_advance"))
+            spool_pa.assign(num_filaments, -1.);
+        else
+            spool_pa.resize(num_filaments, -1.);
 
         break;
     }
@@ -8723,7 +8781,12 @@ void PresetBundle::set_filament_preset(size_t idx, const std::string &name)
         BOOST_LOG_TRIVIAL(warning) << boost::format("Warning: set_filament_preset out of range %1% - %2%") % idx % filament_presets.size();
         return;
     }
-    filament_presets[idx] = Preset::remove_suffix_modified(name);
+    const std::string preset = Preset::remove_suffix_modified(name);
+    // A slot given another filament no longer holds the spool it was synced from.
+    if (auto &spool_pa = project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values;
+        filament_presets[idx] != preset && idx < spool_pa.size())
+        spool_pa[idx] = -1.;
+    filament_presets[idx] = preset;
 }
 
 void PresetBundle::set_default_suppressed(bool default_suppressed)

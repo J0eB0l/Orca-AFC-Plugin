@@ -1,5 +1,6 @@
 #pragma once
 #include "libslic3r/CommonDefs.hpp"
+#include "libslic3r/SpoolPreset.hpp"
 #include <nlohmann/json.hpp>
 
 #include "DevDefs.h"
@@ -83,6 +84,8 @@ public:
     bool            is_bbl;
     bool            is_exists = false;
     bool            is_slot_placeholder = false;  // Orca: True for empty tray slots from pull-mode agents
+    std::string     filament_preset;              // Orca: the filament preset a printer agent names for the tray
+    std::optional<TraySpool> spool;               // Orca: the spool on the tray, as a printer agent describes it
     int             hold_count = 0;
     int             remain = 0;         // filament remain: 0 ~ 100
 

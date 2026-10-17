@@ -3088,6 +3088,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{1});
 
+    // Pressure advance saved on the spool each filament slot was synced from, as a printer agent
+    // reports it; -1 keeps the slot's preset value. Kept with the project like the filament colors
+    // and put over pressure_advance when slicing (apply_spool_pressure_advance in SpoolPreset.hpp).
+    // Internal use only, no translation.
+    def = this->add("spool_pressure_advance", coFloats);
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats{-1});
+
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");
     def->tooltip = L("Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range.");
