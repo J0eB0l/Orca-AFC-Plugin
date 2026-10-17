@@ -1182,6 +1182,8 @@ public:
 
     // Wipe tower support.
     bool                        has_wipe_tower() const;
+    // Orca: the Type 2 tower flushes a toolhead's lane changes, so its G-code depends on filament_toolhead.
+    bool                        flushes_lane_changes_on_tower() const;
     // Belt purge prism (belt-mode replacement for the wipe tower).
     bool                        has_belt_purge_tower() const;
     const WipeTowerData&        wipe_tower_data(size_t filaments_cnt = 0) const;

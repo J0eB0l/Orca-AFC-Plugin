@@ -5013,6 +5013,12 @@ bool Print::has_wipe_tower() const
     return false;
 }
 
+bool Print::flushes_lane_changes_on_tower() const
+{
+    return this->has_wipe_tower() && this->wipe_tower_type() == WipeTowerType::Type2 && m_config.purge_in_prime_tower &&
+           !m_config.single_extruder_multi_material && m_config.multi_extruder_multi_material;
+}
+
 
 const WipeTowerData &Print::wipe_tower_data(size_t filaments_cnt) const
 {
@@ -5378,9 +5384,7 @@ void Print::_make_wipe_tower()
             // on a toolhead flushes on the tower from the filament that toolhead held, and a switch to a toolhead
             // that already holds its filament only primes. The changes are followed in the order GCode makes them:
             // priming loads every extruder, else the print starts on the last one.
-            const bool    flush_lane_changes = m_config.purge_in_prime_tower && !m_config.single_extruder_multi_material &&
-                                            m_config.multi_extruder_multi_material;
-            ToolheadLoads toolhead_loads(flush_lane_changes ? m_config.filament_toolhead.values : std::vector<int>());
+            ToolheadLoads toolhead_loads(this->flushes_lane_changes_on_tower() ? m_config.filament_toolhead.values : std::vector<int>());
             if (m_config.single_extruder_multi_material_priming)
                 for (unsigned int extruder_id : m_wipe_tower_data.tool_ordering.all_extruders())
                     toolhead_loads.change_to(extruder_id);

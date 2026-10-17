@@ -7300,6 +7300,8 @@ struct Plater::priv
     std::string m_broken_shown_sig;
     bool auto_reslice_pending {false};
     bool auto_reslice_after_cancel {false};
+    // Orca: the rest of a print, run once the plate is sliced again for the toolheads picked (reslice_for_toolheads).
+    std::function<void(bool)> m_after_reslice;
     int m_is_RightClickInLeftUI{-1};
     int m_cur_slice_plate;
     //BBS: m_slice_all in .gcode.3mf file case, set true when slice all
@@ -13348,10 +13350,15 @@ bool Plater::priv::warnings_dialog()
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": enter, m_ignore_event %1%, status %2%")%m_ignore_event %evt.status();
+    // Orca: a print waiting on this slice goes on only when it succeeds, and never with a later one.
+    std::function<void(bool)> after_reslice = std::move(m_after_reslice);
+    m_after_reslice = nullptr;
     //BBS:ignore cancel event for some special case
     if (m_ignore_event)
     {
         m_ignore_event = false;
+        if (after_reslice)
+            q->CallAfter([after_reslice] { after_reslice(false); });
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": ignore this event %1%") % evt.status();
         return;
     }
@@ -13545,6 +13552,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         //not the last plate
         update_fff_scene_only_shells();
         q->Thaw();
+    }
+    if (after_reslice) {
+        const bool sliced = !has_error && !evt.cancelled() && evt.success();
+        q->CallAfter([after_reslice, sliced] { after_reslice(sliced); });
     }
     if (auto_reslice_after_cancel) {
         auto_reslice_after_cancel = false;
@@ -20827,6 +20838,45 @@ void Plater::reslice()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, started slicing for plate %1%") % p->partplate_list.get_curr_plate_index();
 
     record_slice_preset("slicing");
+}
+
+// Orca: the prime tower flushes the lane changes the plate was sliced for (Print::flushes_lane_changes_on_tower), so
+// when the trays picked put a filament on another toolhead, the plate is sliced again for those toolheads before the
+// print goes on.
+bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolheads, std::function<void(bool)> resume)
+{
+    if (plate_idx != p->partplate_list.get_curr_plate_index())
+        return false;
+    // Another print while one waits on its slice waits on that slice instead.
+    if (p->m_after_reslice && p->background_process.running()) {
+        p->m_after_reslice = std::move(resume);
+        return true;
+    }
+    PartPlate   *plate = p->partplate_list.get_curr_plate();
+    const Print *print = plate->fff_print();
+    if (print == nullptr || !print->flushes_lane_changes_on_tower())
+        return false;
+
+    const std::vector<int> &sliced = print->config().filament_toolhead.values;
+    std::vector<int>       &heads  = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    bool                    changed = !plate->is_slice_result_valid();
+    for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
+        if (toolheads[i] >= 0 && toolheads[i] != (i < sliced.size() ? sliced[i] : -1)) {
+            heads[i] = toolheads[i];
+            changed  = true;
+        }
+    if (!changed)
+        return false;
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": slicing plate " << plate_idx << " again for the toolheads of the trays picked";
+    p->m_slice_all     = false;
+    p->m_after_reslice = std::move(resume);
+    reslice();
+    if (!p->background_process.running() && p->m_after_reslice) {
+        CallAfter([not_sliced = std::move(p->m_after_reslice)] { not_sliced(false); });
+        p->m_after_reslice = nullptr;
+    }
+    return true;
 }
 
 void Plater::record_slice_preset(std::string action)

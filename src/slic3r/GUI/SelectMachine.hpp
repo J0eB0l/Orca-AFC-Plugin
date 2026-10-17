@@ -325,6 +325,7 @@ private:
     bool                                m_check_flag {false};
     bool                                m_ext_change_assist{ false };
     bool                                m_upload_only{ false }; // Orca: the Upload button was pressed, not Send
+    bool                                m_waiting_reslice{ false }; // Orca: the print waits on a new slice for the trays picked
     PrintPageMode                       m_print_page_mode{PrintPageMode::PrintPageModePrepare};
     std::string                         m_print_error_msg;
     std::string                         m_print_error_extra;

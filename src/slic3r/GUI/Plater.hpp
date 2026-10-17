@@ -601,6 +601,10 @@ public:
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
     void reslice();
+    // Orca: when the prime tower flushes lane changes and the trays picked for a print put a filament on another toolhead
+    // (-1 = as sliced), slices plate_idx again for them and calls resume(true) once that succeeds, else resume(false).
+    // False when no new slice is needed.
+    bool reslice_for_toolheads(int plate_idx, const std::vector<int> &toolheads, std::function<void(bool)> resume);
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);

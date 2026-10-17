@@ -1984,6 +1984,7 @@ bool SelectMachineDialog::is_selected_ams_drying(MachineObject* obj)
 void SelectMachineDialog::prepare(int print_plate_idx)
 {
     m_print_plate_idx = print_plate_idx;
+    m_waiting_reslice = false;
 }
 
 void SelectMachineDialog::update_print_status_msg()
@@ -3581,6 +3582,18 @@ void SelectMachineDialog::navigate_to_timelapse_page()
     this->EndModal(wxID_CANCEL);
 }
 
+// Orca: the toolhead the tray picked for each filament feeds, as the printer reports it (-1 = not known or not picked).
+static std::vector<int> picked_toolheads(const std::vector<FilamentInfo> &mapping, const DevFilaSystem *fila_system)
+{
+    std::vector<int> toolheads(wxGetApp().preset_bundle->filament_presets.size(), -1);
+    for (const FilamentInfo &picked : mapping) {
+        const DevAmsTray *tray = fila_system != nullptr ? fila_system->GetAmsTray(picked.ams_id, picked.slot_id) : nullptr;
+        if (tray != nullptr && picked.id >= 0 && size_t(picked.id) < toolheads.size())
+            toolheads[picked.id] = tray->toolhead;
+    }
+    return toolheads;
+}
+
 void SelectMachineDialog::on_send_print()
 {
     BOOST_LOG_TRIVIAL(info) << "print_job: on_ok to send";
@@ -3627,6 +3640,28 @@ void SelectMachineDialog::on_send_print()
     // enter sending mode
     sending_mode();
     m_status_bar->enable_cancel_button();
+
+    // Orca: the trays picked can put a filament on another toolhead than the plate was sliced for. When the prime tower
+    // flushes lane changes, the plate is sliced again for them and the print goes on once that is done.
+    const auto resume = [this](bool sliced) {
+        const bool waiting = m_waiting_reslice;
+        m_waiting_reslice  = false;
+        if (!waiting || m_is_canceled || !IsShown())
+            return;
+        if (!sliced) {
+            m_status_bar->set_status_text(_L("The plate could not be sliced again for the trays picked, so it was not sent"));
+            return;
+        }
+        m_is_in_sending_mode = false;
+        on_send_print();
+    };
+    if (m_print_type == PrintFromType::FROM_NORMAL &&
+        m_plater->reslice_for_toolheads(m_print_plate_idx, picked_toolheads(m_ams_mapping_result, obj_->GetFilaSystem().get()), resume)) {
+        m_waiting_reslice = true;
+        // TRN A lane change is a toolhead switching to another tray of the filament switcher that feeds it
+        m_status_bar->set_status_text(_L("Slicing again for the trays picked, so the prime tower flushes their lane changes"));
+        return;
+    }
 
     // get ams_mapping_result
     std::string ams_mapping_array;
