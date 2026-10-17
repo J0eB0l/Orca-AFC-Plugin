@@ -335,7 +335,16 @@ class StatusTest(Case):
         self.fake.webhook = None
         self.fake.objects.pop("AFC")
         self.connect()
-        self.assertNotIn("ams", self.push())
+        status = self.push()
+        self.assertEqual(("ams" in status, "hw_switch_state" in status), (False, False))
+
+    def test_loaded_lane_has_filament_at_the_extruder(self):
+        self.connect()
+        status = self.push()
+        self.assertEqual((status["ams"]["tray_now"], status["hw_switch_state"]), ("4", 1))
+        self.fake.webhook["status:"]["AFC"]["system"]["current_load"] = None
+        status = self.push(2)
+        self.assertEqual((status["ams"]["tray_now"], status["hw_switch_state"]), ("255", 0))
 
     def test_presets_read_again_when_syncing(self):
         self.connect()

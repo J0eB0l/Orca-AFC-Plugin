@@ -332,6 +332,10 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
     if snapshot is not None:
         out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading, by_unit, dry_filaments)
+        # A Bambu printer's filament switch at the extruder: set, the Device tab draws the tray_now tray's
+        # path to the extruder. Never with no tray (255), which OrcaSlicer reads as the external spool.
+        now = out["ams"].get("tray_now")
+        out["hw_switch_state"] = 1 if now not in (None, "%d" % trays.NO_TRAY) else 0
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
