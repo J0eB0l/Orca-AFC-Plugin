@@ -93,7 +93,10 @@ Then:
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges and spool flow K the AFC G-code step adds, uploads the file
   to Moonraker and starts it. On a Snapmaker U1, the dialog's bed leveling, flow
-  calibration and timelapse switches go into the file.
+  calibration and timelapse switches go into the file. In the AFC build of
+  OrcaSlicer the dialog also has **Upload**, which does the same without starting
+  the print. **Send** in the menu next to **Print plate** uploads the file as
+  sliced, with no tray choice.
 
 Without the agent, OrcaSlicer's own Moonraker agent also syncs AFC's lanes by T
 number, with generic presets only.

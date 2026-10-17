@@ -212,6 +212,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "mc_print_error_code": 0, "print_error": 0,
         "home_flag": home_flag, "flag3": FILAMENTS_32 | FILAMENT_EDIT_PRINTING, "sdcard": True,
         "support_send_to_sd": True,
+        # The AFC build of OrcaSlicer then adds Upload to the print dialog: stored with the dialog's trays, not started.
+        "support_upload_only": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],

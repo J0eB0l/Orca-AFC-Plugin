@@ -287,6 +287,7 @@ class StatusTest(Case):
         status = self.push()
         self.assertEqual(status["support_bed_leveling"], 1)
         self.assertTrue(status["support_flow_calibration"] and status["support_timelapse"])
+        self.assertIs(status["support_upload_only"], True)
         self.assertTrue(status["home_flag"] & afc_agent.FLOW_CALIBRATION and status["home_flag"] & afc_agent.PA_CALIBRATION)
 
     def test_without_afc_keeps_the_trays_out(self):
@@ -485,6 +486,17 @@ class PrintTest(Case):
         self.assertEqual(code, 0)
         self.assertIn("Cube_box_plate_1.gcode", self.fake.uploads)
         self.assertEqual(self.fake.started, [])
+
+    def test_upload_keeps_the_dialogs_trays(self):
+        # The print dialog's Upload button: stored with its tray mapping, not started.
+        self.connect()
+        stages = []
+        code = self.agent.start_send_gcode_to_sdcard(self.print_params(), lambda *stage: stages.append(stage),
+                                                     lambda: False, None)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.fake.started, [])
+        text = self.fake.uploads["Cube_box_plate_1.gcode"].decode()
+        self.assertEqual([line.split(" ")[0] for line in text.splitlines() if line[:1] == "T"], ["T4", "T0"])
 
     def test_lan_check(self):
         self.assertEqual(self.agent.start_send_gcode_to_sdcard(PrintParams(project_name="verify_job"),
