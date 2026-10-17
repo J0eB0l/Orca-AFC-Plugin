@@ -25,6 +25,7 @@
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h"
 #include "slic3r/GUI/Widgets/ProgressBar.hpp"
 #include "libslic3r/calib.hpp"
+#include "libslic3r/SpoolPreset.hpp"
 #include <boost/log/trivial.hpp>
 #include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/CameraPopup.hpp"
@@ -4685,7 +4686,10 @@ void StatusPanel::on_filament_edit(wxCommandEvent &event)
                 for (auto col : tray->cols) { cols.push_back(DevAmsTray::decode_color(col)); }
                 m_filament_setting_dlg->set_ctype(tray->ctype);
                 m_filament_setting_dlg->ams_filament_id = tray->setting_id;
-                m_filament_setting_dlg->ams_filament_preset = tray->filament_preset;
+                // Orca: the preset the printer agent names for the tray, else the spool's own.
+                m_filament_setting_dlg->ams_filament_preset = !tray->filament_preset.empty() || !tray->spool ?
+                                                                  tray->filament_preset :
+                                                                  existing_spool_preset(*wxGetApp().preset_bundle, *tray->spool);
 
                 if (m_filament_setting_dlg->ams_filament_id.empty())
                 {

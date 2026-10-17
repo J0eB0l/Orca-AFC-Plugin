@@ -76,6 +76,23 @@ std::string spool_filament_id(const PresetCollection &filaments, const std::stri
     return {};
 }
 
+// The compatible preset named like the spool, the user's before the system ones, so a preset
+// made for the spool keeps winning over a system preset of that name arriving later.
+Preset *find_spool_preset(PresetCollection &filaments, const TraySpool &spool)
+{
+    for (const std::string &name : spool.names) {
+        const std::string key = lower_ascii(name);
+        for (bool system : {false, true}) {
+            auto it = std::find_if(filaments.begin(), filaments.end(), [&key, system](const Preset &preset) {
+                return preset.is_compatible && !preset.is_default && preset.is_system == system && preset_base_key(preset.name) == key;
+            });
+            if (it != filaments.end())
+                return &*it;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
 bool apply_spool_values(const TraySpool &spool, DynamicPrintConfig &config)
@@ -114,28 +131,19 @@ bool apply_spool_values(const TraySpool &spool, DynamicPrintConfig &config)
     return changed;
 }
 
+std::string existing_spool_preset(PresetBundle &bundle, const TraySpool &spool)
+{
+    const Preset *found = find_spool_preset(bundle.filaments, spool);
+    return found != nullptr ? found->name : std::string();
+}
+
 SpoolPreset spool_filament_preset(PresetBundle &bundle, const TraySpool &spool)
 {
     SpoolPreset out;
     if (spool.names.empty())
         return out;
     PresetCollection &filaments = bundle.filaments;
-
-    // The user's presets before the system ones, so a preset made for the spool keeps winning
-    // over a system preset of that name arriving later.
-    Preset *found = nullptr;
-    for (size_t a = 0; a < spool.names.size() && found == nullptr; ++a) {
-        const std::string key = lower_ascii(spool.names[a]);
-        for (bool system : {false, true}) {
-            auto it = std::find_if(filaments.begin(), filaments.end(), [&key, system](const Preset &preset) {
-                return preset.is_compatible && !preset.is_default && preset.is_system == system && preset_base_key(preset.name) == key;
-            });
-            if (it != filaments.end()) {
-                found = &*it;
-                break;
-            }
-        }
-    }
+    Preset           *found     = find_spool_preset(filaments, spool);
     // A system preset cannot hold the spool's pressure advance, so a spool with one gets its own copy.
     const bool copy_system = found != nullptr && found->is_system && spool.pressure_advance >= 0;
     if (found != nullptr && !copy_system) {

@@ -38,6 +38,10 @@ extern const std::string SPOOL_PRESET_NOTE;
 // stays ruled out. Returns whether anything changed.
 bool apply_spool_values(const TraySpool &spool, DynamicPrintConfig &config);
 
+// The compatible preset named like the spool that spool_filament_preset() would pick, without
+// making or changing one; "" when there is none.
+std::string existing_spool_preset(PresetBundle &bundle, const TraySpool &spool);
+
 // The filament preset for a spool on the selected printer: a compatible user preset, then a system
 // one, named like the spool, else a user preset "<name> @<printer>" copied from spool.base with the
 // spool's values. A spool with a saved pressure advance that matches a system preset gets its own
