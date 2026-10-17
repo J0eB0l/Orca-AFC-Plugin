@@ -14,7 +14,7 @@ FLUSH_ONE = [0, 100, 200,
 
 
 def config_block(flavor="klipper", semm="0", flush=FLUSH_ONE, nozzles="0.4", adaptive="0,0,0",
-                 diameters="1.75,1.75,2.85"):
+                 diameters="1.75,1.75,2.85", extra=""):
     return ("; CONFIG_BLOCK_START\n"
             "; adaptive_pressure_advance = %s\n"
             "; filament_colour = #FF0000;#00FF00;#0000FF\n"
@@ -23,7 +23,17 @@ def config_block(flavor="klipper", semm="0", flush=FLUSH_ONE, nozzles="0.4", ada
             "; gcode_flavor = %s\n"
             "; nozzle_diameter = %s\n"
             "; single_extruder_multi_material = %s\n"
-            "; CONFIG_BLOCK_END\n") % (adaptive, diameters, ",".join(str(v) for v in flush), flavor, nozzles, semm)
+            "%s"
+            "; CONFIG_BLOCK_END\n") % (adaptive, diameters, ",".join(str(v) for v in flush), flavor, nozzles, semm, extra)
+
+
+# "Purge in prime tower" with Multi-material per toolhead, sliced with filaments 0 and 1 on toolhead 0.
+TOWER = ("; enable_prime_tower = 1\n; purge_in_prime_tower = 1\n; multi_extruder_multi_material = 1\n"
+         "; wipe_tower_type = type2\n; filament_toolhead = 0,0,1\n")
+
+
+def tower_change(tool):
+    return "; CP TOOLCHANGE START\nG1 X10\nT%d\nG1 X20\n; CP TOOLCHANGE END\n" % tool
 
 
 def area(d):
@@ -48,6 +58,23 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(settings.flush_volume(0, 0, 1), 100)
         self.assertEqual(settings.flush_volume(0, 2, 1), 130)
         self.assertEqual(settings.flush_volume(0, 1, 5), 0)
+        self.assertFalse(settings.tower_flushes)
+
+    def test_flush_multiplier_per_nozzle(self):
+        settings = g.FileSettings.from_config(g.read_config_block(
+            config_block(nozzles="0.4,0.4", extra="; flush_multiplier = 1.5,0.5\n")))
+        self.assertEqual(settings.flush_volume(0, 0, 1), 150)
+        self.assertEqual(settings.flush_volume(1, 0, 1), 50)
+
+    def test_tower_flushes(self):
+        settings = g.FileSettings.from_config(g.read_config_block(config_block(extra=TOWER)))
+        self.assertTrue(settings.tower_flushes)
+        self.assertEqual(settings.sliced_toolheads, [0, 0, 1])
+        for off in ("; purge_in_prime_tower = 0\n", "; multi_extruder_multi_material = 0\n",
+                    "; enable_prime_tower = 0\n", "; wipe_tower_type = type1\n"):
+            # A later key in the block wins, as it would on reading the block.
+            settings = g.FileSettings.from_config(g.read_config_block(config_block(extra=TOWER + off)))
+            self.assertFalse(settings.tower_flushes, off)
 
     def test_one_block_per_nozzle(self):
         settings = g.FileSettings.from_config(g.read_config_block(
@@ -92,6 +119,26 @@ class PurgeTest(unittest.TestCase):
     def test_unknown_toolhead_keeps_the_line(self):
         out = self.run_file("T0\nT1 PURGE_LENGTH=99\n", g.Plan(toolheads={0: 0}))
         self.assertEqual(out.splitlines()[1], "T1 PURGE_LENGTH=99")
+
+    def test_tower_flushed_lane_change(self):
+        out = self.run_file("T0\n" + tower_change(1) + tower_change(2) + tower_change(0), g.Plan(toolheads={0: 0, 1: 0, 2: 1}),
+                            extra=TOWER)
+        self.assertNotIn("PURGE_LENGTH", out)  # 0 -> 1 on toolhead 0 was flushed on the tower, as was 1 -> 0
+
+    def test_tower_lane_change_the_mapping_moved(self):
+        # Sliced with filament 2 on toolhead 1, the print dialog put it on toolhead 0's lanes.
+        out = self.run_file("T0\n" + tower_change(2), g.Plan(toolheads={0: 0, 2: 0}), extra=TOWER)
+        self.assertAlmostEqual(purge(out, 3), round(200 / area(2.85), 1))
+
+    def test_tower_switch_the_mapping_made_a_lane_change(self):
+        # Sliced on two toolheads, the tower only primed; the mapping put both on toolhead 0.
+        out = self.run_file("T0\n" + tower_change(1), g.Plan(toolheads={0: 0, 1: 0}),
+                            extra=TOWER.replace("filament_toolhead = 0,0,1", "filament_toolhead = 0,1,1"))
+        self.assertAlmostEqual(purge(out, 3), round(100 / area(1.75), 1))
+
+    def test_lane_change_off_the_tower_still_purges(self):
+        out = self.run_file("T0\nT1\n", g.Plan(toolheads={0: 0, 1: 0}), extra=TOWER)
+        self.assertAlmostEqual(purge(out, 1), round(100 / area(1.75), 1))
 
     def test_tower_flushes_with_single_extruder_mm(self):
         out = self.run_file("T0\nT1\n", g.Plan(toolheads={0: 0, 1: 0}), semm="1")

@@ -10,13 +10,18 @@ rewrites the file for what AFC does with it:
   the start G-code: the `T` of `M104` / `M109` (not one with an `A` parameter,
   a Snapmaker extruder number) and `TOOL=`, `INITIAL_TOOL=` and `T<n>_TEMP=`
   of `PRINT_START` / `START_PRINT`.
-- **Lane-change purge.** With "single extruder multi-material" off, the prime
-  tower only primes, so a change between two lanes that feed one toolhead gets
-  `PURGE_LENGTH=<mm>` on its `T` line for AFC's poop: the flushing volume from
-  the filament that toolhead held, out of the file's flush volume table, over
+- **Lane-change purge.** With "single extruder multi-material" off, a change
+  between two lanes that feed one toolhead gets `PURGE_LENGTH=<mm>` on its `T`
+  line for AFC's poop: the flushing volume from the filament that toolhead
+  held, out of the file's flush volume table times its flush multiplier, over
   the filament's cross-section. The first lane a toolhead loads, and a switch
   to a toolhead that already holds its filament, get none, so AFC purges its
-  own default length if it loads a lane there.
+  own default length if it loads a lane there. With "Purge in prime tower" and
+  "Multi-material per toolhead" on, the AFC build of OrcaSlicer flushes the
+  lane changes of the prime tower's tool changes on the tower, from the
+  toolheads the trays reported at filament sync (`filament_toolhead`); such a
+  change gets no PURGE_LENGTH when it is still the same lane change after the
+  print dialog's mapping. Every other lane change still goes to the poop.
 - **Spool pressure advance.** A lane whose Spoolman spool has a saved flow K
   (`flow_k`, written by AFC autocal) prints with it: a
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` follows its `T` line, and the file's own
@@ -37,6 +42,8 @@ from .protocol import Snapshot
 
 CONFIG_START = "; CONFIG_BLOCK_START"
 CONFIG_END = "; CONFIG_BLOCK_END"
+TOWER_CHANGE_START = "; CP TOOLCHANGE START"
+TOWER_CHANGE_END = "; CP TOOLCHANGE END"
 
 _T_LINE = re.compile(r"^([ \t]*)T(\d{1,3})(?=[ \t;\r\n]|$)(.*)$", re.S)
 _PURGE = re.compile(r"[ \t]*PURGE_LENGTH=[^ \t;\r\n]*", re.I)
@@ -84,29 +91,53 @@ def _bools(value: str) -> list:
     return [item.strip() in ("1", "true") for item in value.split(",")] if value else []
 
 
+def _ints(value: str) -> list:
+    out = []
+    for item in (value or "").split(","):
+        try:
+            out.append(int(item))
+        except ValueError:
+            out.append(-1)
+    return out if value else []
+
+
+def _on(config: dict, key: str) -> bool:
+    return config.get(key, "0") in ("1", "true")
+
+
 @dataclass
 class FileSettings:
     """What the transform needs from the file's own settings."""
     klipper: bool = False
     single_extruder_mm: bool = False   # "single extruder multi-material": the tower flushes
     diameters: list = field(default_factory=list)  # filament diameter per filament, mm
-    flush: list = field(default_factory=list)      # flush_volumes_matrix, mm³, flush multiplier applied
+    flush: list = field(default_factory=list)      # flush_volumes_matrix, mm³
+    multipliers: list = field(default_factory=list)  # flush_multiplier per nozzle
     filaments: int = 0
     nozzles: int = 1
     adaptive_pa: list = field(default_factory=list)  # adaptive pressure advance per filament
+    tower_flushes: bool = False  # the prime tower flushes the lane changes it plans ("Purge in prime tower")
+    sliced_toolheads: list = field(default_factory=list)  # filament_toolhead as sliced, -1 = not known
 
     @classmethod
     def from_config(cls, config: dict) -> "FileSettings":
         diameters = _floats(config.get("filament_diameter", ""))
         colors = [c for c in config.get("filament_colour", "").split(";") if c] if config.get("filament_colour") else []
+        single_extruder_mm = _on(config, "single_extruder_multi_material")
         return cls(
             klipper=config.get("gcode_flavor", "") == "klipper",
-            single_extruder_mm=config.get("single_extruder_multi_material", "0") in ("1", "true"),
+            single_extruder_mm=single_extruder_mm,
             diameters=diameters,
             flush=_floats(config.get("flush_volumes_matrix", "")),
+            multipliers=_floats(config.get("flush_multiplier", "")),
             filaments=max(len(diameters), len(colors)),
             nozzles=max(1, len(_floats(config.get("nozzle_diameter", "")))),
             adaptive_pa=_bools(config.get("adaptive_pressure_advance", "")),
+            # As Print::_make_wipe_tower plans it: a Type 2 tower, SEMM off, Multi-material per toolhead.
+            tower_flushes=(_on(config, "enable_prime_tower") and _on(config, "purge_in_prime_tower")
+                           and _on(config, "multi_extruder_multi_material") and not single_extruder_mm
+                           and config.get("wipe_tower_type", "type2") != "type1"),
+            sliced_toolheads=_ints(config.get("filament_toolhead", "")),
         )
 
     @property
@@ -115,9 +146,9 @@ class FileSettings:
         return self.klipper and not self.single_extruder_mm
 
     def flush_volume(self, toolhead: int, before: int, after: int) -> float:
-        """mm³ to flush going from filament `before` to `after` on a toolhead.
-        The table holds one n×n block per nozzle; a toolhead past the last
-        block uses the last one."""
+        """mm³ to flush going from filament `before` to `after` on a toolhead,
+        times that toolhead's flush multiplier. The table holds one n×n block
+        per nozzle; a toolhead past the last block uses the last one."""
         n = self.filaments
         if n <= 0 or before >= n or after >= n or not self.flush:
             return 0.0
@@ -125,8 +156,14 @@ class FileSettings:
         if blocks <= 0:
             return 0.0
         block = min(max(toolhead, 0), blocks - 1)
-        volume = self.flush[block * n * n + before * n + after]
+        head = min(max(toolhead, 0), self.nozzles - 1)
+        multiplier = self.multipliers[head] if head < len(self.multipliers) else (
+            self.multipliers[0] if self.multipliers else 1.0)
+        volume = self.flush[block * n * n + before * n + after] * multiplier
         return volume if math.isfinite(volume) and volume > 0 else 0.0
+
+    def sliced_toolhead(self, filament: int) -> int:
+        return self.sliced_toolheads[filament] if 0 <= filament < len(self.sliced_toolheads) else -1
 
     def area(self, filament: int) -> float:
         d = self.diameters[filament] if filament < len(self.diameters) else (self.diameters[-1] if self.diameters else 1.75)
@@ -213,8 +250,10 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
 
     lines = text.splitlines(keepends=True)
     loaded = {}           # toolhead -> filament it holds
+    sliced = {}           # the same, by the toolheads the file was sliced with
     active = -1           # filament printing now
     in_config = False
+    in_tower_change = False
     out = []
     for line in lines:
         first = line.lstrip(" \t")[:1]
@@ -223,6 +262,10 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 in_config = True
             elif line.startswith(CONFIG_END):
                 in_config = False
+            elif line.startswith(TOWER_CHANGE_START):
+                in_tower_change = True
+            elif line.startswith(TOWER_CHANGE_END):
+                in_tower_change = False
             out.append(line)
             continue
         if in_config or not first:
@@ -236,11 +279,17 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 result.tool_changes += 1
                 active = number
                 purge = 0.0
+                sliced_before = -1
+                if settings.tower_flushes and settings.sliced_toolhead(number) >= 0:
+                    sliced_before = sliced.get(settings.sliced_toolhead(number), -1)
+                    sliced[settings.sliced_toolhead(number)] = number
                 if settings.purges and number in plan.toolheads:
                     head = plan.toolheads[number]
                     before = loaded.get(head, -1)
                     loaded[head] = number
-                    if before >= 0 and before != number:
+                    # The tower flushed this lane change as sliced, and the mapping kept it.
+                    flushed = in_tower_change and before == sliced_before
+                    if before >= 0 and before != number and not flushed:
                         area = settings.area(number)
                         volume = settings.flush_volume(head, before, number)
                         purge = volume / area if area > 0 else 0.0

@@ -19,7 +19,11 @@ Klipper file to AFC:
   its `T` line, so AFC's poop purges the flushing volume from the project's
   flush volume table (the prime tower only primes when "single extruder
   multi-material" is off). The first lane a toolhead loads and a switch to a
-  toolhead that already holds its filament get none;
+  toolhead that already holds its filament get none. In the AFC build of
+  OrcaSlicer, with "Purge in prime tower" and "Multi-material per toolhead" on,
+  the prime tower flushes the lane changes of its own tool changes instead,
+  from the toolhead each tray reported at filament sync, and those get no
+  `PURGE_LENGTH` unless the print dialog's mapping changed them;
 - a lane whose Spoolman spool has a saved flow K prints with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
   lines for it take that K (filaments with adaptive pressure advance keep theirs).

@@ -45,6 +45,12 @@ class AmsTest(unittest.TestCase):
         self.assertEqual(t0["spool"]["pressure_advance"], 0.035)
         self.assertNotIn("k", ams["ams"][1]["tray"][1])  # no K saved on that spool
 
+    def test_toolhead_of_each_tray(self):
+        snap = Snapshot(present=True, lanes=[loaded("lane1", 0, extruder_index=2), loaded("lane2", 1)])
+        first = trays.ams_json(snap, {0: "GFL99", 1: "GFL99"})["ams"][0]["tray"]
+        self.assertEqual(first[0]["toolhead"], 2)
+        self.assertNotIn("toolhead", first[1])  # AFC names no extruder for it
+
     def test_nothing_loaded_is_tray_255(self):
         snap = Snapshot(present=True, lanes=[loaded("lane1", 0)])
         self.assertEqual(trays.ams_json(snap, {})["tray_now"], "255")
