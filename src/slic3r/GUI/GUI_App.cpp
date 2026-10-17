@@ -482,6 +482,15 @@ public:
         BitmapCache bmp_cache;
         m_logo_bmp = *bmp_cache.load_svg(dark_mode ? "splash_logo_dark" : "splash_logo", sz.GetWidth(), sz.GetHeight());
 
+        // AFC: "Powered by" badge with the AFC logo. A PNG (nanosvg draws no images), drawn at 4x and scaled down smoothly.
+        wxImage badge;
+        if (badge.LoadFile(from_u8(var(dark_mode ? "splash_powered_by_afc_dark.png" : "splash_powered_by_afc.png")), wxBITMAP_TYPE_PNG) &&
+            badge.GetWidth() > 0) {
+            const int badge_w = sz.GetWidth() / 4;
+            badge.Rescale(badge_w, std::max(1, badge.GetHeight() * badge_w / badge.GetWidth()), wxIMAGE_QUALITY_HIGH);
+            m_badge_bmp = wxBitmap(badge);
+        }
+
         m_window->Bind(wxEVT_PAINT, &SplashScreen::OnPaint, this);
         m_window->Refresh();
         m_window->Update();
@@ -505,8 +514,16 @@ public:
         rc.height = dc.GetTextExtent(m_text_version).GetHeight();
         dc.DrawLabel(m_text_version, rc, wxALIGN_CENTER);
 
+        // AFC: the badge goes centered under the version and pushes the action text down past it
+        int action_y = c_sz.GetHeight() * 0.85;
+        if (m_badge_bmp.IsOk()) {
+            const int badge_y = rc.GetBottom() + FromDIP(2);
+            dc.DrawBitmap(m_badge_bmp, (c_sz.GetWidth() - m_badge_bmp.GetWidth()) / 2, badge_y, true);
+            action_y = std::max(action_y, badge_y + m_badge_bmp.GetHeight() + FromDIP(4));
+        }
+
         dc.SetFont(m_font_action);
-        rc.y      = c_sz.GetHeight() * 0.85;
+        rc.y      = action_y;
         rc.height = dc.GetTextExtent(m_text_action).GetHeight();
         dc.DrawLabel(m_text_action, rc, wxALIGN_CENTER);
 
@@ -568,6 +585,7 @@ public:
 
 private:
     wxBitmap m_logo_bmp;
+    wxBitmap m_badge_bmp;
     wxColour m_fg_color;
     wxColour m_bg_color;
     wxColour m_progress_bg_color;
