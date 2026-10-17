@@ -422,6 +422,7 @@ class _Printer:
     by_unit: bool = False                             # OrcaSlicer syncs trays by the T number each reports: lay them out by AFC unit
     dry_filaments: dict = field(default_factory=dict) # unit -> the filament the drying popup started it for
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
+    lane_k: dict = field(default_factory=dict)        # lane with no Spoolman spool -> (K set in the tray popup, spool_key())
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
     camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
     camera_due: float = 0.0                           # when to read the webcam list again
@@ -659,6 +660,7 @@ else:
             status = status if isinstance(status, dict) else {}
             printer.readers = controls.reader_lanes(status)
             if snapshot is not None:
+                self._kept_k(printer, snapshot)
                 printer.snapshot = snapshot
             ids, extras = self._trays(printer, snapshot) if snapshot is not None else ({}, {})
             with self._lock:
@@ -700,6 +702,18 @@ else:
                 return
             with self._lock:
                 printer.camera = camera
+
+        def _kept_k(self, printer: _Printer, snapshot) -> None:
+            """Gives each lane with no Spoolman spool the K set for it in the tray
+            popup, which sync then puts in its filament slot and a print applies,
+            until the lane gets a spool or another filament."""
+            with self._lock:
+                for name, (k, key) in list(printer.lane_k.items()):
+                    lane = snapshot.find_lane(name)
+                    if lane is None or not lane.has_filament or lane.spool_id > 0 or spool_key(lane) != key:
+                        del printer.lane_k[name]
+                    else:
+                        lane.flow_k = k
 
         def _trays(self, printer: _Printer, snapshot) -> tuple:
             """For each loaded tray: the filament id of the preset that fits its
@@ -856,21 +870,21 @@ else:
         def _tray_k(self, printer: _Printer, job: dict) -> int:
             """The tray popup's Factor K: saved on the lane's Spoolman spool as
             its flow K, which filament sync puts in the slot and AFC autocal
-            applies when the lane loads. A lane without a spool has nowhere to keep
-            it, so its K is dropped: the popup sends K with every Confirm, and a
-            warning there would follow a filament change that worked."""
+            applies when the lane loads. A lane without a spool keeps it here
+            (_kept_k()) for sync and prints, until OrcaSlicer closes."""
             tray, k = job.get("tray_id"), _number(job.get("k_value"))
             # The popup names the tray unit * 4 + slot, an AMS HT's too.
             tool = self._layout(printer).tool(tray // 4, tray % 4) if isinstance(tray, int) and tray >= 0 else -1
             lane = controls.lane_of(printer.snapshot, tool)
-            if lane is None:
-                return ERR_INVALID_RESULT
-            if lane.spool_id <= 0:
-                return SUCCESS
-            if k is None or not 0 < k < 2:
+            if lane is None or k is None or not 0 < k < 2:
                 return ERR_INVALID_RESULT
             # The popup shows K to four places: one confirmed unchanged keeps the spool's own.
             if lane.flow_k >= 0 and abs(k - lane.flow_k) < 0.00005:
+                return SUCCESS
+            if lane.spool_id <= 0:
+                with self._lock:
+                    printer.lane_k[lane.name] = (k, spool_key(lane))
+                self._worker.submit(lambda: self._push(printer))
                 return SUCCESS
             spoolman = protocol.spoolman_for_printer(printer.snapshot.spoolman_url, printer.client.url)
 
@@ -1022,7 +1036,10 @@ else:
             if data is None:
                 return ERR_FILE_NOT_EXIST
             # surrogateescape gives back the file byte for byte where nothing changed.
-            text = prepare(data.decode("utf-8", "surrogateescape"), job, self._manager.read(printer.client), printer.by_unit)
+            snapshot = self._manager.read(printer.client)
+            if snapshot is not None:
+                self._kept_k(printer, snapshot)
+            text = prepare(data.decode("utf-8", "surrogateescape"), job, snapshot, printer.by_unit)
             name = upload_name(job.project, job.plate)
             if canceled.is_set():
                 return ERR_CANCELED

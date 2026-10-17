@@ -463,11 +463,17 @@ class DeviceTabTest(Case):
         self.assertEqual(self.cali_set(0, 0.03251), 0)
         self.agent._worker.call(lambda: None, 5)
         self.assertEqual(len(self.fake.requests), writes)
-        # A lane with no Spoolman spool has nowhere to keep a K: it is dropped without a warning.
+        # A lane with no Spoolman spool keeps its K in the agent, for sync and prints.
         writes = len(self.fake.requests)
         self.assertEqual(self.cali_set(1, 0.04), 0)
         self.agent._worker.call(lambda: None, 5)
-        self.assertEqual(len(self.fake.requests), writes)
+        self.assertFalse([r for r in self.fake.requests[writes:] if "spool" in str(r)])
+        tray = self.calls.messages("print", "push_status", 3)[-1]["ams"]["ams"][0]["tray"][1]
+        self.assertEqual((tray["k"], tray["spool"]["pressure_advance"]), (0.04, 0.04))
+        # It goes when the lane gets a spool.
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane2"]["spool_id"] = 12
+        self.agent._worker.call(lambda: self.agent._push(self.agent._current()), 5)
+        self.assertEqual(self.agent._current().lane_k, {})
         # K stays within the popup's range.
         self.assertEqual(self.cali_set(0, 2.5), afc_agent.ERR_INVALID_RESULT)
 
