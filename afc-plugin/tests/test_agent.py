@@ -185,6 +185,12 @@ class ConnectTest(Case):
         self.assertEqual(self.agent.disconnect_printer(), 0)
         self.assertEqual(self.send({"pushing": {"command": "pushall"}}), -1)
 
+    def test_named_after_the_printer_preset(self):
+        # Printers often share a host name ("lava" on every U1): the preset that prints to it names it.
+        orca.bundle.printer.values["print_host"] = self.fake.url
+        self.connect()
+        self.assertEqual(self.calls.events[0][1]["dev_name"], "My Voron")
+
     def test_bind_detect(self):
         self.connect()
         detect = fake_orca.DetectResult()
@@ -211,7 +217,7 @@ class ClaimTest(Case):
         self.assertTrue(self.agent.start_discovery(True, False))
         ssdp = self.calls.wait_for(lambda e: e[0] == "ssdp")[0][1]
         self.assertEqual((ssdp["dev_id"], ssdp["dev_ip"], ssdp["dev_name"], ssdp["dev_type"]),
-                         ("10.0.0.5:7125", "10.0.0.5:7125", "Voron 2.4 300", "Voron2_300"))
+                         ("10.0.0.5:7125", "10.0.0.5:7125", "My Voron", "Voron2_300"))
         self.assertEqual((ssdp["connect_type"], ssdp["bind_state"]), ("lan", "free"))
 
     def test_leaves_a_selected_printer(self):

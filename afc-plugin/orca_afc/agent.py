@@ -115,6 +115,20 @@ def printer_model(bundle) -> tuple:
     return model, ""
 
 
+def preset_name(bundle, dev_id: str) -> str:
+    """The name of the printer preset that prints to the printer at `dev_id`
+    (the selected preset first), "" for none; the device list shows it, as
+    printers often share a host name. UI thread."""
+    if bundle is None:
+        return ""
+    printers = bundle.printers
+    for preset in [bundle.current_printer_preset()] + [printers.preset(i) for i in range(printers.size())]:
+        host = _first(preset.config_value("print_host")) if preset is not None else ""
+        if host and dev_id_from_address(host, _first(preset.config_value("printhost_port"))) == dev_id:
+            return str(preset.name or "")
+    return ""
+
+
 def _https(bundle) -> bool:
     """The printer preset's address is https (OrcaSlicer hands the agent the host without it)."""
     try:
@@ -539,8 +553,9 @@ else:
             try:
                 bundle = orca.host.preset_bundle()
                 model, model_file = printer_model(bundle)
+                name = preset_name(bundle, str(params.dev_id or ""))
             except Exception:  # OrcaSlicer is starting up or closing
-                bundle, model, model_file = None, "", ""
+                bundle, model, model_file, name = None, "", "", ""
             host = str(params.host or "")
             if "://" not in host:
                 host = ("https://" if params.use_ssl or _https(bundle) else "http://") + host
@@ -548,7 +563,7 @@ else:
             url = base_url(host + (":" + port if port and not re.search(r":\d+$", host) else ""))
             access_code = str(params.password or "") or NO_ACCESS_CODE
             key = "" if access_code == NO_ACCESS_CODE else access_code
-            printer = _Printer(str(params.dev_id or ""), Moonraker(url, key), access_code, model, model_file)
+            printer = _Printer(str(params.dev_id or ""), Moonraker(url, key), access_code, model, model_file, name=name)
             with self._lock:
                 self._printer = printer
             if bundle is not None:
@@ -589,7 +604,7 @@ else:
                 return
             info = info if isinstance(info, dict) else {}
             printer.version = str(info.get("software_version") or "")
-            printer.name = str(info.get("hostname") or "") or printer.model or "AFC printer"
+            printer.name = printer.name or str(info.get("hostname") or "") or printer.model or "AFC printer"
             try:
                 listed = printer.client.objects_list()
                 objects = listed.get("objects") if isinstance(listed, dict) else listed
@@ -1127,7 +1142,7 @@ else:
                 return
             model, model_file = printer_model(bundle)
             dev_id = dev_id_from_address(host, port)
-            ssdp(announcement(dev_id, model or dev_id, model_id(model, model_file)))
+            ssdp(announcement(dev_id, str(preset.name or "") or model or dev_id, model_id(model, model_file)))
 
         def bind_detect(self, dev_ip, sec_link, detect):
             printer = self._current()
