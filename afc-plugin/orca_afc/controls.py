@@ -44,6 +44,24 @@ def find_lights(objects) -> list:
     return out
 
 
+# ------------------------------------------------------------------ chamber
+
+# A chamber heater first: it has a target.
+CHAMBER_KINDS = ("heater_generic", "temperature_sensor", "temperature_fan")
+CHAMBER_WORDS = ("chamber", "cavity", "enclosure", "cabinet")
+
+
+def find_chamber(objects) -> str:
+    """The Klipper object ("temperature_sensor chamber") that reads the
+    chamber's temperature, from Moonraker's object list; "" for none."""
+    found = {}
+    for obj in objects or []:
+        kind, _, name = str(obj).partition(" ")
+        if kind in CHAMBER_KINDS and any(w in name.lower() for w in CHAMBER_WORDS):
+            found.setdefault(kind, str(obj))
+    return next((found[kind] for kind in CHAMBER_KINDS if kind in found), "")
+
+
 def light_query(lights: list) -> dict:
     return {obj: ["value"] if obj.startswith("output_pin ") else ["color_data"] for obj in lights}
 

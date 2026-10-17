@@ -502,6 +502,17 @@ class DeviceTabTest(Case):
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["SET_LED LED=main_led RED=0 GREEN=0 BLUE=0 WHITE=0"])
 
+    def test_chamber_temperature(self):
+        self.fake.objects["temperature_sensor chamber"] = {"temperature": 38.6}
+        self.connect()
+        push = self.push()
+        self.assertEqual((push["support_chamber"], push["chamber_temper"], "ctt" in push), (True, 38.6, False))
+
+    def test_no_chamber(self):
+        self.connect()
+        push = self.push()
+        self.assertEqual((push["support_chamber"], "chamber_temper" in push), (False, False))
+
     def test_no_lamp(self):
         self.connect()
         self.assertNotIn("lights_report", self.push())

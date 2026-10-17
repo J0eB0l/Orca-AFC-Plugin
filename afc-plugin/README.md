@@ -82,6 +82,9 @@ Then:
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
   dries cooler (an ACE's 55 °C) dries at its most. AFC units that would need
   more than four AMS beside AMS HT units (or eight AMS HT) are shown by T number.
+  The AFC build also shows the chamber's temperature when Klipper has a
+  heater_generic, temperature_sensor or temperature_fan named with chamber,
+  cavity, enclosure or cabinet.
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
   named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a

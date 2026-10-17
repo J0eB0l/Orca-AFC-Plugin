@@ -192,13 +192,15 @@ def announcement(dev_id: str, name: str, dev_type: str) -> str:
 # ------------------------------------------------------------------ messages
 
 
-def status_query(extruders: list, lights=()) -> dict:
+def status_query(extruders: list, lights=(), chamber: str = "") -> dict:
     # display_status holds the slicer's M73 progress, print_stats.info the layers SET_PRINT_STATS_INFO sets.
     query = {"print_stats": ["state", "filename", "print_duration", "info"], "toolhead": ["homed_axes", "extruder"],
              "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"],
              "display_status": ["progress"], "gcode_move": ["gcode_position"]}
     for name in extruders or ["extruder"]:
         query[name] = ["temperature", "target"]
+    if chamber:
+        query[chamber] = ["temperature", "target"]
     query.update(controls.light_query(list(lights)))
     query.update(controls.reader_query())
     return query
@@ -248,12 +250,13 @@ def _layers(state: str, stats: dict, position, job: dict):
 
 
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
-                by_unit: bool = False, dry_filaments=None) -> dict:
+                by_unit: bool = False, dry_filaments=None, chamber: str = "") -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
     (trays.ams_json()), `lights` are the printer's lights, which the lamp
-    shows, and `job` the print file's job_info()."""
+    shows, `job` the print file's job_info() and `chamber` the Klipper
+    object that reads the chamber's temperature (controls.find_chamber())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -285,6 +288,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
+        # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
+        "support_chamber": bool(chamber),
     }
     nozzle = obj(str(toolhead.get("extruder") or "extruder"))
     bed = obj("heater_bed")
@@ -292,6 +297,11 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                               ("bed_temper", bed, "temperature"), ("bed_target_temper", bed, "target")):
         value = _number(source.get(name))
         if value is not None:
+            out[key] = value
+    # A chamber heater's target too (a temperature_fan's is the fan's, not a heat target).
+    for key, name in (("chamber_temper", "temperature"), ("ctt", "target")):
+        value = _number(obj(chamber).get(name)) if chamber else None
+        if value is not None and (key != "ctt" or chamber.startswith("heater_generic ")):
             out[key] = value
     speed = _number(obj("fan").get("speed"))
     if speed is not None:
@@ -430,6 +440,7 @@ class _Printer:
     failures: int = 0
     extruders: list = field(default_factory=lambda: ["extruder"])
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
+    chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
     reading: set = field(default_factory=set)         # T numbers whose tag is being read
@@ -609,6 +620,7 @@ else:
                 listed = printer.client.objects_list()
                 objects = listed.get("objects") if isinstance(listed, dict) else listed
                 printer.lights = controls.find_lights(objects if isinstance(objects, list) else [])
+                printer.chamber = controls.find_chamber(objects if isinstance(objects, list) else [])
             except MoonrakerError:
                 pass
             if not printer.model_id:
@@ -657,7 +669,7 @@ else:
             if snapshot is not None and snapshot.extruders:
                 printer.extruders = list(snapshot.extruders)
             try:
-                objects = printer.client.objects_query(status_query(printer.extruders, printer.lights))
+                objects = printer.client.objects_query(status_query(printer.extruders, printer.lights, printer.chamber))
             except MoonrakerError:
                 printer.failures += 1
                 if printer.failures >= LOST_AFTER:
@@ -684,7 +696,7 @@ else:
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
             self._camera(printer)
             self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job,
-                                            printer.by_unit, dry_filaments))
+                                            printer.by_unit, dry_filaments, printer.chamber))
 
         def _job(self, printer: _Printer, filename) -> dict:
             """job_info() of the file being printed, read once per file, and

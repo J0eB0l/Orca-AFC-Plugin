@@ -18,6 +18,14 @@ class LightTest(unittest.TestCase):
                    "neopixel toolhead_light", "output_pin beeper", "AFC_led Turtle_1", "led", "extruder"]
         self.assertEqual(controls.find_lights(objects), ["led main_led", "neopixel chamber", "output_pin caselight"])
 
+    def test_finds_the_chamber_sensor(self):
+        self.assertEqual(controls.find_chamber(["temperature_sensor mcu_temp", "temperature_sensor cavity"]),
+                         "temperature_sensor cavity")
+        # A chamber heater before a sensor: it has a target.
+        self.assertEqual(controls.find_chamber(["temperature_sensor chamber", "heater_generic chamber_heater"]),
+                         "heater_generic chamber_heater")
+        self.assertEqual(controls.find_chamber(["temperature_sensor raspberry_pi", "neopixel chamber"]), "")
+
     def test_on_when_any_channel_is(self):
         lights = ["led main_led", "output_pin caselight"]
         off = {"led main_led": {"color_data": [[0.0, 0.0, 0.0, 0.0]]}, "output_pin caselight": {"value": 0.0}}
