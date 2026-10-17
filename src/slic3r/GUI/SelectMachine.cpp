@@ -1515,7 +1515,9 @@ ShowType SelectMachineDialog::get_filament_mapping_show_type(MachineObject* obj_
     try {
         const auto& full_config = wxGetApp().preset_bundle->full_config();
         size_t total_ext_count = full_config.option<ConfigOptionFloats>("nozzle_diameter")->values.size();
-        if (total_ext_count < 2) {
+        // Orca: the popup shows only the right panel for a printer that reports one extruder, such as a
+        // toolchanger behind a printer agent, so a multi-toolhead preset must not lock that panel.
+        if (total_ext_count < 2 || (obj_ && obj_->GetExtderSystem()->GetTotalExtderCount() < 2)) {
             return ShowType::RIGHT;
         }
 
