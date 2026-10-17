@@ -86,6 +86,7 @@ class AFCManager:
         self.snapshot = Snapshot()
         self.printer = ""       # the printer the snapshot came from
         self._flow_k = {}       # spool id -> (k, read at)
+        self._k_way = ""        # how K was read last: "direct" (AFC's Spoolman) or "proxy" (Moonraker's)
         self._move = None       # (thread, "lane4 is loading") while a lane move runs
         self._move_error = ""   # how the last lane move failed, until the page shows it
 
@@ -96,6 +97,7 @@ class AFCManager:
         the same printer keeps its last good snapshot."""
         if client.url != self.printer:
             self._flow_k.clear()
+            self._k_way = ""
         try:
             snap = read_snapshot(client)
         except MoonrakerError as error:
@@ -116,8 +118,7 @@ class AFCManager:
         return snap if not error and source == client.url and snap.present else None
 
     def _read_flow_k(self, client: Moonraker, snap: Snapshot) -> None:
-        """Each spool's saved pressure advance, from Spoolman through Moonraker,
-        or from AFC's own Spoolman address when Moonraker cannot ask it."""
+        """Each spool's saved pressure advance, from Spoolman."""
         now = self._clock()
         for lane in snap.lanes:
             if lane.spool_id <= 0:
@@ -129,19 +130,21 @@ class AFCManager:
                 self._flow_k[lane.spool_id] = known
             lane.flow_k = known[0]
 
-    @staticmethod
-    def _spool_flow_k(client: Moonraker, spool: int, spoolman_url: str) -> float:
-        try:
-            return protocol.spool_flow_k(client.spoolman_spool(spool))
-        except PrinterUnreachable:
-            return -1.0
-        except MoonrakerError:
-            pass
+    def _spool_flow_k(self, client: Moonraker, spool: int, spoolman_url: str) -> float:
+        """Asks AFC's own Spoolman address (where autocal writes K) and Moonraker's
+        Spoolman proxy, the way that answered last first. One that is slow or
+        fails does not stop the other."""
+        ways = [("proxy", lambda: client.spoolman_spool(spool))]
         if spoolman_url:
+            direct = ("direct", lambda: fetch_json("%s/api/v1/spool/%d" % (spoolman_url.rstrip("/"), spool)))
+            ways.insert(1 if self._k_way == "proxy" else 0, direct)
+        for way, ask in ways:
             try:
-                return protocol.spool_flow_k(fetch_json("%s/api/v1/spool/%d" % (spoolman_url.rstrip("/"), spool)))
+                k = protocol.spool_flow_k(ask())
             except MoonrakerError:
-                pass
+                continue
+            self._k_way = way
+            return k
         return -1.0  # counts as "no K" until it is due again
 
     def state(self, printer: str, hint: str = "", error: str = "") -> dict:

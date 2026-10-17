@@ -127,6 +127,24 @@ class FlowKTest(Case):
         self.assertEqual(self.refreshed()["afc"]["lanes"][0]["flow_k"], 0.032)
         self.assertIn("/api/v1/spool/12", self.fake.paths())
 
+    def test_afc_spoolman_first(self):
+        # A slow Moonraker proxy can't hide K when AFC's own Spoolman answers.
+        self.fake.spools = {12: SPOOL_12}
+        self.fake.webhook["status:"]["AFC"]["system"]["spoolman"] = self.fake.url
+        self.assertEqual(self.refreshed()["afc"]["lanes"][0]["flow_k"], 0.032)
+        self.assertEqual(self.proxy_calls(), 0)
+
+    def test_proxy_first_once_afc_spoolman_fails(self):
+        spoolman = FakeMoonraker()  # has no spool 12
+        self.addCleanup(spoolman.close)
+        self.fake.spools = {12: SPOOL_12}
+        self.fake.webhook["status:"]["AFC"]["system"]["spoolman"] = spoolman.url
+        self.assertEqual(self.refreshed()["afc"]["lanes"][0]["flow_k"], 0.032)
+        self.assertEqual((self.proxy_calls(), len(spoolman.paths())), (1, 1))
+        self.now += FLOW_K_MAX_AGE
+        self.refreshed()
+        self.assertEqual((self.proxy_calls(), len(spoolman.paths())), (2, 1))
+
 
 class CommandTest(Case):
     def setUp(self):
