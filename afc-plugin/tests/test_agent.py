@@ -529,7 +529,7 @@ class UnitLayoutTest(Case):
         self.assertTrue(status["support_remote_dry"])
         ams = status["ams"]
         self.assertEqual([(u["id"], u["info"], [t["tool"] for t in u["tray"]]) for u in ams["ams"]],
-                         [("0", "0002", [0, 1]), ("1", "0003", [4, 5]), ("128", "0004", [6])])
+                         [("0", "0001", [0, 1]), ("1", "0003", [4, 5]), ("128", "0004", [6])])
         self.assertEqual((ams["ams"][1]["humidity_raw"], ams["ams"][2]["dryer"], ams["tray_now"]), ("35", False, "4"))
         # The HT's tray is the tool's lane.
         request = {"command": "ams_filament_setting", "ams_id": 128, "slot_id": 0, "tray_info_idx": "OGFG99",

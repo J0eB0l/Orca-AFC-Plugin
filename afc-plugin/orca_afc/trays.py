@@ -12,7 +12,8 @@ four trays (ids 0-7, a tray id being unit * 4 + slot) and one-tray AMS HT units
   tray reports (the AFC build says so in its pushall): each unit's lanes in
   its own AMS, four to one, and a unit with one lane, or a toolchanger's tool,
   an AMS HT. A unit with a dryer is an AMS 2 Pro (one lane: an AMS HT), which
-  shows its humidity and takes OrcaSlicer's drying popup.
+  shows its humidity and takes OrcaSlicer's drying popup; one without is an AMS
+  that shows no humidity.
 """
 
 from __future__ import annotations
@@ -30,8 +31,8 @@ NO_TRAY = 0xFF
 # so four-tray units beside them keep ids 0-3.
 HT_ID, MAX_HT = 128, 8
 MAX_BOXES, MAX_BOXES_WITH_HT = 7, 4
-# AMS types in a unit's "info": an AMS lite, an AMS 2 Pro, an AMS HT.
-AMS_LITE, AMS_2_PRO, AMS_HT = 2, 3, 4
+# AMS types in a unit's "info": an AMS, an AMS 2 Pro, an AMS HT.
+AMS, AMS_2_PRO, AMS_HT = 1, 3, 4
 DRYING, HEATING = 2, 1  # the dry status and sub status OrcaSlicer reads in "info"
 TOOLCHANGER = "Toolchanger"  # AFC's unit type for a toolchanger's tools
 
@@ -241,7 +242,7 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             if tool in reading:
                 reading_bits |= 1 << bit
             slots.append(tray_json(slot, lane, filament_ids.get(tool, ""), extras.get(tool), tool))
-        kind = AMS_HT if box.single else AMS_2_PRO if dryer is not None else AMS_LITE
+        kind = AMS_HT if box.single else AMS_2_PRO if dryer is not None else AMS
         # "info": the AMS type, on the first extruder, and its dryer's state.
         info = kind | ((DRYING << 4 | HEATING << 22) if dryer is not None and dryer.drying else 0)
         entry = {"id": str(box.ams_id), "info": "%04X" % info, "tray": slots}
@@ -249,6 +250,8 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             entry.update(dryer_json(dryer, dry_filaments.get(box.unit, "")))
         elif box.single:
             entry["dryer"] = False
+        else:
+            entry["humidity"] = "0"  # an AMS shows a humidity level 1-5 (5 when not sent)
         units.append(entry)
     now = "%d" % shown.tray(current_tray(snapshot))
     return {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits,

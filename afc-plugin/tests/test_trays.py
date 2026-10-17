@@ -22,7 +22,7 @@ class AmsTest(unittest.TestCase):
         ams = trays.ams_json(snap, {0: "GFL99", 6: "GFG99"})
         self.assertEqual((ams["ams_exist_bits"], ams["tray_exist_bits"]), ("3", "41"))
         first, second = ams["ams"]
-        self.assertEqual((first["id"], first["info"], len(first["tray"]), len(second["tray"])), ("0", "0002", 4, 3))
+        self.assertEqual((first["id"], first["info"], len(first["tray"]), len(second["tray"])), ("0", "0001", 4, 3))
         t0 = first["tray"][0]
         self.assertEqual((t0["tray_info_idx"], t0["tray_color"], t0["remain"]), ("GFL99", "FF8800FF", 25))
         self.assertEqual(first["tray"][1]["tray_slot_placeholder"], "1")  # lane2 holds nothing
@@ -85,8 +85,9 @@ class UnitLayoutTest(unittest.TestCase):
         snap = units_snapshot()
         ams = trays.ams_json(snap, {}, reading={12}, by_unit=True, dry_filaments={"Ace_1": "PETG"})
         self.assertEqual([(u["id"], u["info"]) for u in ams["ams"]],
-                         [("0", "0002"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
+                         [("0", "0001"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
         turtle, ace, tool1, tool2, ht = ams["ams"]
+        self.assertEqual((turtle["humidity"], "dryer" in turtle), ("0", False))  # an AMS, no humidity shown
         self.assertEqual([t["tool"] for t in turtle["tray"]] + [t["tool"] for t in ace["tray"]], [0, 1, 2, 3, 6, 7, 8, 9])
         self.assertEqual((tool1["tray"][0]["tool"], tool1["dryer"], tool2["tray"][0]["tool"], ht["tray"][0]["tool"]),
                          (4, False, 5, 12))
