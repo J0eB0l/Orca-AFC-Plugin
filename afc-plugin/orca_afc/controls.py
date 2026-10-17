@@ -19,7 +19,7 @@ import urllib.parse
 
 from . import protocol
 from .protocol import AFCError, Lane, Snapshot
-from .trays import MAX_TRAY, NO_TRAY, lanes_by_tray
+from .trays import NO_TRAY, Layout, lanes_by_tray
 
 # ------------------------------------------------------------------ lights
 
@@ -132,13 +132,6 @@ def rfid_scan_gcode(lane: Lane, readers: dict) -> str:
 # ------------------------------------------------------------------ trays
 
 
-def tray_of(ams_id, slot_id) -> int:
-    """The tray (T number) of a unit and slot OrcaSlicer names, -1 for none."""
-    if isinstance(ams_id, int) and isinstance(slot_id, int) and 0 <= slot_id < 4 and 0 <= ams_id * 4 + slot_id <= MAX_TRAY:
-        return ams_id * 4 + slot_id
-    return -1
-
-
 def lane_of(snapshot: Snapshot, tray: int):
     return lanes_by_tray(snapshot).get(tray) if snapshot is not None and tray >= 0 else None
 
@@ -158,13 +151,14 @@ def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict) -> lis
     return protocol.build_lane_edit_gcode(snapshot, lane.name, changes) if changes else []
 
 
-def change_filament_gcode(snapshot: Snapshot, request: dict) -> str:
+def change_filament_gcode(snapshot: Snapshot, request: dict, shown: Layout) -> str:
     """Load (a tray) or Unload (the unit's lane in a toolhead, the active
-    toolhead's lane first) from the Device tab."""
+    toolhead's lane first) from the Device tab, whose units are `shown`."""
     ams_id, slot_id = request.get("ams_id"), request.get("slot_id")
     if slot_id == NO_TRAY or request.get("target") == NO_TRAY:
-        trays = lanes_by_tray(snapshot)
-        loaded = [trays[t] for t in sorted(trays) if isinstance(ams_id, int) and t // 4 == ams_id and trays[t].tool_loaded]
+        trays, box = lanes_by_tray(snapshot), shown.box(ams_id)
+        tools = box.tools if box is not None else []
+        loaded = [trays[t] for t in tools if t in trays and trays[t].tool_loaded]
         current = snapshot.find_lane(snapshot.current_lane) if snapshot.current_lane else None
         if current is not None and current.tool_loaded and (not loaded or current in loaded):
             lane = current
@@ -173,7 +167,7 @@ def change_filament_gcode(snapshot: Snapshot, request: dict) -> str:
         else:
             raise AFCError("no lane is loaded in a toolhead")
         return protocol.build_lane_action_gcode(snapshot, lane.name, "unload")
-    lane = lane_of(snapshot, tray_of(ams_id, slot_id))
+    lane = lane_of(snapshot, shown.tool(ams_id, slot_id))
     if lane is None:
         raise AFCError("no lane on that tray")
     return protocol.build_lane_action_gcode(snapshot, lane.name, "load")

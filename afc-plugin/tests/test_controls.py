@@ -3,8 +3,8 @@
 import unittest
 
 import fake_orca  # noqa: F401
-from orca_afc import controls
-from orca_afc.protocol import AFCError, Lane, Snapshot
+from orca_afc import controls, trays
+from orca_afc.protocol import AFCError, Lane, Snapshot, Unit
 
 
 def lane(name, tool, unit="Turtle_1", unit_type="Box_Turtle", **values):
@@ -69,10 +69,11 @@ class TrayTest(unittest.TestCase):
             lane("lane5", 4, "Bambu_AMS_1", "BambuAMS", material="PLA"),
             lane("lane6", 5, "Bambu_AMS_1", "BambuAMS", material="PLA", tool_loaded=True),
         ])
+        self.shown = trays.layout(self.snap)
 
-    def test_tray_of(self):
-        self.assertEqual((controls.tray_of(1, 2), controls.tray_of(255, 0), controls.tray_of(0, 4)), (6, -1, -1))
-        self.assertIs(controls.lane_of(self.snap, 4), self.snap.lanes[2])
+    def test_lane_of(self):
+        self.assertIs(controls.lane_of(self.snap, self.shown.tool(1, 0)), self.snap.lanes[2])
+        self.assertIsNone(controls.lane_of(self.snap, -1))
 
     def test_popup_sets_what_changed(self):
         lane1 = self.snap.lanes[0]
@@ -83,27 +84,32 @@ class TrayTest(unittest.TestCase):
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_color": "00000000"}), [])
 
     def test_load_a_tray(self):
-        self.assertEqual(controls.change_filament_gcode(self.snap, {"ams_id": 1, "slot_id": 0, "target": 4}),
+        self.assertEqual(controls.change_filament_gcode(self.snap, {"ams_id": 1, "slot_id": 0, "target": 4}, self.shown),
                          "CHANGE_TOOL LANE=lane5")
 
     def test_unload_the_units_loaded_lane(self):
         unload = {"ams_id": 1, "slot_id": 255, "target": 255}
-        self.assertEqual(controls.change_filament_gcode(self.snap, unload), "TOOL_UNLOAD LANE=lane6")
+        self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane6")
         unload["ams_id"] = 0  # the active toolhead's lane is in this unit
-        self.assertEqual(controls.change_filament_gcode(self.snap, unload), "TOOL_UNLOAD LANE=lane2")
+        self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane2")
         unload["ams_id"] = 3  # nothing of this unit is loaded: the active toolhead's lane
-        self.assertEqual(controls.change_filament_gcode(self.snap, unload), "TOOL_UNLOAD LANE=lane2")
+        self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane2")
 
     def test_nothing_to_load_or_unload(self):
         with self.assertRaises(AFCError):
-            controls.change_filament_gcode(self.snap, {"ams_id": 2, "slot_id": 0})
+            controls.change_filament_gcode(self.snap, {"ams_id": 2, "slot_id": 0}, self.shown)
         empty = Snapshot(present=True, lanes=[lane("lane1", 0)])
         with self.assertRaises(AFCError):
-            controls.change_filament_gcode(empty, {"ams_id": 0, "slot_id": 255})
+            controls.change_filament_gcode(empty, {"ams_id": 0, "slot_id": 255}, trays.layout(empty))
 
+    def test_load_and_unload_by_afc_unit(self):
+        self.snap.units = [Unit("Turtle_1", "Box_Turtle", ["lane1", "lane2"]), Unit("Bambu_AMS_1", "BambuAMS", ["lane5", "lane6"])]
+        shown = trays.layout(self.snap, by_unit=True)
+        self.assertEqual(controls.change_filament_gcode(self.snap, {"ams_id": 1, "slot_id": 1, "target": 1}, shown),
+                         "CHANGE_TOOL LANE=lane6")
+        unload = {"ams_id": 1, "slot_id": 255, "target": 255}
+        self.assertEqual(controls.change_filament_gcode(self.snap, unload, shown), "TOOL_UNLOAD LANE=lane6")
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class CameraTest(unittest.TestCase):
@@ -125,3 +131,7 @@ class CameraTest(unittest.TestCase):
     def test_no_camera(self):
         self.assertEqual(controls.camera([], "http://10.0.0.5"), ("", ""))
         self.assertEqual(controls.camera([{"service": "webrtc-go2rtc", "stream_url": "/go2rtc/"}], "http://10.0.0.5"), ("", ""))
+
+
+if __name__ == "__main__":
+    unittest.main()

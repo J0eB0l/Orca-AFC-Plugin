@@ -71,7 +71,15 @@ tab, filament sync and print dialog. To use it:
 Then:
 
 - The **Device** tab shows the printer, with AFC's lanes as its AMS trays: one
-  tray per T number, four to a unit (the first unit holds T0 to T3).
+  tray per T number, four to a unit (the first unit holds T0 to T3). The AFC
+  build of OrcaSlicer shows each AFC unit as its own AMS instead, four lanes to
+  one, and a unit of one lane (a Bambu AMS HT) or each tool of a toolchanger as
+  an AMS HT. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
+  humidity and temperature; clicking the humidity opens OrcaSlicer's drying
+  popup, which starts and stops the unit's dryer (ACE_DRY or
+  AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
+  dries cooler (an ACE's 55 °C) dries at its most. AFC units that would need
+  more than four AMS beside AMS HT units (or eight AMS HT) are shown by T number.
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
   named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a

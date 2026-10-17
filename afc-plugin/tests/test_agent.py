@@ -15,7 +15,7 @@ from fake_orca import Preset, PresetBundle, PrinterConnectionParams, PrintParams
 from orca_afc import agent as afc_agent
 from orca_afc.agent import AFCAgent
 from orca_afc.protocol import Snapshot
-from test_protocol import webhook_fixture
+from test_protocol import lane_status, webhook_fixture
 
 orca = fake_orca.orca
 
@@ -501,6 +501,58 @@ class DeviceTabTest(Case):
         self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane2"])
         unload = dict(load, slot_id=255, target=255)
         self.assertEqual(self.send({"print": unload}), afc_agent.FAILED)  # no lane is in a toolhead
+
+class UnitLayoutTest(Case):
+    """The AFC build of OrcaSlicer: trays by AFC unit, a tool as an AMS HT, and the drying popup."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake.webhook["status:"]["AFC"]["Tools"] = {
+            "system": {"type": "Toolchanger"},
+            "extruder2": lane_status("extruder2", "Tools", 1, ["T6"], "extruder2", "#FFFFFF", "PLA", True)}
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"] = {"has_heater": True, "ams_model": "ams2", "dry_max_temp": 65,
+                                                         "drying": False, "temperature": 26.0, "humidity": 35.0}
+
+    def push_by_unit(self, count=1):
+        self.assertEqual(self.send({"pushing": {"command": "pushall", "tray_tool": True}}), 0)
+        return self.calls.messages("print", "push_status", count)[-1]
+
+    def drying(self, **values):
+        request = {"command": "ams_filament_drying", "ams_id": 1, "mode": 1, "filament": "PLA", "temp": 70,
+                   "duration": 8, "humidity": 0, "rotate_tray": True, "cooling_temp": 45, "close_power_conflict": False}
+        request.update(values)
+        return self.send({"print": request})
+
+    def test_trays_by_afc_unit(self):
+        self.connect()
+        status = self.push_by_unit()
+        self.assertTrue(status["support_remote_dry"])
+        ams = status["ams"]
+        self.assertEqual([(u["id"], u["info"], [t["tool"] for t in u["tray"]]) for u in ams["ams"]],
+                         [("0", "0002", [0, 1]), ("1", "0003", [4, 5]), ("128", "0004", [6])])
+        self.assertEqual((ams["ams"][1]["humidity_raw"], ams["ams"][2]["dryer"], ams["tray_now"]), ("35", False, "4"))
+        # The HT's tray is the tool's lane.
+        request = {"command": "ams_filament_setting", "ams_id": 128, "slot_id": 0, "tray_info_idx": "OGFG99",
+                   "tray_color": "FFFFFFFF", "tray_type": "PETG"}
+        self.assertEqual(self.send({"print": request}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["SET_MATERIAL LANE=extruder2 MATERIAL=PETG"])
+
+    def test_drying_popup_runs_the_units_dryer(self):
+        self.connect()
+        self.push_by_unit()
+        self.assertEqual(self.drying(), 0)  # the AMS 2 Pro dries at 65 C at most
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_HEATER_START UNIT=Bambu_AMS_1 TEMP=65 TIME=480 ROTATE=1"])
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"].update(drying=True, dry_target=65, dry_remaining=28770, dry_minutes=480)
+        unit = self.push_by_unit(3)["ams"]["ams"][1]
+        self.assertEqual((unit["info"], unit["dry_time"], unit["dry_setting"]),
+                         ("400023", 480, {"dry_filament": "PLA", "dry_temperature": 65, "dry_duration": 8}))
+        self.assertEqual(self.drying(mode=0), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts[-1], "AFC_BAMBU_HEATER_STOP UNIT=Bambu_AMS_1")
+        self.assertEqual(self.drying(ams_id=0), afc_agent.ERR_CAP_NOT_AVAILABLE)  # the Box Turtle has no dryer
+
 
 class PrintTest(Case):
     def project(self, text=PLATE, plate=1):

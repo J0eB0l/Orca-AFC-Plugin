@@ -5,7 +5,7 @@ import unittest
 
 import fake_orca  # noqa: F401
 from orca_afc import trays
-from orca_afc.protocol import Lane, Snapshot
+from orca_afc.protocol import Dryer, Lane, Snapshot, Unit
 
 
 def loaded(name, tool, **values):
@@ -63,6 +63,58 @@ class AmsTest(unittest.TestCase):
         a, b = loaded("a", 2), loaded("b", 2)
         self.assertIs(trays.lanes_by_tray(Snapshot(lanes=[a, b, loaded("far", 40)]))[2], a)
         self.assertNotIn(40, trays.lanes_by_tray(Snapshot(lanes=[loaded("far", 40)])))
+
+
+def units_snapshot():
+    """A Box Turtle, a toolchanger's two tools, a Bambu AMS HT and an ACE, drying."""
+    lanes = [loaded("lane%d" % i, i - 1, unit="Turtle_1") for i in range(1, 5)]
+    lanes += [loaded("extruder1", 4, unit="Tools"), loaded("extruder2", 5, unit="Tools", tool_loaded=True)]
+    lanes += [loaded("lane12", 12, unit="Bambu_AMS_1")]
+    lanes += [loaded("ace%d" % i, 6 + i, unit="Ace_1") for i in range(4)]
+    ht = Dryer(kind="bambu", model="ht", max_temp=85, temperature=26.04, humidity=35.4)
+    ace = Dryer(kind="ace", model="ACE", max_temp=55, drying=True, target=55, remaining_s=3599, duration_s=4 * 3600)
+    units = [Unit("Turtle_1", "Box_Turtle", ["lane1", "lane2", "lane3", "lane4"]),
+             Unit("Tools", "Toolchanger", ["extruder1", "extruder2"]),
+             Unit("Bambu_AMS_1", "BambuAMS", ["lane12"], ht),
+             Unit("Ace_1", "ACE", ["ace0", "ace1", "ace2", "ace3"], ace)]
+    return Snapshot(present=True, current_lane="extruder2", lanes=lanes, units=units)
+
+
+class UnitLayoutTest(unittest.TestCase):
+    def test_afc_units_as_ams_and_ams_ht(self):
+        snap = units_snapshot()
+        ams = trays.ams_json(snap, {}, reading={12}, by_unit=True, dry_filaments={"Ace_1": "PETG"})
+        self.assertEqual([(u["id"], u["info"]) for u in ams["ams"]],
+                         [("0", "0002"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
+        turtle, ace, tool1, tool2, ht = ams["ams"]
+        self.assertEqual([t["tool"] for t in turtle["tray"]] + [t["tool"] for t in ace["tray"]], [0, 1, 2, 3, 6, 7, 8, 9])
+        self.assertEqual((tool1["tray"][0]["tool"], tool1["dryer"], tool2["tray"][0]["tool"], ht["tray"][0]["tool"]),
+                         (4, False, 5, 12))
+        self.assertEqual((ht["humidity_raw"], ht["humidity"], ht["temp"], ht["dry_time"]), ("35", "4", "26.0", 0))
+        self.assertNotIn("dryer", ht)
+        self.assertEqual((ace["dry_time"], ace["dry_setting"]),
+                         (60, {"dry_filament": "PETG", "dry_temperature": 55, "dry_duration": 4}))
+        # Unit bits 0-1 and 4-6, tray bits 0-7 and 16-18, the HT spinning on bit 18.
+        self.assertEqual((ams["ams_exist_bits"], ams["tray_exist_bits"], ams["tray_reading_bits"]), ("73", "700FF", "40000"))
+        self.assertEqual(ams["tray_now"], "129")  # extruder2, T5
+
+    def test_ids_back_to_t_numbers(self):
+        shown = trays.layout(units_snapshot(), by_unit=True)
+        self.assertEqual((shown.tool(1, 2), shown.tool(129, 0), shown.tool(129, 1), shown.tool(2, 0)), (8, 5, -1, -1))
+        self.assertEqual((shown.tool_of_tray(6), shown.tool_of_tray(130), shown.tool_of_tray(-1)), (8, 12, -1))
+        self.assertEqual((shown.tray(8), shown.tray(12), shown.tray(30)), (6, 130, trays.NO_TRAY))
+        self.assertEqual(trays.mapping_from_print("[130, -1]", json.dumps([{}, {"ams_id": 1, "slot_id": 0}]), 2, shown),
+                         {0: 12, 1: 6})
+
+    def test_t_numbers_when_the_units_do_not_fit(self):
+        snap = units_snapshot()
+        for n in range(2, 5):  # five units of several lanes beside the HTs, one more than fits
+            names = ["t%d_%d" % (n, i) for i in range(2)]
+            snap.lanes += [loaded(name, 13 + 2 * (n - 2) + i, unit="Turtle_%d" % n) for i, name in enumerate(names)]
+            snap.units.append(Unit("Turtle_%d" % n, "Box_Turtle", names))
+        shown = trays.layout(snap, by_unit=True)
+        self.assertFalse(shown.by_unit)
+        self.assertEqual((shown.tool(3, 0), shown.tray(12)), (12, 12))
 
 
 class MappingTest(unittest.TestCase):

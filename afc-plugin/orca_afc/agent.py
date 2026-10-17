@@ -4,7 +4,8 @@ dialog for a Klipper printer that runs AFC.
 OrcaSlicer talks to the printer through this agent as it talks to a Bambu
 printer on the LAN, in Bambu's JSON messages:
 
-- AFC's lanes are the printer's AMS trays, one tray per T number (trays.py).
+- AFC's lanes are the printer's AMS trays, one tray per T number, in AMS
+  units by T number or, for the AFC build of OrcaSlicer, by AFC unit (trays.py).
   Each loaded tray describes its spool, so filament sync picks (or makes) the
   spool's own preset, and names the filament id of the preset that fits it
   best, which an OrcaSlicer without spool presets picks instead (presets.py).
@@ -232,12 +233,13 @@ def _layers(state: str, stats: dict, position, job: dict):
     return max(0, min(int(current), int(total))), int(total)
 
 
-def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None) -> dict:
+def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
+                by_unit: bool = False, dry_filaments=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
-    has). `extras` and `reading` go to the trays (trays.ams_json()), `lights`
-    are the printer's lights, which the lamp shows, and `job` the print file's
-    job_info()."""
+    has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
+    (trays.ams_json()), `lights` are the printer's lights, which the lamp
+    shows, and `job` the print file's job_info()."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -264,6 +266,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_upload_only": True,
         # ... and shows the tray popup's Factor K, saved as the spool's flow K.
         "support_tray_k": True,
+        # ... and takes the drying popup on the units with a dryer (trays.ams_json()).
+        "support_remote_dry": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
@@ -303,7 +307,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     if lit is not None:
         out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
     if snapshot is not None:
-        out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading)
+        out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading, by_unit, dry_filaments)
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -362,12 +366,14 @@ class PrintJob:
                    time_lapse=bool(params.task_record_timelapse), start=start)
 
 
-def prepare(text: str, job: PrintJob, snapshot) -> str:
+def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
-    filaments, AFC's purges and spool flow K, and on a U1 its print switches."""
+    filaments (laid out by AFC unit when `by_unit`), AFC's purges and spool
+    flow K, and on a U1 its print switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
     if settings.klipper:
-        mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments)
+        shown = trays.layout(snapshot, by_unit)
+        mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
         text = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, mapping, settings), settings).text
     if snapshot is not None and snapshot.u1_print.present:
         options = protocol.U1PrintOptions(True, job.bed_level, job.flow_calibrate, job.time_lapse)
@@ -412,7 +418,9 @@ class _Printer:
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
-    reading: set = field(default_factory=set)         # trays whose tag is being read
+    reading: set = field(default_factory=set)         # T numbers whose tag is being read
+    by_unit: bool = False                             # OrcaSlicer syncs trays by the T number each reports: lay them out by AFC unit
+    dry_filaments: dict = field(default_factory=dict) # unit -> the filament the drying popup started it for
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
     camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
@@ -655,9 +663,11 @@ else:
             ids, extras = self._trays(printer, snapshot) if snapshot is not None else ({}, {})
             with self._lock:
                 reading = set(printer.reading)
+                dry_filaments = dict(printer.dry_filaments)
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
             self._camera(printer)
-            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job))
+            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job,
+                                            printer.by_unit, dry_filaments))
 
         def _job(self, printer: _Printer, filename) -> dict:
             """job_info() of the file being printed, read once per file, and
@@ -756,6 +766,8 @@ else:
                                     "access_code": printer.access_code}}
                 self._worker.submit(lambda: self._send(printer, reply))
             elif pushing.get("command") == "pushall":
+                if pushing.get("tray_tool") is True:
+                    printer.by_unit = True
                 self._worker.submit(lambda: self._push(printer))
             elif job.get("command"):
                 return self._print_command(printer, job)
@@ -795,9 +807,11 @@ else:
                 return self._filament_setting(printer, job)
             elif command == "extrusion_cali_set":
                 return self._tray_k(printer, job)
+            elif command == "ams_filament_drying":
+                return self._drying(printer, job)
             elif command == "ams_change_filament":
                 try:
-                    script = controls.change_filament_gcode(printer.snapshot, job) if printer.snapshot else ""
+                    script = controls.change_filament_gcode(printer.snapshot, job, self._layout(printer)) if printer.snapshot else ""
                 except AFCError:
                     script = ""
                 if not script:
@@ -819,7 +833,7 @@ else:
             """The tray popup: the lane takes its color and material, and the
             preset picked for it until it gets another spool. A reset (no
             filament) drops the pick."""
-            lane = controls.lane_of(printer.snapshot, controls.tray_of(job.get("ams_id"), job.get("slot_id")))
+            lane = controls.lane_of(printer.snapshot, self._layout(printer).tool(job.get("ams_id"), job.get("slot_id")))
             if lane is None:
                 return FAILED
             reset = not job.get("tray_info_idx")
@@ -844,7 +858,9 @@ else:
             its flow K, which filament sync puts in the slot and AFC autocal
             applies when the lane loads. A lane without a spool has nowhere to keep it."""
             tray, k = job.get("tray_id"), _number(job.get("k_value"))
-            lane = controls.lane_of(printer.snapshot, tray if isinstance(tray, int) else -1)
+            # The popup names the tray unit * 4 + slot, an AMS HT's too.
+            tool = self._layout(printer).tool(tray // 4, tray % 4) if isinstance(tray, int) and tray >= 0 else -1
+            lane = controls.lane_of(printer.snapshot, tool)
             if lane is None or k is None or not 0 < k < 2:
                 return ERR_INVALID_RESULT
             if lane.spool_id <= 0:
@@ -859,6 +875,37 @@ else:
                 self._push(printer)
 
             self._worker.submit(run)
+            return SUCCESS
+
+        def _layout(self, printer: _Printer) -> trays.Layout:
+            """The units and slots the Device tab shows AFC's T numbers in."""
+            return trays.layout(printer.snapshot, printer.by_unit)
+
+        def _drying(self, printer: _Printer, job: dict) -> int:
+            """The drying popup of a unit with a dryer: starts it (mode 1, for
+            `duration` hours) or stops it (mode 0). OrcaSlicer's popup allows an
+            AMS 2 Pro's 65 C; a unit that dries cooler (an ACE's 55 C) dries at its most."""
+            box = self._layout(printer).box(job.get("ams_id"))
+            unit = printer.snapshot.find_unit(box.unit) if box is not None and box.unit and printer.snapshot else None
+            if unit is None or unit.dryer is None:
+                return ERR_CAP_NOT_AVAILABLE
+            if job.get("mode") == 0:
+                request = {"action": "stop"}
+            else:
+                temp, hours = _number(job.get("temp")), _number(job.get("duration"))
+                if temp is None or hours is None:
+                    return ERR_INVALID_RESULT
+                if unit.dryer.max_temp > 0:
+                    temp = min(temp, unit.dryer.max_temp)
+                request = {"action": "start", "temp": temp, "minutes": hours * 60, "rotate": job.get("rotate_tray") is True}
+            try:
+                script = protocol.build_dry_gcode(printer.snapshot, unit.name, request)
+            except AFCError:
+                return ERR_INVALID_RESULT
+            filament = job.get("filament")
+            with self._lock:
+                printer.dry_filaments[unit.name] = filament if request["action"] == "start" and isinstance(filament, str) else ""
+            self._run(printer, script, push=True)
             return SUCCESS
 
         def _lamp(self, printer: _Printer, system: dict) -> int:
@@ -878,20 +925,22 @@ else:
             printer = self._current()
             if printer is None or not printer.connected:
                 return FAILED
-            tray = slot_id if isinstance(ams_id, int) and ams_id < 0 else controls.tray_of(ams_id, slot_id)
-            lane = controls.lane_of(printer.snapshot, tray if isinstance(tray, int) else -1)
+            # OrcaSlicer names the tray (ams_id -1) or the unit and slot.
+            shown = self._layout(printer)
+            tool = shown.tool_of_tray(slot_id) if isinstance(ams_id, int) and ams_id < 0 else shown.tool(ams_id, slot_id)
+            lane = controls.lane_of(printer.snapshot, tool)
             script = controls.rfid_scan_gcode(lane, printer.readers) if lane is not None else ""
             if not script:
                 return ERR_CAP_NOT_AVAILABLE
             with self._lock:
-                printer.reading.add(tray)
+                printer.reading.add(tool)
 
             def run():
                 try:
                     self._quietly(lambda: printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT))
                 finally:
                     with self._lock:
-                        printer.reading.discard(tray)
+                        printer.reading.discard(tool)
                     self._worker.submit(lambda: self._push(printer))
 
             self._worker.submit(lambda: self._push(printer))
@@ -969,7 +1018,7 @@ else:
             if data is None:
                 return ERR_FILE_NOT_EXIST
             # surrogateescape gives back the file byte for byte where nothing changed.
-            text = prepare(data.decode("utf-8", "surrogateescape"), job, self._manager.read(printer.client))
+            text = prepare(data.decode("utf-8", "surrogateescape"), job, self._manager.read(printer.client), printer.by_unit)
             name = upload_name(job.project, job.plate)
             if canceled.is_set():
                 return ERR_CANCELED
