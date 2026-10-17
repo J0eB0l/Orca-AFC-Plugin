@@ -64,8 +64,8 @@ def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None
     left = remaining(lane)
     if left >= 0:
         tray["remain"] = left
-    if lane.flow_k >= 0:
-        tray["k"] = lane.flow_k
+    # 0 for none: OrcaSlicer keeps a tray's last K when the field is missing.
+    tray["k"] = max(lane.flow_k, 0.0)
     if lane.extruder_index >= 0:
         # The AFC build of OrcaSlicer keeps it per filament at sync, for "Purge in prime tower".
         tray["toolhead"] = lane.extruder_index

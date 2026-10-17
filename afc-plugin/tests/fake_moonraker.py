@@ -15,6 +15,8 @@ class FakeMoonraker:
     objects   Klipper objects by name, for /printer/objects/query and /list
     lane_data the lane_data namespace's value, or None for a 404
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
+    spool_fields  Spoolman's extra spool fields (/v1/field/spool)
+    webcams   the /server/webcams/list webcams
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
     info      the /printer/info result
@@ -30,6 +32,8 @@ class FakeMoonraker:
         self.objects = {}
         self.lane_data = None
         self.spools = {}
+        self.spool_fields = []
+        self.webcams = []
         self.proxy = True
         self.gcode_error = ""
         self.gcode_delay = 0.0
@@ -111,14 +115,28 @@ class FakeMoonraker:
         if method == "POST" and path == "/server/spoolman/proxy":
             if not self.proxy:
                 return 404, {"error": {"code": 404, "message": "Spoolman not configured"}}
-            spool = self.spools.get(int(body["path"].rsplit("/", 1)[1]))
-            if spool is None:
-                return 200, {"result": {"response": None, "error": {"status_code": 404, "message": "No spool"}}}
-            return 200, {"result": {"response": spool, "error": None}}
+            return 200, {"result": self.spoolman(body.get("request_method"), body["path"], body.get("body"))}
+        if method == "GET" and path == "/server/webcams/list":
+            return 200, {"result": {"webcams": self.webcams}}
         if method == "GET" and path.startswith("/api/v1/spool/"):
             spool = self.spools.get(int(path.rsplit("/", 1)[1]))
             return (404, {"message": "No spool"}) if spool is None else (200, spool)
         return 404, {"error": {"code": 404, "message": "Not Found"}}
+
+
+    def spoolman(self, method, path, body):
+        """Spoolman's answer to a proxied call, as use_v2_response wraps it."""
+        if method == "GET" and path == "/v1/field/spool":
+            return {"response": self.spool_fields, "error": None}
+        if method == "POST" and path.startswith("/v1/field/spool/"):
+            self.spool_fields.append(dict(body, key=path.rsplit("/", 1)[1]))
+            return {"response": self.spool_fields, "error": None}
+        spool = self.spools.get(int(path.rsplit("/", 1)[1])) if path.startswith("/v1/spool/") else None
+        if spool is None:
+            return {"response": None, "error": {"status_code": 404, "message": "No spool"}}
+        if method == "PATCH":
+            spool.setdefault("extra", {}).update(body.get("extra") or {})
+        return {"response": spool, "error": None}
 
 
 def _handler(fake):

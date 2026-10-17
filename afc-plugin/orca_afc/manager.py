@@ -6,6 +6,7 @@ thread, since each request waits on the network.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -146,6 +147,35 @@ class AFCManager:
             self._k_way = way
             return k
         return -1.0  # counts as "no K" until it is due again
+
+    def save_flow_k(self, client: Moonraker, spool: int, k: float, spoolman_url: str = "") -> str:
+        """Save a spool's pressure advance in its "flow_k" Spoolman field, as AFC
+        autocal does, through the way K was read last first. Returns an error
+        to show, or ""."""
+        def direct(method, path, body=None):
+            return fetch_json("%s/api%s" % (spoolman_url.rstrip("/"), path), timeout=10.0, method=method, body=body)
+
+        ways = [("proxy", lambda method, path, body=None: client.spoolman(method, path, body, timeout=10.0))]
+        if spoolman_url:
+            ways.insert(1 if self._k_way == "proxy" else 0, ("direct", direct))
+        error = ""
+        for way, call in ways:
+            try:
+                fields = call("GET", "/v1/field/spool")
+                if not any(isinstance(f, dict) and f.get("key") == "flow_k" for f in fields or []):
+                    call("POST", "/v1/field/spool/flow_k", {"name": "Flow K", "field_type": "float"})
+                record = call("GET", "/v1/spool/%d" % spool)
+                extra = dict(record.get("extra") or {}) if isinstance(record, dict) else {}
+                # Spoolman keeps every extra field JSON-encoded.
+                extra["flow_k"] = json.dumps(round(float(k), 6))
+                call("PATCH", "/v1/spool/%d" % spool, {"extra": extra})
+            except MoonrakerError as failure:
+                error = str(failure)
+                continue
+            self._k_way = way
+            self._flow_k[spool] = (float(k), self._clock())
+            return ""
+        return error
 
     def state(self, printer: str, hint: str = "", error: str = "") -> dict:
         """What the page draws: {connected, afc, error?, hint?}. A lane move

@@ -43,7 +43,7 @@ class AmsTest(unittest.TestCase):
         self.assertEqual((t0["k"], t0["filament_preset"], t0["spool"]["names"], t0["spool"]["base"]),
                          (0.035, "Mine", ["Polymaker PolyLite PLA"], "Generic PLA"))
         self.assertEqual(t0["spool"]["pressure_advance"], 0.035)
-        self.assertNotIn("k", ams["ams"][1]["tray"][1])  # no K saved on that spool
+        self.assertEqual(ams["ams"][1]["tray"][1]["k"], 0.0)  # no K saved on that spool
 
     def test_toolhead_of_each_tray(self):
         snap = Snapshot(present=True, lanes=[loaded("lane1", 0, extruder_index=2), loaded("lane2", 1)])

@@ -9,11 +9,13 @@ the printer's own G-code:
   lane's unit, when the lane has a reader.
 - The tray edit popup sets the lane's color and material.
 - Load and Unload swap a lane into its toolhead and pull it back out.
+- The camera plays the printer's first webcam that Moonraker lists.
 """
 
 from __future__ import annotations
 
 import re
+import urllib.parse
 
 from . import protocol
 from .protocol import AFCError, Lane, Snapshot
@@ -175,3 +177,45 @@ def change_filament_gcode(snapshot: Snapshot, request: dict) -> str:
     if lane is None:
         raise AFCError("no lane on that tray")
     return protocol.build_lane_action_gcode(snapshot, lane.name, "load")
+
+
+# ------------------------------------------------------------------ camera
+
+# Moonraker webcam services whose stream_url is an MJPEG stream, which the Device
+# tab's player opens. For any other (WebRTC, HLS) the camera shows the snapshot.
+MJPEG_SERVICES = ("mjpegstreamer", "uv4l-mjpeg")
+# A webcam that is a web page or the viewer's own device has no picture to take.
+NOT_CAMERA_SERVICES = ("iframe", "device")
+
+
+def camera(webcams, printer_url: str) -> tuple:
+    """("http", MJPEG stream URL) or ("http_snapshot", snapshot URL) for the
+    first enabled webcam of Moonraker's /server/webcams/list, ("", "") for none.
+    A relative URL is on the printer's web server: its address without
+    Moonraker's own port, as Fluidd and Mainsail open it."""
+    for cam in webcams or []:
+        if not isinstance(cam, dict) or cam.get("enabled") is False or cam.get("service") in NOT_CAMERA_SERVICES:
+            continue
+        stream, snapshot = cam.get("stream_url"), cam.get("snapshot_url")
+        # Fluidd's "adaptive" MJPEG reads snapshots; the stream is ustreamer's or mjpg-streamer's all the same.
+        if cam.get("service") in MJPEG_SERVICES + ("mjpegstreamer-adaptive",) and isinstance(stream, str) and stream:
+            return "http", _web_url(stream, printer_url)
+        if isinstance(snapshot, str) and snapshot:
+            return "http_snapshot", _web_url(snapshot, printer_url)
+    return "", ""
+
+
+def _web_url(url: str, printer_url: str) -> str:
+    if "://" in url:
+        return url
+    parts = urllib.parse.urlsplit(printer_url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = "[%s]" % host
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    if port and port != 7125:
+        host += ":%d" % port
+    return urllib.parse.urljoin("%s://%s/" % (parts.scheme or "http", host), url)

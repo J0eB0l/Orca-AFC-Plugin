@@ -48,6 +48,7 @@ POLL = 5.0            # seconds between status pushes
 PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
+CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
 
 # What OrcaSlicer sends as the access code when the printer's API key is empty.
 NO_ACCESS_CODE = "88888888"
@@ -261,6 +262,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_send_to_sd": True,
         # The AFC build of OrcaSlicer then adds Upload to the print dialog: stored with the dialog's trays, not started.
         "support_upload_only": True,
+        # ... and shows the tray popup's Factor K, saved as the spool's flow K.
+        "support_tray_k": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
@@ -412,6 +415,8 @@ class _Printer:
     reading: set = field(default_factory=set)         # trays whose tag is being read
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
+    camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
+    camera_due: float = 0.0                           # when to read the webcam list again
 
 
 def spool_key(lane) -> tuple:
@@ -651,6 +656,7 @@ else:
             with self._lock:
                 reading = set(printer.reading)
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
+            self._camera(printer)
             self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job))
 
         def _job(self, printer: _Printer, filename) -> dict:
@@ -672,6 +678,18 @@ else:
                 del info["thumbnail_url"]
             printer.job = (filename, info, time.monotonic() + JOB_RETRY)
             return info
+
+        def _camera(self, printer: _Printer) -> None:
+            """The webcam the Device tab plays, read every CAMERA_EVERY s; a failed read keeps the last."""
+            if time.monotonic() < printer.camera_due:
+                return
+            printer.camera_due = time.monotonic() + CAMERA_EVERY
+            try:
+                camera = controls.camera(printer.client.webcams(), printer.client.url)
+            except MoonrakerError:
+                return
+            with self._lock:
+                printer.camera = camera
 
         def _trays(self, printer: _Printer, snapshot) -> tuple:
             """For each loaded tray: the filament id of the preset that fits its
@@ -775,6 +793,8 @@ else:
                 self._run(printer, "G28")
             elif command == "ams_filament_setting":
                 return self._filament_setting(printer, job)
+            elif command == "extrusion_cali_set":
+                return self._tray_k(printer, job)
             elif command == "ams_change_filament":
                 try:
                     script = controls.change_filament_gcode(printer.snapshot, job) if printer.snapshot else ""
@@ -817,6 +837,28 @@ else:
                 self._run(printer, "\n".join(script), push=True)
             else:
                 self._worker.submit(lambda: self._push(printer))
+            return SUCCESS
+
+        def _tray_k(self, printer: _Printer, job: dict) -> int:
+            """The tray popup's Factor K: saved on the lane's Spoolman spool as
+            its flow K, which filament sync puts in the slot and AFC autocal
+            applies when the lane loads. A lane without a spool has nowhere to keep it."""
+            tray, k = job.get("tray_id"), _number(job.get("k_value"))
+            lane = controls.lane_of(printer.snapshot, tray if isinstance(tray, int) else -1)
+            if lane is None or k is None or not 0 < k < 2:
+                return ERR_INVALID_RESULT
+            if lane.spool_id <= 0:
+                return ERR_CAP_NOT_AVAILABLE
+            # The popup shows K to four places: one confirmed unchanged keeps the spool's own.
+            if lane.flow_k >= 0 and abs(k - lane.flow_k) < 0.00005:
+                return SUCCESS
+            spoolman = protocol.spoolman_for_printer(printer.snapshot.spoolman_url, printer.client.url)
+
+            def run():
+                self._manager.save_flow_k(printer.client, lane.spool_id, k, spoolman)
+                self._push(printer)
+
+            self._worker.submit(run)
             return SUCCESS
 
         def _lamp(self, printer: _Printer, system: dict) -> int:
@@ -957,6 +999,19 @@ else:
             return SUCCESS
 
         # -------------------------------------------------------- the rest
+
+        # OrcaSlicer asks for the camera on its UI thread at every Device tab update: these answer from the last read.
+        def get_camera_stream_mode(self):
+            printer = self._current()
+            with self._lock:
+                mode = printer.camera[0] if printer is not None else ""
+            modes = orca.printer_agent.CameraStreamMode
+            return {"http": modes.HTTP, "http_snapshot": modes.HTTP_SNAPSHOT}.get(mode, modes.None_)
+
+        def get_camera_url(self):
+            printer = self._current()
+            with self._lock:
+                return printer.camera[1] if printer is not None else ""
 
         def get_filament_sync_mode(self):
             # A push with the trays makes OrcaSlicer read them again (DevFilaSystem), no pull needed.

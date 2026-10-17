@@ -144,6 +144,14 @@ class FilamentSyncMode:
     Pull = "Pull"
 
 
+class CameraStreamMode:
+    None_ = "None_"
+    HTTP = "HTTP"
+    HTTPS = "HTTPS"
+    HTTP_SNAPSHOT = "HTTP_SNAPSHOT"
+    RTSP = "RTSP"
+
+
 class AgentInfo:
     def __init__(self, id="", name="", version="", description=""):
         self.id, self.name, self.version, self.description = id, name, version, description
@@ -182,6 +190,7 @@ orca.pages = types.SimpleNamespace(PagesPluginCapabilityBase=PagesPluginCapabili
 orca.slicing = types.SimpleNamespace(SlicingPipelineCapabilityBase=SlicingPipelineCapabilityBase, Step=Step)
 orca.printer_agent = types.SimpleNamespace(
     PrinterAgentBase=PrinterAgentBase, AgentInfo=AgentInfo, FilamentSyncMode=FilamentSyncMode,
+    CameraStreamMode=CameraStreamMode,
     DetectResult=DetectResult, PrinterConnectionParams=PrinterConnectionParams, PrintParams=PrintParams)
 orca.ExecutionResult = ExecutionResult
 orca.PluginResult = PluginResult

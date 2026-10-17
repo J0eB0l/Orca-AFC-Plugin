@@ -103,6 +103,12 @@ class Moonraker:
         estimate, layer count and heights, thumbnails."""
         return self.get("/server/files/metadata", {"filename": filename})
 
+    def webcams(self) -> list:
+        """The webcams Moonraker knows (its config and Fluidd's or Mainsail's)."""
+        answer = self.get("/server/webcams/list")
+        cams = answer.get("webcams") if isinstance(answer, dict) else None
+        return cams if isinstance(cams, list) else []
+
     def print_state(self) -> str:
         """print_stats.state: "standby", "printing", "paused", ... Empty when unknown."""
         status = self.objects_query({"print_stats": ["state"]})
@@ -153,18 +159,29 @@ class Moonraker:
 
     def spoolman_spool(self, spool_id: int, timeout: float = 4.0):
         """The spool record through Moonraker's Spoolman proxy."""
-        answer = self.post("/server/spoolman/proxy",
-                           {"request_method": "GET", "path": "/v1/spool/%d" % spool_id, "use_v2_response": True},
-                           timeout=timeout)
+        return self.spoolman("GET", "/v1/spool/%d" % spool_id, timeout=timeout)
+
+    def spoolman(self, method: str, path: str, body=None, timeout: float = 4.0):
+        """A Spoolman API call ("/v1/...") through Moonraker's Spoolman proxy:
+        Spoolman's answer."""
+        request = {"request_method": method, "path": path, "use_v2_response": True}
+        if body is not None:
+            request["body"] = body
+        answer = self.post("/server/spoolman/proxy", request, timeout=timeout)
         # use_v2_response: a failed Spoolman call still answers, with its error inside.
         if isinstance(answer, dict) and answer.get("error") is not None:
             raise MoonrakerError("Spoolman: %s" % answer["error"])
-        return answer
+        return answer.get("response") if isinstance(answer, dict) and "response" in answer else answer
 
 
-def fetch_json(url: str, timeout: float = 4.0, opener=None):
-    """GET a JSON document from anywhere (Spoolman's own address)."""
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+def fetch_json(url: str, timeout: float = 4.0, opener=None, method: str = "GET", body=None):
+    """A JSON request to anywhere (Spoolman's own address): its answer."""
+    headers = {"Accept": "application/json"}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with (opener or urllib.request.urlopen)(request, timeout=timeout, context=_ssl_context(url)) as answer:
             return json.loads(answer.read().decode("utf-8"))

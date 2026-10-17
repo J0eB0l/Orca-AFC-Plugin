@@ -104,3 +104,24 @@ class TrayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CameraTest(unittest.TestCase):
+    def test_mjpeg_stream_on_the_printers_web_server(self):
+        cams = [{"name": "off", "service": "mjpegstreamer", "enabled": False, "stream_url": "/webcam3/?action=stream"},
+                {"name": "cam", "service": "mjpegstreamer-adaptive", "enabled": True,
+                 "stream_url": "/webcam/?action=stream", "snapshot_url": "/webcam/?action=snapshot"}]
+        # Moonraker's own port is not where Fluidd's webcams are.
+        self.assertEqual(controls.camera(cams, "http://192.168.4.47:7125"), ("http", "http://192.168.4.47/webcam/?action=stream"))
+        self.assertEqual(controls.camera(cams, "http://printer.local:4408"),
+                         ("http", "http://printer.local:4408/webcam/?action=stream"))
+
+    def test_snapshot_when_the_stream_is_not_mjpeg(self):
+        cams = [{"service": "iframe", "stream_url": "http://192.168.4.47:8092/?embed"},
+                {"service": "webrtc-camerastreamer", "stream_url": "/webcam/webrtc",
+                 "snapshot_url": "http://10.0.0.5/webcam/snapshot.jpg"}]
+        self.assertEqual(controls.camera(cams, "http://10.0.0.5"), ("http_snapshot", "http://10.0.0.5/webcam/snapshot.jpg"))
+
+    def test_no_camera(self):
+        self.assertEqual(controls.camera([], "http://10.0.0.5"), ("", ""))
+        self.assertEqual(controls.camera([{"service": "webrtc-go2rtc", "stream_url": "/go2rtc/"}], "http://10.0.0.5"), ("", ""))

@@ -445,6 +445,38 @@ class DeviceTabTest(Case):
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["AFC_BT_RFID_STAGE LANE=lane1"])
 
+    def cali_set(self, tray, k):
+        return self.send({"print": {"command": "extrusion_cali_set", "tray_id": tray, "k_value": k, "n_coef": 1.4}})
+
+    def test_factor_k_is_saved_on_the_spool(self):
+        self.fake.spools[12] = {"id": 12, "extra": {"tray_uid": '"04A1"'}}
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane2"]["spool_id"] = None
+        self.connect()
+        self.assertTrue(self.push()["support_tray_k"])
+        self.assertEqual(self.cali_set(0, 0.0325), 0)
+        tray = self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][0]
+        self.assertEqual((tray["k"], tray["spool"]["pressure_advance"]), (0.0325, 0.0325))
+        self.assertEqual(self.fake.spools[12]["extra"], {"tray_uid": '"04A1"', "flow_k": "0.0325"})
+        self.assertEqual([f["key"] for f in self.fake.spool_fields], ["flow_k"])
+        # The popup shows K to four places: confirming it unchanged writes nothing.
+        writes = len(self.fake.requests)
+        self.assertEqual(self.cali_set(0, 0.03251), 0)
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(len(self.fake.requests), writes)
+        # A lane with no Spoolman spool has nowhere to keep a K, and K stays within the popup's range.
+        self.assertEqual(self.cali_set(1, 0.04), afc_agent.ERR_CAP_NOT_AVAILABLE)
+        self.assertEqual(self.cali_set(0, 2.5), afc_agent.ERR_INVALID_RESULT)
+
+    def test_camera_plays_the_first_webcam(self):
+        self.fake.webcams = [{"name": "display", "service": "iframe", "enabled": True, "stream_url": "http://x/?embed"},
+                             {"name": "cam", "service": "webrtc-camerastreamer", "enabled": True,
+                              "stream_url": "/webcam/webrtc", "snapshot_url": "/webcam/snapshot.jpg"}]
+        self.connect()
+        self.assertEqual(self.agent.get_camera_stream_mode(), orca.printer_agent.CameraStreamMode.None_)
+        self.push()
+        self.assertEqual(self.agent.get_camera_stream_mode(), orca.printer_agent.CameraStreamMode.HTTP_SNAPSHOT)
+        self.assertEqual(self.agent.get_camera_url(), self.fake.url + "/webcam/snapshot.jpg")
+
     def test_lamp(self):
         self.fake.objects["led main_led"] = {"color_data": [[0.0, 0.0, 0.0, 1.0]]}
         self.connect()

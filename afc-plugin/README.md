@@ -85,7 +85,9 @@ Then:
   the generic one of the material.
 - On the Device tab, a tray's edit popup lists the printer's presets and sets
   the lane's color and material; the preset picked there is what sync uses
-  until the lane gets another spool. A tray's refresh button reads the spool's
+  until the lane gets another spool. In the AFC build of OrcaSlicer the popup
+  also has the spool's Factor K, saved as its Spoolman `flow_k` (a lane needs a
+  Spoolman spool for that). A tray's refresh button reads the spool's
   tag again with the command of the lane's unit (AFC_BAMBU_SCAN, ACE_RFID_RESCAN,
   AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
   FILAMENT_DT_UPDATE); a lane with no reader says so. **Load** and **Unload** run
@@ -93,6 +95,12 @@ Then:
   Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
   objects named with main, chamber, case, cabinet, enclosure, light or lamp
   (`[led main_led]`, `[output_pin caselight]`), full white on or off.
+- The Device tab's camera plays the first enabled webcam Moonraker lists (from
+  `moonraker.conf` or Fluidd's and Mainsail's settings): an MJPEG stream
+  (`mjpegstreamer`, `mjpegstreamer-adaptive`), else the webcam's snapshot,
+  refreshed several times a second (WebRTC cameras such as camera-streamer).
+  A relative webcam address is opened on the printer's web server, its address
+  without Moonraker's port 7125.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges and spool flow K the AFC G-code step adds, uploads the file
