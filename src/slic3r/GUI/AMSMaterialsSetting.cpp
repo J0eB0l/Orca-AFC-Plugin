@@ -895,6 +895,12 @@ void AMSMaterialsSetting::on_select_ok(wxCommandEvent &event)
     wxString k_text = m_input_k_val->GetTextCtrl()->GetValue();
     wxString n_text = m_input_n_val->GetTextCtrl()->GetValue();
 
+    // Orca: with no K row shown there is no K to check or set, and a printer agent's empty K leaves the tray's as it is.
+    if (!m_panel_kn->IsShown() || (obj->is_support_tray_k && k_text.IsEmpty())) {
+        Close();
+        return;
+    }
+
     if (obj->cali_version <= -1 && (obj->get_printer_series() != PrinterSeries::SERIES_X1) && !ExtrusionCalibration::check_k_validation(k_text)) {
         wxString k_tips = wxString::Format(_L("Please input a valid value (K in %.1f~%.1f)"), MIN_PA_K_VALUE, MAX_PA_K_VALUE);
         wxString kn_tips = wxString::Format(_L("Please input a valid value (K in %.1f~%.1f, N in %.1f~%.1f)"), MIN_PA_K_VALUE, MAX_PA_K_VALUE, 0.6, 2.0);
@@ -1097,7 +1103,7 @@ void AMSMaterialsSetting::update_widgets()
         else
             m_panel_normal->Hide();
         m_panel_kn->Show();
-    } else if (obj && (obj->ams_support_virtual_tray || obj->cali_version >= 0)) {
+    } else if (obj && (obj->ams_support_virtual_tray || obj->cali_version >= 0 || obj->is_support_tray_k)) {
         m_panel_normal->Show();
         m_panel_kn->Show();
     } else {
@@ -1266,8 +1272,8 @@ void AMSMaterialsSetting::Popup(wxString filament, wxString sn, wxString temp_mi
 {
     if (!obj) return;
     update_widgets();
-    // set default value
-    if (k.IsEmpty())
+    // set default value; a printer agent's tray without a K stays blank
+    if (k.IsEmpty() && !obj->is_support_tray_k)
         k = "0.000";
     if (n.IsEmpty())
         n = "0.000";

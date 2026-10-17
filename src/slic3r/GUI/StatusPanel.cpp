@@ -4677,7 +4677,11 @@ void StatusPanel::on_filament_edit(wxCommandEvent &event)
             auto tray = obj->GetFilaSystem()->GetAmsTray(std::to_string(ams_id), std::to_string(slot_id));
             if (tray)
             {
-                k_val = wxString::Format("%.3f", tray->k);
+                // Orca: a printer agent's K is Klipper's pressure advance, to four places, blank when the spool has none.
+                if (obj->is_support_tray_k)
+                    k_val = tray->k > 0 ? wxString::Format("%.4f", tray->k) : wxString();
+                else
+                    k_val = wxString::Format("%.3f", tray->k);
                 n_val = wxString::Format("%.3f", tray->n);
                 wxColor color = DevAmsTray::decode_color(tray->color);
                 // m_filament_setting_dlg->set_color(color);

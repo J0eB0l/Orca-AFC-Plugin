@@ -628,6 +628,7 @@ public:
 
     bool is_support_send_to_sdcard {false};
     bool is_support_upload_only {false}; // Orca: a printer agent maps trays on a file it stores without starting it
+    bool is_support_tray_k {false}; // Orca: a printer agent keeps the K typed in the tray popup
 
     bool is_support_filament_backup{false};
     bool is_support_timelapse{false};
