@@ -136,6 +136,12 @@ class CameraTest(unittest.TestCase):
                  "snapshot_url": "http://10.0.0.5/webcam/snapshot.jpg"}]
         self.assertEqual(controls.camera(cams, "http://10.0.0.5"), ("http_snapshot", "http://10.0.0.5/webcam/snapshot.jpg"))
 
+    def test_nozzle_camera_last(self):
+        nozzle = {"name": "Nozzle Cam", "service": "mjpegstreamer", "stream_url": "/webcam2/?action=stream"}
+        main = {"name": "Printer", "service": "mjpegstreamer", "stream_url": "/webcam/?action=stream"}
+        self.assertEqual(controls.camera([nozzle, main], "http://10.0.0.5"), ("http", "http://10.0.0.5/webcam/?action=stream"))
+        self.assertEqual(controls.camera([nozzle], "http://10.0.0.5"), ("http", "http://10.0.0.5/webcam2/?action=stream"))
+
     def test_no_camera(self):
         self.assertEqual(controls.camera([], "http://10.0.0.5"), ("", ""))
         self.assertEqual(controls.camera([{"service": "webrtc-go2rtc", "stream_url": "/go2rtc/"}], "http://10.0.0.5"), ("", ""))

@@ -114,7 +114,9 @@ Then:
   (`mjpegstreamer`, `mjpegstreamer-adaptive`), else the webcam's snapshot,
   refreshed several times a second (WebRTC cameras such as camera-streamer).
   A relative webcam address is opened on the printer's web server, its address
-  without Moonraker's port 7125.
+  without Moonraker's port 7125. A webcam named for the nozzle or tool alignment
+  (nozzle, tool, align, calib, ktamv or offset in its name) plays only when no
+  other is set up.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges and spool flow K the AFC G-code step adds, uploads the file

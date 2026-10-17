@@ -198,15 +198,19 @@ def change_filament_gcode(snapshot: Snapshot, request: dict, shown: Layout) -> s
 MJPEG_SERVICES = ("mjpegstreamer", "uv4l-mjpeg")
 # A webcam that is a web page or the viewer's own device has no picture to take.
 NOT_CAMERA_SERVICES = ("iframe", "device")
+# A nozzle or alignment camera (plugged in for tool offsets) is shown only when no other camera is set up.
+NOZZLE_CAMERA_WORDS = ("nozzle", "tool", "align", "calib", "ktamv", "offset")
 
 
 def camera(webcams, printer_url: str) -> tuple:
     """("http", MJPEG stream URL) or ("http_snapshot", snapshot URL) for the
-    first enabled webcam of Moonraker's /server/webcams/list, ("", "") for none.
-    A relative URL is on the printer's web server: its address without
-    Moonraker's own port, as Fluidd and Mainsail open it."""
-    for cam in webcams or []:
-        if not isinstance(cam, dict) or cam.get("enabled") is False or cam.get("service") in NOT_CAMERA_SERVICES:
+    first enabled webcam of Moonraker's /server/webcams/list, a nozzle camera
+    last; ("", "") for none. A relative URL is on the printer's web server: its
+    address without Moonraker's own port, as Fluidd and Mainsail open it."""
+    cams = [c for c in webcams or [] if isinstance(c, dict)]
+    cams.sort(key=lambda c: any(w in str(c.get("name") or "").lower() for w in NOZZLE_CAMERA_WORDS))
+    for cam in cams:
+        if cam.get("enabled") is False or cam.get("service") in NOT_CAMERA_SERVICES:
             continue
         stream, snapshot = cam.get("stream_url"), cam.get("snapshot_url")
         # Fluidd's "adaptive" MJPEG reads snapshots; the stream is ustreamer's or mjpg-streamer's all the same.
