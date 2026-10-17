@@ -121,6 +121,7 @@ void DevAmsTray::reset()
     filament_preset.clear();
     spool.reset();
     toolhead = -1;
+    tool = -1;
 }
 
 
@@ -650,6 +651,10 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                         curr_ams->m_left_dry_time = (*it)["dry_time"].get<int>();
                     }
 
+                    // Orca: a printer agent shows a single-lane unit as an AMS HT, with "dryer": false when it has no dryer.
+                    auto dryer_it = it->find("dryer");
+                    curr_ams->m_has_dryer = dryer_it == it->end() || !dryer_it->is_boolean() || dryer_it->get<bool>();
+
                     // Drying status — only parse if printer supports remote drying
                     if (obj->is_support_remote_dry) {
                         if (it->contains("info")) {
@@ -822,12 +827,14 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             // state when a previously empty slot receives a filament again.
                             curr_tray->is_slot_placeholder = tray_it->contains("tray_slot_placeholder");
                             // Orca: a printer agent may name the tray's filament preset, describe its spool and
-                            // say which toolhead the tray feeds.
+                            // say which toolhead the tray feeds and which tool it is.
                             auto preset_it = tray_it->find("filament_preset");
                             curr_tray->filament_preset = preset_it != tray_it->end() && preset_it->is_string() ? preset_it->get<std::string>() : std::string();
                             curr_tray->spool = parse_tray_spool(*tray_it);
                             auto toolhead_it = tray_it->find("toolhead");
                             curr_tray->toolhead = toolhead_it != tray_it->end() && toolhead_it->is_number_integer() ? toolhead_it->get<int>() : -1;
+                            auto tool_it = tray_it->find("tool");
+                            curr_tray->tool = tool_it != tray_it->end() && tool_it->is_number_integer() ? tool_it->get<int>() : -1;
                             int ams_id_int = 0;
                             int tray_id_int = 0;
                             try

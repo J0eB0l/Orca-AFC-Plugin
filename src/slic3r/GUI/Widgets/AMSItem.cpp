@@ -94,6 +94,7 @@ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, 
     this->left_dray_time = ams->GetLeftDryTime();
     this->current_temperature = ams->GetCurrentTemperature();
     this->ams_type = AMSModel(ams->GetAmsType());
+    this->has_dryer = ams->SupportDrying();
 
     nozzle_id = ams->GetExtruderId();
     switch_pos = ams->GetSwitcherPos(); // Orca: carry the switch inlet for inlet-aware panel placement
@@ -239,6 +240,11 @@ int AMSinfo::get_humidity_display_idx() const
     }
     else if (ams_type == AMSModel::N3F_AMS || ams_type == AMSModel::N3S_AMS)
     {
+        // Orca: a printer agent's unit with no humidity reading and no dryer shows no humidity.
+        if (humidity_raw < 0 && !has_dryer)
+        {
+            return 0;
+        }
         if (humidity_raw < 20)
         {
             return 5;

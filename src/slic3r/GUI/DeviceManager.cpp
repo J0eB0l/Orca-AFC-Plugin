@@ -1440,6 +1440,9 @@ int MachineObject::command_request_push_all(bool request_now)
     j["pushing"]["command"]     = "pushall";
     j["pushing"]["version"]     =  1;
     j["pushing"]["push_target"] =  1;
+    // Orca: tells a printer agent that filament sync orders its trays by the tool each one reports.
+    if (!printer_agent_id.empty() && printer_agent_id != BBL_PRINTER_AGENT_ID)
+        j["pushing"]["tray_tool"] = true;
     return this->publish_json(j);
 }
 
@@ -3260,6 +3263,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 }
                 if (jj.contains("support_tray_k") && jj["support_tray_k"].is_boolean()) {
                     is_support_tray_k = jj["support_tray_k"].get<bool>();
+                }
+                // Orca: a printer agent's AMS 2 Pro and AMS HT units take the drying controls.
+                if (jj.contains("support_remote_dry") && jj["support_remote_dry"].is_boolean()) {
+                    is_support_remote_dry = jj["support_remote_dry"].get<bool>();
                 }
 
               m_fan->ParseV2_0(jj);

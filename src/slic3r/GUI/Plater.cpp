@@ -6181,7 +6181,9 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
         int extruder = ams.second->GetExtruderId() ? 0 : 0x10000; // Main (first) extruder at right
         for (auto tray : ams.second->GetTrays()) {
             int  slot_id = std::stoi(tray.first);
-            filament_ams_list.emplace(extruder + (ams_id * 4 + slot_id),
+            // Orca: a printer agent's tray syncs to the slot of the tool it reports, whatever unit shows it.
+            const int index = tray.second->tool >= 0 ? tray.second->tool : ams_id * 4 + slot_id;
+            filament_ams_list.emplace(extruder + index,
                                       build_tray_config(*tray.second, get_ams_name(ams_id, slot_id), std::to_string(ams_id), std::to_string(slot_id)));
         }
     }

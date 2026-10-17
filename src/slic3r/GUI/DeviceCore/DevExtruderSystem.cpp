@@ -232,16 +232,10 @@ namespace Slic3r
                 }
                 else
                 {
-                    if (tray_tar_int >= 0x80 && tray_tar_int <= 0x87)
-                    {
-                        system->m_extders[MAIN_EXTRUDER_ID].m_star.ams_id = std::to_string(tray_tar_int);
-                    }
-                    else
-                    {
-                        system->m_extders[MAIN_EXTRUDER_ID].m_star.ams_id = std::to_string(tray_tar_int >> 2);
-                    }
-
-                    system->m_extders[MAIN_EXTRUDER_ID].m_star.slot_id = std::to_string(tray_tar_int & 0x3);
+                    // An AMS HT (0x80-0x87) has its one tray in slot 0.
+                    const bool ht = tray_tar_int >= 0x80 && tray_tar_int <= 0x87;
+                    system->m_extders[MAIN_EXTRUDER_ID].m_star.ams_id = std::to_string(ht ? tray_tar_int : tray_tar_int >> 2);
+                    system->m_extders[MAIN_EXTRUDER_ID].m_star.slot_id = std::to_string(ht ? 0 : tray_tar_int & 0x3);
                 }
             }
         }
@@ -264,16 +258,9 @@ namespace Slic3r
                 }
                 else
                 {
-                    if (tray_now_int >= 0x80 && tray_now_int <= 0x87)
-                    {
-                        system->m_extders[MAIN_EXTRUDER_ID].m_snow.ams_id = std::to_string(tray_now_int);
-                    }
-                    else
-                    {
-                        system->m_extders[MAIN_EXTRUDER_ID].m_snow.ams_id = std::to_string(tray_now_int >> 2);
-                    }
-
-                    system->m_extders[MAIN_EXTRUDER_ID].m_snow.slot_id = std::to_string(tray_now_int & 0x3);
+                    const bool ht = tray_now_int >= 0x80 && tray_now_int <= 0x87;
+                    system->m_extders[MAIN_EXTRUDER_ID].m_snow.ams_id = std::to_string(ht ? tray_now_int : tray_now_int >> 2);
+                    system->m_extders[MAIN_EXTRUDER_ID].m_snow.slot_id = std::to_string(ht ? 0 : tray_now_int & 0x3);
                 }
             }
         }

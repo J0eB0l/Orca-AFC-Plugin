@@ -5304,6 +5304,21 @@ std::vector<Preset *> PresetBundle::get_filament_presets_for_machine(const std::
     return compatible;
 }
 
+std::vector<Preset *> PresetBundle::get_filament_presets_for_device(const std::string &printer_type,
+                                                                   const std::string &nozzle_diameter_str,
+                                                                   bool               include_user_presets,
+                                                                   bool              &by_name)
+{
+    by_name = get_printer_names_by_printer_type_and_nozzle(printer_type, nozzle_diameter_str).empty();
+    if (!by_name)
+        return get_filament_presets_for_machine(printer_type, nozzle_diameter_str, include_user_presets);
+    std::vector<Preset *> out;
+    for (Preset &preset : filaments)
+        if (preset.is_compatible && preset.is_visible && !preset.is_default)
+            out.push_back(&preset);
+    return out;
+}
+
 int PresetBundle::get_filament_variant_index(const DynamicPrintConfig &filament_config, const DynamicPrintConfig &printer_config,
                                              int extruder_id, NozzleVolumeType nozzle_volume_type)
 {

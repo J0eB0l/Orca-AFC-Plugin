@@ -476,6 +476,12 @@ public:
     std::vector<Preset *> get_filament_presets_for_machine(const std::string &printer_type,
                                                            const std::string &nozzle_diameter_str,
                                                            bool               include_user_presets);
+    // Orca: get_filament_presets_for_machine() or, for a machine with no system printer preset of its model and nozzle
+    // (a printer agent's), the visible filament presets compatible with the selected printer. by_name says which.
+    std::vector<Preset *> get_filament_presets_for_device(const std::string &printer_type,
+                                                          const std::string &nozzle_diameter_str,
+                                                          bool               include_user_presets,
+                                                          bool              &by_name);
     // Orca: the variant index of a filament preset's per-variant options on extruder extruder_id of a printer
     // preset, with the nozzle volume type the machine reports; 0 when the filament has no such variant.
     static int            get_filament_variant_index(const DynamicPrintConfig &filament_config,

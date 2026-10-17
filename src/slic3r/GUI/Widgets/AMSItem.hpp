@@ -244,6 +244,7 @@ public:
     int                     humidity_raw = -1;     // Orca: raw humidity percent (replaces REF ams_humidity_percent)
     int                     left_dray_time = 0;
     float                   current_temperature = INVALID_AMS_TEMPERATURE;
+    bool                    has_dryer = true;      // Orca: DevAms::SupportDrying() of an N3F/N3S
     AMSModel                ams_type = AMSModel::GENERIC_AMS;
     AMSModelOriginType      ext_type = AMSModelOriginType::GENERIC_EXT;
 
@@ -262,7 +263,9 @@ public:
             current_action == other.current_action &&
             curreent_filamentstep == other.curreent_filamentstep &&
             ams_humidity == other.ams_humidity &&
+            humidity_raw == other.humidity_raw &&
             left_dray_time == other.left_dray_time &&
+            has_dryer == other.has_dryer &&
             current_temperature == other.current_temperature &&
             ams_type == other.ams_type &&
             ext_type == other.ext_type &&
@@ -287,7 +290,7 @@ public:
     bool parse_ams_info(MachineObject* obj, DevAms *ams, bool remain_flag = false, bool humidity_flag = false);
     void parse_ext_info(MachineObject* obj, DevAmsTray tray);
 
-    bool support_drying() const { return (ams_type == AMSModel::N3S_AMS) || (ams_type == AMSModel::N3F_AMS); };
+    bool support_drying() const { return ((ams_type == AMSModel::N3S_AMS) || (ams_type == AMSModel::N3F_AMS)) && has_dryer; };
     bool support_humidity() const { return  1 <= get_humidity_display_idx() && get_humidity_display_idx() <= 5; }
     Caninfo get_caninfo(const std::string& can_id, bool& found) const;
 

@@ -6,6 +6,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 
 #include <boost/lexical_cast.hpp>
+#include <algorithm>
 #include "libslic3r/MultiNozzleUtils.hpp"
 #include "slic3r/GUI/DeviceCore/DevNozzleSystem.h"
 #include <memory>
@@ -84,7 +85,11 @@ std::optional<Slic3r::DevFilamentDryingPreset> DevUtilBackend::GetFilamentDrying
     for (auto iter = GUI::wxGetApp().preset_bundle->filaments.begin(); iter != GUI::wxGetApp().preset_bundle->filaments.end(); ++iter) {
         const Preset& filament_preset = *iter;
         const auto& config = filament_preset.config;
-        if (filament_preset.filament_id == fila_id) {
+        // Orca: a preset with no AMS drying temperatures (one outside Bambu's profiles) is none, so callers treat the
+        // filament as PLA, as they do an unknown one, instead of offering 0 degrees and blocking the start.
+        const auto* drying_temps = config.option<ConfigOptionFloats>("filament_dev_ams_drying_temperature");
+        if (filament_preset.filament_id == fila_id && drying_temps &&
+            std::any_of(drying_temps->values.begin(), drying_temps->values.end(), [](double temp) { return temp > 0; })) {
             DevFilamentDryingPreset info;
             info.filament_id = fila_id;
             try {

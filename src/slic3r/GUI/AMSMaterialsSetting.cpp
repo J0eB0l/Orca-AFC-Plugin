@@ -1552,15 +1552,8 @@ std::vector<Preset *> AMSMaterialsSetting::filaments_for_tray(const std::string 
     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
     if (!obj || !preset_bundle)
         return {};
-    const std::string printer_type = DevPrinterConfigUtil::get_printer_display_name(obj->printer_type);
-    by_name = preset_bundle->get_printer_names_by_printer_type_and_nozzle(printer_type, nozzle_diameter_str).empty();
-    if (!by_name)
-        return preset_bundle->get_filament_presets_for_machine(printer_type, nozzle_diameter_str, obj->is_support_user_preset);
-    std::vector<Preset *> out;
-    for (Preset &preset : preset_bundle->filaments)
-        if (preset.is_compatible && preset.is_visible && !preset.is_default)
-            out.push_back(&preset);
-    return out;
+    return preset_bundle->get_filament_presets_for_device(DevPrinterConfigUtil::get_printer_display_name(obj->printer_type),
+                                                          nozzle_diameter_str, obj->is_support_user_preset, by_name);
 }
 
 int AMSMaterialsSetting::get_filament_variant_index(const Preset &filament, const std::string &nozzle_diameter_str)

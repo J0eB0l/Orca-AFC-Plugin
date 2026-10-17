@@ -1,7 +1,7 @@
 #include "AMSDryControl.hpp"
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"
 #include "GUI_App.hpp"
-#include "slic3r/Utils/NetworkAgent.hpp"
+#include "slic3r/Utils/BBLPrinterAgent.hpp"
 #include "I18N.hpp"
 
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h"
@@ -1543,9 +1543,9 @@ void AMSDryCtrWin::update_filament_guide_info(DevAms* dev_ams)
                       m_temperature_input->GetValue().ToLong(&input_temp);
     bool can_start = true;
 
-    // "GFA00" is Bambu's PLA id; GetFilamentDryingPreset is keyed by our OF ids.
-    auto* agent = wxGetApp().getAgent();
-    const std::string pla_filament_id = agent ? agent->to_orca_filament_id("GFA00") : std::string("GFA00");
+    // "GFA00" is Bambu's PLA id; GetFilamentDryingPreset is keyed by our OF ids. Orca: translated with Bambu's
+    // table whatever agent the printer has, so a printer agent's unknown filaments are treated as PLA too.
+    const std::string pla_filament_id = BBLPrinterAgent::bambu_to_orca_filament_id("GFA00");
 
     int slot_count = 0, empty_count = 0;
     for (auto& tray_pair : dev_ams->GetTrays()) {
@@ -1633,8 +1633,9 @@ int AMSDryCtrWin::update_filament_list(DevAms* dev_ams, MachineObject* obj)
         stream << std::fixed << std::setprecision(1) << obj->GetExtderSystem()->GetNozzleDiameter(extruder_id);
         std::string nozzle_diameter_str = stream.str();
 
-        for (Preset *filament_it : preset_bundle->get_filament_presets_for_machine(
-                 DevPrinterConfigUtil::get_printer_display_name(obj->printer_type), nozzle_diameter_str, obj->is_support_user_preset)) {
+        bool by_name = false;
+        for (Preset *filament_it : preset_bundle->get_filament_presets_for_device(
+                 DevPrinterConfigUtil::get_printer_display_name(obj->printer_type), nozzle_diameter_str, obj->is_support_user_preset, by_name)) {
             if (!filament_id_set.insert(filament_it->filament_id).second)
                 continue;
             const std::string filament_alias = filaments.get_preset_alias(*filament_it, true);
@@ -1721,8 +1722,7 @@ int AMSDryCtrWin::update_filament_list(DevAms* dev_ams, MachineObject* obj)
 
     // Select recommended drying temperature and default filament
     float min_dry_temp = std::numeric_limits<float>::max();
-    auto* agent = wxGetApp().getAgent();
-    std::string default_filament_id = agent ? agent->to_orca_filament_id("GFA00") : std::string("GFA00");   // compared against m_tray_ids[i].filament_id (our OF ids) below
+    std::string default_filament_id = BBLPrinterAgent::bambu_to_orca_filament_id("GFA00");   // compared against m_tray_ids[i].filament_id (our OF ids) below
     bool has_ready = false;
     const auto fallback_preset = DevUtilBackend::GetFilamentDryingPreset(default_filament_id);
     for (const auto& tray_pair : dev_ams->GetTrays()) {

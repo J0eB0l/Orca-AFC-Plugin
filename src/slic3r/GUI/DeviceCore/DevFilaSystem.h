@@ -87,6 +87,7 @@ public:
     std::string     filament_preset;              // Orca: the filament preset a printer agent names for the tray
     std::optional<TraySpool> spool;               // Orca: the spool on the tray, as a printer agent describes it
     int             toolhead = -1;                // Orca: the toolhead the tray feeds, as a printer agent reports it (-1 = not known)
+    int             tool = -1;                    // Orca: the tool (T number) a printer agent's tray is, which filament sync orders by (-1 = not known)
     int             hold_count = 0;
     int             remain = 0;         // filament remain: 0 ~ 100
 
@@ -256,7 +257,7 @@ public:
     int   GetHumidityLevel() const { return m_humidity_level; }
     int   GetHumidityPercent() const { return m_humidity_percent; }
 
-    bool  SupportDrying() const { return m_ams_type == DevAmsType::N3F || m_ams_type == DevAmsType::N3S; }
+    bool  SupportDrying() const { return (m_ams_type == DevAmsType::N3F || m_ams_type == DevAmsType::N3S) && m_has_dryer; }
     int   GetLeftDryTime() const { return m_left_dry_time; }
 
     // remote drying control
@@ -290,6 +291,7 @@ private:
     int    m_humidity_level = 5; // AmsType::AMS
     int    m_humidity_percent = -1; // N3F N3S, the percentage, -1 means invalid. eg. 100 means 100%
     int    m_left_dry_time = 0;
+    bool   m_has_dryer = true; // Orca: false for a printer agent's N3F/N3S unit that has no dryer
 
     // see is_support_remote_dry
     std::optional<DryStatus> m_dry_status;

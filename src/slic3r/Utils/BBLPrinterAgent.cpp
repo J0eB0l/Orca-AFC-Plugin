@@ -120,9 +120,14 @@ To as_abi(From fn)
 
 std::string BBLPrinterAgent::to_orca_filament_id(const std::string& printer_filament_id) const
 {
+    return bambu_to_orca_filament_id(printer_filament_id);
+}
+
+std::string BBLPrinterAgent::bambu_to_orca_filament_id(const std::string& bambu_filament_id)
+{
     const auto& map = bambu_filament_id_map().to_orca;
-    auto it = map.find(printer_filament_id);
-    return it != map.end() ? it->second : printer_filament_id;
+    auto it = map.find(bambu_filament_id);
+    return it != map.end() ? it->second : bambu_filament_id;
 }
 
 std::string BBLPrinterAgent::from_orca_filament_id(const std::string& orca_filament_id) const
