@@ -33,8 +33,13 @@ rewrites the file for what AFC does with it:
   strong cooling when a filament the plate prints softens at 50 °C or below,
   light cooling at 70 °C or below, else keep warm. Keep warm aims for 45 °C, or
   with "Support controlling chamber temperature" on, for the highest chamber
-  temperature those filaments ask for (the U1 has no M141 or M191). A file that
-  already sets it is left as it is.
+  temperature those filaments ask for. A file that already sets it is left as
+  it is.
+- **No M141 or M191 on a U1.** The U1 answers both with "Unknown command", so a
+  U1 file loses the chamber lines OrcaSlicer writes from the filaments'
+  chamber temperature, with the cavity fan blip around M191. The U1 holds its
+  chamber with the top cover's mode above and waits for it with its own
+  `WAIT_CHAMBER_TEMP`, which Snapmaker's U1 start G-code runs once the bed is hot.
 
 Only Klipper files are changed. Nothing here talks to the network or to
 OrcaSlicer, so all of it is unit-tested.
@@ -67,6 +72,10 @@ PA_NOTE = "; AFC spool flow K"
 _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | re.M)
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
+_CHAMBER_LINE = re.compile(r"^[ \t]*M1([49])1(?=[ \t;\r\n]|$)", re.I)
+# The cavity fan OrcaSlicer runs around M191 when the printer has an auxiliary fan.
+_AUX_FAN_ON = re.compile(r"^[ \t]*M106 P2 S255[ \t]*\r?\n$")
+_AUX_FAN_OFF = re.compile(r"^[ \t]*M106 P2 S0[ \t]*\r?\n?$")
 TOP_COVER_NOTE = "; U1 top cover"
 KEEP_WARM_TEMP = 45
 # The modes of Snapmaker's U1 start G-code, by the name its comments give them.
@@ -137,6 +146,7 @@ class FileSettings:
     adaptive_pa: list = field(default_factory=list)  # adaptive pressure advance per filament
     tower_flushes: bool = False  # the prime tower flushes the lane changes it plans ("Purge in prime tower")
     sliced_toolheads: list = field(default_factory=list)  # filament_toolhead as sliced, -1 = not known
+    u1: bool = False  # a Snapmaker U1
     top_cover: bool = False  # a Snapmaker U1 with "Support air filtration" on
     softening: list = field(default_factory=list)  # temperature_vitrification per filament, °C
     chamber_control: bool = False  # "Support controlling chamber temperature"
@@ -148,6 +158,7 @@ class FileSettings:
         diameters = _floats(config.get("filament_diameter", ""))
         colors = [c for c in config.get("filament_colour", "").split(";") if c] if config.get("filament_colour") else []
         single_extruder_mm = _on(config, "single_extruder_multi_material")
+        u1 = config.get("printer_model", "").startswith("Snapmaker U1")
         return cls(
             klipper=config.get("gcode_flavor", "") == "klipper",
             single_extruder_mm=single_extruder_mm,
@@ -162,8 +173,8 @@ class FileSettings:
                            and _on(config, "multi_extruder_multi_material") and not single_extruder_mm
                            and config.get("wipe_tower_type", "type2") != "type1"),
             sliced_toolheads=_ints(config.get("filament_toolhead", "")),
-            top_cover=(_on(config, "support_air_filtration")
-                       and config.get("printer_model", "").startswith("Snapmaker U1")),
+            u1=u1,
+            top_cover=u1 and _on(config, "support_air_filtration"),
             softening=_floats(config.get("temperature_vitrification", "")),
             chamber_control=_on(config, "support_chamber_temp_control"),
             chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
@@ -280,11 +291,16 @@ class Result:
     purges: int = 0
     pressure_advance: int = 0
     top_cover: str = ""  # the U1 top cover mode this rewrite set
+    chamber_lines: int = 0  # M141 and M191 lines dropped from a U1 file
 
     def summary(self) -> str:
         text = "%d tool changes, %d lane-change purges, %d spool PA settings" % (
             self.tool_changes, self.purges, self.pressure_advance)
-        return text + (", U1 top cover: " + self.top_cover if self.top_cover else "")
+        if self.top_cover:
+            text += ", U1 top cover: " + self.top_cover
+        if self.chamber_lines:
+            text += ", %d M141/M191 dropped (the U1 has neither)" % self.chamber_lines
+        return text
 
 
 def _format(value: float, digits: int) -> str:
@@ -325,9 +341,14 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     active = -1           # filament printing now
     in_config = False
     in_tower_change = False
+    fan_off_next = False  # the cavity fan line after a dropped M191 goes too
     out = []
     for line in lines:
         first = line.lstrip(" \t")[:1]
+        if fan_off_next:
+            fan_off_next = False
+            if _AUX_FAN_OFF.match(line):
+                continue
         if first == ";":
             if line.startswith(CONFIG_START):
                 in_config = True
@@ -379,6 +400,15 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                     result.pressure_advance += 1
                 continue
 
+        if settings.u1 and first in "Mm":
+            match = _CHAMBER_LINE.match(line)
+            if match:
+                result.chamber_lines += 1
+                if match.group(1) == "9":
+                    if out and _AUX_FAN_ON.match(out[-1]):
+                        out.pop()
+                    fan_off_next = True
+                continue
         if plan.tools and (first in "Mm") and _TEMP_LINE.match(line):
             out.append(_renumber_temp_line(line, plan.tools))
             continue

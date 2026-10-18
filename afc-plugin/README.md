@@ -35,8 +35,12 @@ Klipper file to AFC:
   anything else (ABS, ASA, PC) keep warm. The softening temperature is the
   filament's **Softening temperature** setting. Keep warm aims for 45 °C; with
   **Support controlling chamber temperature** on, it aims for the highest
-  chamber temperature those filaments ask for instead, since the U1 has no
-  `M141` or `M191`. A start G-code that already sets the mode keeps its own.
+  chamber temperature those filaments ask for instead. A start G-code that
+  already sets the mode keeps its own;
+- a Snapmaker U1 file loses the `M191` and `M141` lines OrcaSlicer writes for a
+  filament's chamber temperature, since the U1 answers them with "Unknown
+  command". The U1 holds the chamber with the top cover's mode and waits for it
+  with `WAIT_CHAMBER_TEMP` in Snapmaker's U1 start G-code.
 
 It reads AFC from the printer for which toolhead each T number feeds and its
 spool's K. A printer that does not answer still gets its file; on a single-nozzle
@@ -132,12 +136,12 @@ Then:
   other is set up.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
-  lane-change purges, spool flow K and U1 top cover mode the AFC G-code step
-  adds, uploads the file to Moonraker and starts it. On a Snapmaker U1, the
-  dialog's bed leveling, flow calibration and timelapse switches go into the
-  file. In the AFC build of OrcaSlicer the dialog also has **Upload**, which does
-  the same without starting the print. **Send** in the menu next to **Print
-  plate** uploads the file as sliced, with no tray choice.
+  lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds
+  (and drops a U1's chamber lines), uploads the file to Moonraker and starts it.
+  On a Snapmaker U1, the dialog's bed leveling, flow calibration and timelapse
+  switches go into the file. In the AFC build of OrcaSlicer the dialog also has
+  **Upload**, which does the same without starting the print. **Send** in the menu
+  next to **Print plate** uploads the file as sliced, with no tray choice.
 
 Without the agent, OrcaSlicer's own Moonraker agent also syncs AFC's lanes by T
 number, with generic presets only.

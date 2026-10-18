@@ -332,5 +332,56 @@ class TopCoverTest(unittest.TestCase):
         self.assertEqual(cover, WARM + " ; U1 top cover: keep warm")
 
 
+# What OrcaSlicer 2.5 writes for a filament with chamber temperature control on
+# a printer with an auxiliary fan: M191 before the start G-code, M141 at the end.
+CHAMBER_START = ("M106 P2 S255 \nM191 S55 ;set chamber_temperature and wait for it to be reached\n"
+                 "M106 P2 S0 \n")
+CHAMBER_END = "PRINT_END\nM141 S0;set chamber_temperature\n"
+
+
+class ChamberLinesTest(unittest.TestCase):
+    def run_on(self, text):
+        return g.transform(text, g.Plan(), g.FileSettings.from_config(g.read_config_block(text)))
+
+    def chamber_file(self, extra=U1):
+        return u1_file([2], extra=extra, start=CHAMBER_START + "PRINT_START TOOL=0\n") + CHAMBER_END
+
+    def test_dropped_on_a_u1_with_the_cavity_fan_blip(self):
+        result = self.run_on(self.chamber_file())
+        self.assertEqual(result.text.splitlines()[:3],
+                         ["PRINT_START TOOL=0", WARM + " ; U1 top cover: keep warm", "G28 X Y"])
+        self.assertNotIn("M141", result.text)
+        self.assertTrue(result.text.endswith("PRINT_END\n"))
+        self.assertEqual(result.chamber_lines, 2)
+        self.assertIn(", 2 M141/M191 dropped", result.summary())
+
+    def test_dropped_without_air_filtration(self):
+        text = self.chamber_file(extra=U1.replace("support_air_filtration = 1", "support_air_filtration = 0"))
+        out = self.run_on(text).text
+        self.assertEqual(out, text.replace(CHAMBER_START, "").replace("M141 S0;set chamber_temperature\n", ""))
+
+    def test_other_cavity_fan_lines_stay(self):
+        text = u1_file([2], start="M191 S50\nPRINT_START TOOL=0\nM106 P2 S0\n")
+        out = self.run_on(text).text
+        self.assertNotIn("M191", out)
+        self.assertIn(WARM + " ; U1 top cover: keep warm\nM106 P2 S0\nG28", out)
+
+    def test_windows_line_ends(self):
+        text = self.chamber_file().replace("\n", "\r\n")
+        out = self.run_on(text).text
+        self.assertTrue(out.startswith("PRINT_START TOOL=0\r\n" + WARM), out[:200])
+        self.assertNotIn("M141", out)
+
+    def test_kept_on_other_printers(self):
+        text = self.chamber_file(extra=U1.replace("Snapmaker U1", "Voron 2.4 300"))
+        self.assertEqual(self.run_on(text).text, text)
+
+    def test_a_second_pass_changes_nothing(self):
+        once = self.run_on(self.chamber_file()).text
+        again = self.run_on(once)
+        self.assertEqual(again.text, once)
+        self.assertEqual(again.chamber_lines, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
