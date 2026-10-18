@@ -26,7 +26,15 @@ Klipper file to AFC:
   `PURGE_LENGTH` unless the print dialog's mapping changed them;
 - a lane whose Spoolman spool has a saved flow K prints with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
-  lines for it take that K (filaments with adaptive pressure advance keep theirs).
+  lines for it take that K (filaments with adaptive pressure advance keep theirs);
+- on a Snapmaker U1 with **Support air filtration** on in the printer settings,
+  the top cover's filter and exhaust fan start with the print: a
+  `SET_PURIFIER_MODE` line after `PRINT_START`, picked the way Snapmaker's
+  OrcaSlicer picks it. A plate with a filament that softens at 50 °C or below
+  (PLA) gets strong cooling, one at 70 °C or below (PETG) light cooling, and
+  anything else (ABS, ASA, PC) keep warm. The softening temperature is the
+  filament's **Softening temperature** setting. A start G-code that already sets
+  the mode keeps its own.
 
 It reads AFC from the printer for which toolhead each T number feeds and its
 spool's K. A printer that does not answer still gets its file; on a single-nozzle
@@ -122,12 +130,12 @@ Then:
   other is set up.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
-  lane-change purges and spool flow K the AFC G-code step adds, uploads the file
-  to Moonraker and starts it. On a Snapmaker U1, the dialog's bed leveling, flow
-  calibration and timelapse switches go into the file. In the AFC build of
-  OrcaSlicer the dialog also has **Upload**, which does the same without starting
-  the print. **Send** in the menu next to **Print plate** uploads the file as
-  sliced, with no tray choice.
+  lane-change purges, spool flow K and U1 top cover mode the AFC G-code step
+  adds, uploads the file to Moonraker and starts it. On a Snapmaker U1, the
+  dialog's bed leveling, flow calibration and timelapse switches go into the
+  file. In the AFC build of OrcaSlicer the dialog also has **Upload**, which does
+  the same without starting the print. **Send** in the menu next to **Print
+  plate** uploads the file as sliced, with no tray choice.
 
 Without the agent, OrcaSlicer's own Moonraker agent also syncs AFC's lanes by T
 number, with generic presets only.
@@ -165,7 +173,7 @@ open `orca_afc/web/index.html?mock=1`; `afc-mock.js` answers with made-up lanes.
 | `orca_afc/moonraker.py` | The Moonraker HTTP client |
 | `orca_afc/manager.py` | Reads AFC (webhook first, Klipper objects as fallback) and runs the tab's commands |
 | `orca_afc/page.py` | The tab itself: the page HTML and its messages |
-| `orca_afc/gcode.py` | The G-code rewrite: T numbers, lane-change purges, spool PA |
+| `orca_afc/gcode.py` | The G-code rewrite: T numbers, lane-change purges, spool PA, U1 top cover |
 | `orca_afc/postprocess.py` | The AFC G-code step OrcaSlicer runs on exported files |
 | `orca_afc/agent.py` | The AFC printer agent: connecting, status pushes, requests and prints |
 | `orca_afc/trays.py` | AFC's lanes as OrcaSlicer's AMS trays, and the print dialog's tray choice |

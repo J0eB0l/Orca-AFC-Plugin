@@ -27,6 +27,12 @@ rewrites the file for what AFC does with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` follows its `T` line, and the file's own
   PA lines while it prints take that K. Filaments with adaptive pressure
   advance keep theirs.
+- **Snapmaker U1 top cover.** With "Support air filtration" on in the printer
+  settings, a U1 file sets the top cover's filter and exhaust fan right after
+  `PRINT_START`, the way Snapmaker's OrcaSlicer does from its U1 start G-code:
+  strong cooling when a filament the plate prints softens at 50 °C or below,
+  light cooling at 70 °C or below, else keep warm. A file that already sets it
+  is left as it is.
 
 Only Klipper files are changed. Nothing here talks to the network or to
 OrcaSlicer, so all of it is unit-tested.
@@ -56,6 +62,16 @@ _START_TEMP = re.compile(r"(?<=[ \t])T(\d+)_TEMP=", re.I)
 _PA_LINE = re.compile(r"^[ \t]*SET_PRESSURE_ADVANCE(?=[ \t;\r\n]|$)", re.I)
 _PA_VALUE = re.compile(r"(?<=[ \t])ADVANCE=[^ \t;\r\n]*", re.I)
 PA_NOTE = "; AFC spool flow K"
+_PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | re.M)
+_FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
+_ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
+TOP_COVER_NOTE = "; U1 top cover"
+# The modes of Snapmaker's U1 start G-code, by the name its comments give them.
+TOP_COVER_MODES = {
+    "keep warm": "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP=45 FAN_SPEED=0.6 DELAY_OFF=600",
+    "light cooling": "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=45 ALARM_TEMP=51 FAN_SPEED=0.6 DELAY_OFF=0",
+    "strong cooling": "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=42 ALARM_TEMP=48 FAN_SPEED=0.6 DELAY_OFF=0",
+}
 
 
 # ------------------------------------------------------------------ the file's settings
@@ -118,6 +134,8 @@ class FileSettings:
     adaptive_pa: list = field(default_factory=list)  # adaptive pressure advance per filament
     tower_flushes: bool = False  # the prime tower flushes the lane changes it plans ("Purge in prime tower")
     sliced_toolheads: list = field(default_factory=list)  # filament_toolhead as sliced, -1 = not known
+    top_cover: bool = False  # a Snapmaker U1 with "Support air filtration" on
+    softening: list = field(default_factory=list)  # temperature_vitrification per filament, °C
 
     @classmethod
     def from_config(cls, config: dict) -> "FileSettings":
@@ -138,6 +156,9 @@ class FileSettings:
                            and _on(config, "multi_extruder_multi_material") and not single_extruder_mm
                            and config.get("wipe_tower_type", "type2") != "type1"),
             sliced_toolheads=_ints(config.get("filament_toolhead", "")),
+            top_cover=(_on(config, "support_air_filtration")
+                       and config.get("printer_model", "").startswith("Snapmaker U1")),
+            softening=_floats(config.get("temperature_vitrification", "")),
         )
 
     @property
@@ -171,6 +192,27 @@ class FileSettings:
 
     def adaptive(self, filament: int) -> bool:
         return filament < len(self.adaptive_pa) and self.adaptive_pa[filament]
+
+
+def filaments_used(text: str) -> list:
+    """The filaments a file prints: those with a length in its `filament used
+    [mm]` line, else those it changes to."""
+    match = _FILAMENT_USED.search(text)
+    if match:
+        return [i for i, mm in enumerate(_floats(match.group(1))) if mm > 0]
+    return sorted({int(m.group(1)) for m in _ANY_T_LINE.finditer(text)})
+
+
+def top_cover_mode(settings: FileSettings, used: list) -> str:
+    """The U1 top cover mode for a plate printing the filaments `used`, as
+    Snapmaker's OrcaSlicer picks it from their softening temperature."""
+    softest = min((settings.softening[f] for f in used
+                   if f < len(settings.softening) and settings.softening[f] > 0), default=None)
+    if softest is not None and softest <= 50:
+        return "strong cooling"
+    if softest is not None and softest <= 70:
+        return "light cooling"
+    return "keep warm"
 
 
 # ------------------------------------------------------------------ what to print
@@ -216,10 +258,12 @@ class Result:
     tool_changes: int = 0
     purges: int = 0
     pressure_advance: int = 0
+    top_cover: str = ""  # the U1 top cover mode this rewrite set
 
     def summary(self) -> str:
-        return "%d tool changes, %d lane-change purges, %d spool PA settings" % (
+        text = "%d tool changes, %d lane-change purges, %d spool PA settings" % (
             self.tool_changes, self.purges, self.pressure_advance)
+        return text + (", U1 top cover: " + self.top_cover if self.top_cover else "")
 
 
 def _format(value: float, digits: int) -> str:
@@ -247,6 +291,11 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     result = Result(text=text)
     if not settings.klipper:
         return result
+
+    cover = ""
+    if settings.top_cover and not _PURIFIER_LINE.search(text):
+        result.top_cover = top_cover_mode(settings, filaments_used(text))
+        cover = "%s %s: %s" % (TOP_COVER_MODES[result.top_cover], TOP_COVER_NOTE, result.top_cover)
 
     lines = text.splitlines(keepends=True)
     loaded = {}           # toolhead -> filament it holds
@@ -311,8 +360,12 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
         if plan.tools and (first in "Mm") and _TEMP_LINE.match(line):
             out.append(_renumber_temp_line(line, plan.tools))
             continue
-        if plan.tools and first in "PpSs" and _START_LINE.match(line):
-            out.append(_renumber_start_line(line, plan.tools))
+        if first in "PpSs" and _START_LINE.match(line):
+            out.append(_renumber_start_line(line, plan.tools) if plan.tools else line)
+            if cover:
+                newline = "\r\n" if line.endswith("\r\n") else "\n"
+                out.append(("" if line.endswith("\n") else newline) + cover + newline)
+                cover = ""
             continue
         if first in "Ss" and PA_NOTE in line and _PA_LINE.match(line):
             continue  # one this step wrote on an earlier pass; the T line above gets a new one
@@ -323,6 +376,8 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
         out.append(line)
 
     result.text = "".join(out)
+    if cover:  # no PRINT_START: before the file's first command
+        result.text = insert_after_header(result.text, cover)
     return result
 
 

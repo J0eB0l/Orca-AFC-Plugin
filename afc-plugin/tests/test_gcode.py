@@ -247,5 +247,73 @@ class HeaderTest(unittest.TestCase):
         self.assertEqual(g.insert_after_header("; only", "M1"), "; only\nM1\n")
 
 
+# A U1 with "Support air filtration" on; filaments 0-2 soften at 45, 70 and 110 °C.
+U1 = ("; printer_model = Snapmaker U1\n; support_air_filtration = 1\n"
+      "; temperature_vitrification = 45,70,110\n")
+STRONG = "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=42 ALARM_TEMP=48 FAN_SPEED=0.6 DELAY_OFF=0"
+LIGHT = "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=45 ALARM_TEMP=51 FAN_SPEED=0.6 DELAY_OFF=0"
+WARM = "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP=45 FAN_SPEED=0.6 DELAY_OFF=600"
+
+
+def u1_file(used, extra=U1, start="PRINT_START TOOL=0\n"):
+    lengths = ", ".join("%.2f" % (100.0 if i in used else 0.0) for i in range(3))
+    return (start + "G28 X Y\nT%d\nG1 X10 E1\n" % used[0]
+            + "; filament used [mm] = %s\n" % lengths + config_block(extra=extra))
+
+
+class TopCoverTest(unittest.TestCase):
+    def run_on(self, text):
+        return g.transform(text, g.Plan(), g.FileSettings.from_config(g.read_config_block(text)))
+
+    def test_by_the_softest_filament_printed(self):
+        for used, line, mode in (([0], STRONG, "strong cooling"), ([1], LIGHT, "light cooling"),
+                                 ([2], WARM, "keep warm"), ([2, 0], STRONG, "strong cooling")):
+            result = self.run_on(u1_file(used))
+            self.assertEqual(result.text.splitlines()[:2],
+                             ["PRINT_START TOOL=0", line + " ; U1 top cover: " + mode], used)
+            self.assertEqual(result.top_cover, mode)
+
+    def test_filaments_the_plate_does_not_print_do_not_count(self):
+        # Plate 3 on printer 3: one ASA and six unused PLA slots.
+        self.assertEqual(self.run_on(u1_file([2])).top_cover, "keep warm")
+
+    def test_tool_changes_without_a_length_line(self):
+        text = u1_file([1]).replace("; filament used [mm] = 0.00, 100.00, 0.00\n", "")
+        self.assertEqual(self.run_on(text).top_cover, "light cooling")
+
+    def test_off_without_air_filtration(self):
+        text = u1_file([0], extra=U1.replace("support_air_filtration = 1", "support_air_filtration = 0"))
+        result = self.run_on(text)
+        self.assertEqual(result.text, text)
+        self.assertEqual(result.top_cover, "")
+
+    def test_only_on_a_u1(self):
+        text = u1_file([0], extra=U1.replace("Snapmaker U1", "Voron 2.4 300"))
+        self.assertEqual(self.run_on(text).text, text)
+
+    def test_start_gcode_that_sets_it_wins(self):
+        text = u1_file([0], start="PRINT_START TOOL=0\nSET_PURIFIER_MODE MODE=3 DESIRE_TEMP=50\n")
+        result = self.run_on(text)
+        self.assertEqual(result.text, text)
+        self.assertNotIn("top cover", result.summary())
+
+    def test_a_second_pass_keeps_one_line(self):
+        once = self.run_on(u1_file([0])).text
+        self.assertEqual(self.run_on(once).text, once)
+
+    def test_without_print_start_before_the_first_command(self):
+        text = "; HEADER_BLOCK_START\n; HEADER_BLOCK_END\n" + u1_file([0], start="")
+        self.assertEqual(self.run_on(text).text.splitlines()[2:4],
+                         [STRONG + " ; U1 top cover: strong cooling", "G28 X Y"])
+
+    def test_keeps_windows_line_ends(self):
+        text = u1_file([0]).replace("\n", "\r\n")
+        self.assertIn("PRINT_START TOOL=0\r\n" + STRONG + " ; U1 top cover: strong cooling\r\nG28",
+                      self.run_on(text).text)
+
+    def test_summary(self):
+        self.assertTrue(self.run_on(u1_file([0])).summary().endswith(", U1 top cover: strong cooling"))
+
+
 if __name__ == "__main__":
     unittest.main()
