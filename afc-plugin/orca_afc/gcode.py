@@ -28,15 +28,17 @@ rewrites the file for what AFC does with it:
   PA lines while it prints take that K. Filaments with adaptive pressure
   advance keep theirs.
 - **Snapmaker U1 top cover.** With "Support air filtration" on in the printer
-  settings, a U1 file sets the top cover's filter and exhaust fan right after
+  settings and the U1 reporting its top cover on (`purifier.power_detected`),
+  a U1 file sets the top cover's filter and exhaust fan right after
   `PRINT_START`, the way Snapmaker's OrcaSlicer does from its U1 start G-code:
   strong cooling when a filament the plate prints softens at 50 °C or below,
   light cooling at 70 °C or below, else keep warm. Keep warm aims for 45 °C, or
   with "Support controlling chamber temperature" on, for the highest chamber
   temperature those filaments ask for. A plate with ABS, ASA or a nylon (PA,
   PPA) always runs the filter: keep warm runs it anyway, and with a cooling
-  mode its fan (`circulation_fan`) is turned on beside it, while the purifier
-  keeps running the exhaust. A file that already sets the mode is left as it is.
+  mode (PLA or PETG on the same plate) its fan (`circulation_fan`) is turned on
+  beside it, while the purifier keeps running the exhaust. A plate of only PLA
+  and PETG runs no filter. A file that already sets the mode is left as it is.
 - **No M141 or M191 on a U1.** The U1 answers both with "Unknown command", so a
   U1 file loses the chamber lines OrcaSlicer writes from the filaments'
   chamber temperature, with the cavity fan blip around M191. The U1 holds its
@@ -276,6 +278,7 @@ class Plan:
     tools: dict = field(default_factory=dict)
     toolheads: dict = field(default_factory=dict)
     flow_k: dict = field(default_factory=dict)
+    top_cover: bool = False  # the printer reports a U1 top cover on
 
 
 def plan_for(snapshot: Snapshot | None, filaments: int, mapping: dict | None = None,
@@ -284,7 +287,7 @@ def plan_for(snapshot: Snapshot | None, filaments: int, mapping: dict | None = N
     `snapshot`. `mapping` is the print dialog's filament -> AFC T number;
     without it each filament prints as its own T number. Without AFC data, a
     file sliced for one nozzle still knows every lane feeds toolhead 0."""
-    plan = Plan()
+    plan = Plan(top_cover=snapshot is not None and snapshot.top_cover)
     for filament in range(filaments):
         tool = mapping.get(filament, filament) if mapping else filament
         if tool != filament:
@@ -348,7 +351,9 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
         return result
 
     cover = []
-    if settings.top_cover and not _PURIFIER_LINE.search(text):
+    if settings.top_cover and not plan.top_cover:
+        result.top_cover = "none, the printer does not report it on"
+    elif settings.top_cover and not _PURIFIER_LINE.search(text):
         used = filaments_used(text)
         cover = top_cover_gcode(settings, used)
         result.top_cover = top_cover_mode(settings, used) + (" with the filter on" if len(cover) > 1 else "")

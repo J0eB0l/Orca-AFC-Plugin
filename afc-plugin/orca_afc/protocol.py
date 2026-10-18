@@ -116,6 +116,7 @@ class Snapshot:
     units: list = field(default_factory=list)  # [Unit]
     lanes: list = field(default_factory=list)  # [Lane], unit order
     u1_print: U1PrintOptions = field(default_factory=U1PrintOptions)
+    top_cover: bool = False   # a U1 reports its top cover (filter and exhaust fan) attached
 
     def find_lane(self, name: str) -> Lane | None:
         return next((lane for lane in self.lanes if lane.name == name), None)
@@ -323,6 +324,13 @@ def _read_u1_print_options(status: dict, out: Snapshot) -> None:
                                   _bool(cfg, "time_lapse_camera"))
 
 
+def _read_top_cover(status: dict, out: Snapshot) -> None:
+    """The U1 purifier's power_detected: true while the top cover is on."""
+    purifier = status.get("purifier")
+    if isinstance(purifier, dict) and purifier.get("power_detected") is not None:
+        out.top_cover = _bool(purifier, "power_detected")
+
+
 def _unwrap_status(result: dict):
     cur = result
     # AFC's webhook answers {"status:": {"AFC": {...}}} (the colon is AFC's),
@@ -385,10 +393,12 @@ def parse_status_endpoint(result) -> Snapshot | None:
 
 def afc_object_query() -> dict:
     """Klipper object fields the webhook leaves out, plus the U1's
-    print_task_config switches. A printer without print_task_config answers it
-    with null fields (see _read_u1_print_options)."""
+    print_task_config switches and whether its top cover is on. A printer
+    without those objects answers them with null fields (see
+    _read_u1_print_options)."""
     return {"AFC": ["multiple_tool_mapping"],
-            "print_task_config": ["auto_bed_leveling", "flow_calibrate", "time_lapse_camera"]}
+            "print_task_config": ["auto_bed_leveling", "flow_calibrate", "time_lapse_camera"],
+            "purifier": ["power_detected"]}
 
 
 def merge_afc_object(status, out: Snapshot) -> None:
@@ -398,6 +408,7 @@ def merge_afc_object(status, out: Snapshot) -> None:
     if not isinstance(st, dict):
         return
     _read_u1_print_options(st, out)
+    _read_top_cover(st, out)
     afc = st.get("AFC")
     if isinstance(afc, dict) and afc.get("multiple_tool_mapping") is not None:
         out.multiple_mapping = _bool(afc, "multiple_tool_mapping")
@@ -434,6 +445,7 @@ def parse_objects_status(status) -> Snapshot | None:
     out = Snapshot()
     _read_afc_object(afc, out)
     _read_u1_print_options(st, out)
+    _read_top_cover(st, out)
 
     unit_types = {}
     for entry in _string_list(afc.get("units")):

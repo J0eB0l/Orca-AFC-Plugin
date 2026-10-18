@@ -27,8 +27,9 @@ Klipper file to AFC:
 - a lane whose Spoolman spool has a saved flow K prints with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
   lines for it take that K (filaments with adaptive pressure advance keep theirs);
-- on a Snapmaker U1 with **Support air filtration** on in the printer settings,
-  the top cover's filter and exhaust fan start with the print: a
+- on a Snapmaker U1 with **Support air filtration** on in the printer settings
+  and its top cover on (the U1 reports it), the top cover's filter and exhaust
+  fan start with the print: a
   `SET_PURIFIER_MODE` line after `PRINT_START`, picked the way Snapmaker's
   OrcaSlicer picks it. A plate with a filament that softens at 50 °C or below
   (PLA) gets strong cooling, one at 70 °C or below (PETG) light cooling, and
@@ -38,8 +39,9 @@ Klipper file to AFC:
   chamber temperature those filaments ask for instead. A plate with ABS, ASA or
   a nylon (PA, PPA, their blends and fills) always runs the filter: keep warm
   runs it anyway, and beside a cooling mode the plugin turns the filter fan on
-  too, while the purifier keeps handling the exhaust. A start G-code that
-  already sets the mode keeps its own;
+  too, while the purifier keeps handling the exhaust. A plate of only PLA and
+  PETG runs no filter. A start G-code that already sets the mode keeps its own,
+  and a U1 that does not answer or reports no cover gets none;
 - a Snapmaker U1 file loses the `M191` and `M141` lines OrcaSlicer writes for a
   filament's chamber temperature, since the U1 answers them with "Unknown
   command". The U1 holds the chamber with the top cover's mode and waits for it

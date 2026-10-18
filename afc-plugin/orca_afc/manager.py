@@ -57,7 +57,8 @@ def read_snapshot(client: Moonraker) -> Snapshot:
             objects_list = client.objects_list()
         except MoonrakerError:
             objects_list = {}
-        objects = {"AFC": None, "print_task_config": protocol.afc_object_query()["print_task_config"]}
+        u1 = protocol.afc_object_query()
+        objects = {"AFC": None, "print_task_config": u1["print_task_config"], "purifier": u1["purifier"]}
         for name in protocol.lane_object_names(objects_list, lanes):
             objects[name] = None
         snap = protocol.parse_objects_status(client.objects_query(objects)) or Snapshot()

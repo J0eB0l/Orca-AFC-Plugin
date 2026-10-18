@@ -163,6 +163,16 @@ class AFCObjectTest(unittest.TestCase):
         self.assertEqual(p.to_json(s)["u1_print"],
                          {"bed_level": True, "flow_calibrate": False, "time_lapse_camera": True})
 
+    def test_u1_top_cover(self):
+        s = parsed()
+        self.assertEqual(p.afc_object_query()["purifier"], ["power_detected"])
+        p.merge_afc_object({"status": {"AFC": {}, "purifier": {"power_detected": None}}}, s)
+        self.assertFalse(s.top_cover)  # no purifier on this printer
+        p.merge_afc_object({"status": {"AFC": {}, "purifier": {"power_detected": True}}}, s)
+        self.assertTrue(s.top_cover)
+        p.merge_afc_object({"status": {"AFC": {}, "purifier": {"power_detected": False}}}, s)
+        self.assertFalse(s.top_cover)  # the cover came off
+
         options = U1PrintOptions(flow_calibrate=True)
         self.assertEqual(p.u1_print_options_gcode(options),
                          "SET_PRINT_PREFERENCE KEY=bed_level VALUE=0\n"

@@ -49,6 +49,13 @@ class ReadTest(Case):
         self.assertEqual(self.refreshed()["afc"]["u1_print"],
                          {"bed_level": True, "flow_calibrate": False, "time_lapse_camera": False})
 
+    def test_u1_top_cover(self):
+        self.fake.objects["purifier"] = {"power_detected": True, "mode": 0}
+        self.assertTrue(self.manager.read(self.client).top_cover)
+        self.fake.webhook = None
+        self.fake.objects["AFC"] = {"units": [], "lanes": [], "spoolman": None}
+        self.assertTrue(self.manager.read(self.client).top_cover)  # the objects fallback asks too
+
     def test_objects_fallback(self):
         self.fake.webhook = None
         self.fake.objects = {

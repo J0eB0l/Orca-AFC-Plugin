@@ -264,8 +264,8 @@ def u1_file(used, extra=U1, start="PRINT_START TOOL=0\n"):
 
 
 class TopCoverTest(unittest.TestCase):
-    def run_on(self, text):
-        return g.transform(text, g.Plan(), g.FileSettings.from_config(g.read_config_block(text)))
+    def run_on(self, text, cover=True):
+        return g.transform(text, g.Plan(top_cover=cover), g.FileSettings.from_config(g.read_config_block(text)))
 
     def test_by_the_softest_filament_printed(self):
         for used, line, mode in (([0], STRONG, "strong cooling"), ([1], LIGHT, "light cooling"),
@@ -282,6 +282,17 @@ class TopCoverTest(unittest.TestCase):
     def test_tool_changes_without_a_length_line(self):
         text = u1_file([1]).replace("; filament used [mm] = 0.00, 100.00, 0.00\n", "")
         self.assertEqual(self.run_on(text).top_cover, "light cooling")
+
+    def test_off_when_the_printer_does_not_report_the_cover(self):
+        text = u1_file([0])
+        result = self.run_on(text, cover=False)
+        self.assertEqual(result.text, text)
+        self.assertTrue(result.summary().endswith(", U1 top cover: none, the printer does not report it on"))
+
+    def test_plan_takes_the_cover_from_the_printer(self):
+        self.assertFalse(g.plan_for(None, 1).top_cover)
+        self.assertFalse(g.plan_for(Snapshot(present=True), 1).top_cover)
+        self.assertTrue(g.plan_for(Snapshot(present=True, top_cover=True), 1).top_cover)
 
     def test_off_without_air_filtration(self):
         text = u1_file([0], extra=U1.replace("support_air_filtration = 1", "support_air_filtration = 0"))
@@ -371,8 +382,8 @@ CHAMBER_END = "PRINT_END\nM141 S0;set chamber_temperature\n"
 
 
 class ChamberLinesTest(unittest.TestCase):
-    def run_on(self, text):
-        return g.transform(text, g.Plan(), g.FileSettings.from_config(g.read_config_block(text)))
+    def run_on(self, text, cover=True):
+        return g.transform(text, g.Plan(top_cover=cover), g.FileSettings.from_config(g.read_config_block(text)))
 
     def chamber_file(self, extra=U1):
         return u1_file([2], extra=extra, start=CHAMBER_START + "PRINT_START TOOL=0\n") + CHAMBER_END
@@ -402,6 +413,11 @@ class ChamberLinesTest(unittest.TestCase):
         out = self.run_on(text).text
         self.assertTrue(out.startswith("PRINT_START TOOL=0\r\n" + WARM), out[:200])
         self.assertNotIn("M141", out)
+
+    def test_dropped_without_the_cover(self):
+        out = self.run_on(self.chamber_file(), cover=False).text
+        self.assertNotIn("M191", out)
+        self.assertNotIn("SET_PURIFIER_MODE", out)
 
     def test_kept_on_other_printers(self):
         text = self.chamber_file(extra=U1.replace("Snapmaker U1", "Voron 2.4 300"))
