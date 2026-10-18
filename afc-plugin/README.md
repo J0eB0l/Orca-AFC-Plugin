@@ -95,7 +95,8 @@ Then:
   tray per T number, four to a unit (the first unit holds T0 to T3). The AFC
   build of OrcaSlicer shows each AFC unit as its own AMS instead, four lanes to
   one, and a unit of one lane (a Bambu AMS HT) or each tool of a toolchanger as
-  an AMS HT. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
+  an AMS HT. A lane that also holds a print's T number (AFC maps a print's
+  filaments onto lanes that way) is still one tray, under its own T number. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
   humidity and temperature; clicking the humidity opens OrcaSlicer's drying
   popup, which starts and stops the unit's dryer (ACE_DRY or
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that

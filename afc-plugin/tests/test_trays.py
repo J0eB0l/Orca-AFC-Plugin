@@ -107,6 +107,21 @@ class UnitLayoutTest(unittest.TestCase):
         self.assertEqual(trays.mapping_from_print("[130, -1]", json.dumps([{}, {"ams_id": 1, "slot_id": 0}]), 2, shown),
                          {0: 12, 1: 6})
 
+    def test_a_lane_holding_two_t_numbers_is_one_tray(self):
+        # A print mapped T0 onto ace0 beside its own T6, as AFC's SET_MAP does.
+        # As two trays the Ace would split in two, one unit more than fits.
+        snap = units_snapshot()
+        for n, first in ((2, 13), (3, 17)):
+            names = ["t%d_%d" % (n, i) for i in range(4)]
+            snap.lanes += [loaded(name, first + i, unit="Turtle_%d" % n) for i, name in enumerate(names)]
+            snap.units.append(Unit("Turtle_%d" % n, "Box_Turtle", names))
+        snap.find_lane("lane1").maps, snap.find_lane("ace0").maps = [], ["T6", "T0"]
+        shown = trays.layout(snap, by_unit=True)
+        self.assertTrue(shown.by_unit)
+        self.assertEqual([box.tools for box in shown.boxes if not box.single],
+                         [[1, 2, 3], [6, 7, 8, 9], [13, 14, 15, 16], [17, 18, 19, 20]])
+        self.assertEqual((shown.tray(0), shown.tray(6), shown.tool(1, 0)), (4, 4, 6))
+
     def test_t_numbers_when_the_units_do_not_fit(self):
         snap = units_snapshot()
         for n in range(2, 5):  # five units of several lanes beside the HTs, one more than fits

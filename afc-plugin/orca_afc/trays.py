@@ -52,9 +52,13 @@ class Box:
 class Layout:
     """Which unit and slot OrcaSlicer shows each T number in, and back."""
 
-    def __init__(self, boxes: list, by_unit: bool = False):
+    def __init__(self, boxes: list, by_unit: bool = False, aliases: dict | None = None):
         self.boxes, self.by_unit = boxes, by_unit
         self._at = {tool: (box, slot) for box in boxes for slot, tool in enumerate(box.tools)}
+        # A T number a lane holds beside the one its tray shows lives in that tray.
+        for alias, tool in (aliases or {}).items():
+            if tool in self._at:
+                self._at[alias] = self._at[tool]
 
     def box(self, ams_id) -> Box | None:
         return next((box for box in self.boxes if box.ams_id == ams_id), None)
@@ -104,22 +108,33 @@ def layout(snapshot: Snapshot | None, by_unit: bool = False) -> Layout:
     OrcaSlicer's units, else by T number."""
     trays = lanes_by_tray(snapshot) if snapshot is not None else {}
     if by_unit and trays:
-        boxes = _unit_boxes(snapshot, trays)
-        if boxes is not None:
-            return Layout(boxes, True)
+        fit = _unit_boxes(snapshot, trays)
+        if fit is not None:
+            return Layout(fit[0], True, fit[1])
     last = max(trays) if trays else -1
     return Layout([Box(unit, [unit * 4 + slot for slot in range(min(3, last - unit * 4) + 1)])
                    for unit in range(last // 4 + 1)])
 
 
 def _unit_boxes(snapshot: Snapshot, trays: dict):
-    """Each AFC unit's T numbers, in lane order, as OrcaSlicer units; None when
-    they do not fit."""
-    groups = {}  # AFC unit -> its T numbers, its units first and in lane order
+    """Each AFC unit's lanes, in lane order, as OrcaSlicer units, and the T
+    numbers that are aliases of a shown one; None when they do not fit.
+
+    A lane is one tray, under its first T number in AFC's map order. The
+    others it holds (a print maps its filaments onto lanes that way, T0 onto
+    lane14 beside its own T14) are aliases: as trays they would split the unit
+    in two and could leave too many units to lay out by unit."""
+    own = {}  # lane name -> the T number its tray shows
+    for tool in sorted(trays):
+        lane = trays[tool]
+        if lane.name not in own:
+            own[lane.name] = next(t for t in map(tool_number, lane.maps) if trays.get(t) is lane)
+    groups = {}  # AFC unit -> its lanes' T numbers, its units first and in lane order
     for unit in snapshot.units:
         for name in unit.lanes:
-            groups.setdefault(unit.name, []).extend(t for t in sorted(trays) if trays[t].name == name and trays[t].unit == unit.name)
-    for tool in sorted(trays):
+            if name in own and trays[own[name]].unit == unit.name:
+                groups.setdefault(unit.name, []).append(own[name])
+    for tool in sorted(own.values()):
         if not any(tool in tools for tools in groups.values()):
             groups.setdefault(trays[tool].unit, []).append(tool)
     boxes, singles = [], []
@@ -131,8 +146,9 @@ def _unit_boxes(snapshot: Snapshot, trays: dict):
             boxes += [(tools[i:i + 4], name) for i in range(0, len(tools), 4)]
     if len(singles) > MAX_HT or len(boxes) > (MAX_BOXES_WITH_HT if singles else MAX_BOXES):
         return None
+    aliases = {tool: own[lane.name] for tool, lane in trays.items() if own[lane.name] != tool}
     return ([Box(i, tools, name) for i, (tools, name) in enumerate(boxes)] +
-            [Box(HT_ID + i, [tool], name) for i, (tool, name) in enumerate(sorted(singles))])
+            [Box(HT_ID + i, [tool], name) for i, (tool, name) in enumerate(sorted(singles))]), aliases
 
 
 def _color(hex_color: str) -> str:
