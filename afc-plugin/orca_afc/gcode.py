@@ -33,8 +33,10 @@ rewrites the file for what AFC does with it:
   strong cooling when a filament the plate prints softens at 50 °C or below,
   light cooling at 70 °C or below, else keep warm. Keep warm aims for 45 °C, or
   with "Support controlling chamber temperature" on, for the highest chamber
-  temperature those filaments ask for. A file that already sets it is left as
-  it is.
+  temperature those filaments ask for. A plate with ABS, ASA or a nylon (PA,
+  PPA) always runs the filter: keep warm runs it anyway, and with a cooling
+  mode its fan (`circulation_fan`) is turned on beside it, while the purifier
+  keeps running the exhaust. A file that already sets the mode is left as it is.
 - **No M141 or M191 on a U1.** The U1 answers both with "Unknown command", so a
   U1 file loses the chamber lines OrcaSlicer writes from the filaments'
   chamber temperature, with the cavity fan blip around M191. The U1 holds its
@@ -78,6 +80,10 @@ _AUX_FAN_ON = re.compile(r"^[ \t]*M106 P2 S255[ \t]*\r?\n$")
 _AUX_FAN_OFF = re.compile(r"^[ \t]*M106 P2 S0[ \t]*\r?\n?$")
 TOP_COVER_NOTE = "; U1 top cover"
 KEEP_WARM_TEMP = 45
+# Fumes the top cover's filter should take: ABS, ASA and nylons, their blends and fills.
+_FILTER_TYPES = re.compile(r"^(ABS|ASA|PC-ABS|PA|PPA)", re.I)
+# The purifier's inner fan in the U1's config; cooling modes leave it off.
+FILTER_FAN_LINE = "SET_FAN_SPEED FAN=circulation_fan SPEED=0.6"
 # The modes of Snapmaker's U1 start G-code, by the name its comments give them.
 TOP_COVER_MODES = {
     "keep warm": "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP={temp} FAN_SPEED=0.6 DELAY_OFF=600",
@@ -149,6 +155,7 @@ class FileSettings:
     u1: bool = False  # a Snapmaker U1
     top_cover: bool = False  # a Snapmaker U1 with "Support air filtration" on
     softening: list = field(default_factory=list)  # temperature_vitrification per filament, °C
+    types: list = field(default_factory=list)  # filament_type per filament
     chamber_control: bool = False  # "Support controlling chamber temperature"
     chamber_on: list = field(default_factory=list)  # activate_chamber_temp_control per filament
     chamber_temps: list = field(default_factory=list)  # chamber_temperature per filament, °C
@@ -176,6 +183,7 @@ class FileSettings:
             u1=u1,
             top_cover=u1 and _on(config, "support_air_filtration"),
             softening=_floats(config.get("temperature_vitrification", "")),
+            types=[t.strip().strip('"') for t in config.get("filament_type", "").split(";")],
             chamber_control=_on(config, "support_chamber_temp_control"),
             chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
             chamber_temps=_ints(config.get("chamber_temperature", "")),
@@ -235,8 +243,14 @@ def top_cover_mode(settings: FileSettings, used: list) -> str:
     return "keep warm"
 
 
-def top_cover_gcode(settings: FileSettings, used: list) -> str:
-    """The U1 top cover line for a plate printing the filaments `used`."""
+def filter_filament(settings: FileSettings, used: list) -> str:
+    """The type of the first filament `used` whose fumes want the filter, or ""."""
+    return next((settings.types[f] for f in used
+                 if f < len(settings.types) and _FILTER_TYPES.match(settings.types[f])), "")
+
+
+def top_cover_gcode(settings: FileSettings, used: list) -> list:
+    """The U1 top cover lines for a plate printing the filaments `used`."""
     mode = top_cover_mode(settings, used)
     target = 0
     if settings.chamber_control:
@@ -244,7 +258,11 @@ def top_cover_gcode(settings: FileSettings, used: list) -> str:
                       if f < len(settings.chamber_on) and settings.chamber_on[f]
                       and f < len(settings.chamber_temps)), default=0)
     line = TOP_COVER_MODES[mode].format(temp=target if target > 0 else KEEP_WARM_TEMP)
-    return "%s %s: %s" % (line, TOP_COVER_NOTE, mode)
+    lines = ["%s %s: %s" % (line, TOP_COVER_NOTE, mode)]
+    fumes = filter_filament(settings, used)
+    if fumes and mode != "keep warm":
+        lines.append("%s %s: filter for %s" % (FILTER_FAN_LINE, TOP_COVER_NOTE, fumes))
+    return lines
 
 
 # ------------------------------------------------------------------ what to print
@@ -329,11 +347,11 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     if not settings.klipper:
         return result
 
-    cover = ""
+    cover = []
     if settings.top_cover and not _PURIFIER_LINE.search(text):
         used = filaments_used(text)
-        result.top_cover = top_cover_mode(settings, used)
         cover = top_cover_gcode(settings, used)
+        result.top_cover = top_cover_mode(settings, used) + (" with the filter on" if len(cover) > 1 else "")
 
     lines = text.splitlines(keepends=True)
     loaded = {}           # toolhead -> filament it holds
@@ -416,8 +434,8 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
             out.append(_renumber_start_line(line, plan.tools) if plan.tools else line)
             if cover:
                 newline = "\r\n" if line.endswith("\r\n") else "\n"
-                out.append(("" if line.endswith("\n") else newline) + cover + newline)
-                cover = ""
+                out.append(("" if line.endswith("\n") else newline) + newline.join(cover) + newline)
+                cover = []
             continue
         if first in "Ss" and PA_NOTE in line and _PA_LINE.match(line):
             continue  # one this step wrote on an earlier pass; the T line above gets a new one
@@ -429,7 +447,7 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
 
     result.text = "".join(out)
     if cover:  # no PRINT_START: before the file's first command
-        result.text = insert_after_header(result.text, cover)
+        result.text = insert_after_header(result.text, ("\r\n" if "\r\n" in text else "\n").join(cover))
     return result
 
 

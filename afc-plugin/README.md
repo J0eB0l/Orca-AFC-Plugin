@@ -35,7 +35,10 @@ Klipper file to AFC:
   anything else (ABS, ASA, PC) keep warm. The softening temperature is the
   filament's **Softening temperature** setting. Keep warm aims for 45 °C; with
   **Support controlling chamber temperature** on, it aims for the highest
-  chamber temperature those filaments ask for instead. A start G-code that
+  chamber temperature those filaments ask for instead. A plate with ABS, ASA or
+  a nylon (PA, PPA, their blends and fills) always runs the filter: keep warm
+  runs it anyway, and beside a cooling mode the plugin turns the filter fan on
+  too, while the purifier keeps handling the exhaust. A start G-code that
   already sets the mode keeps its own;
 - a Snapmaker U1 file loses the `M191` and `M141` lines OrcaSlicer writes for a
   filament's chamber temperature, since the U1 answers them with "Unknown

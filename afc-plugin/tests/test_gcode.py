@@ -253,6 +253,8 @@ U1 = ("; printer_model = Snapmaker U1\n; support_air_filtration = 1\n"
 STRONG = "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=42 ALARM_TEMP=48 FAN_SPEED=0.6 DELAY_OFF=0"
 LIGHT = "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=45 ALARM_TEMP=51 FAN_SPEED=0.6 DELAY_OFF=0"
 WARM = "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP=45 FAN_SPEED=0.6 DELAY_OFF=600"
+FILTER = "SET_FAN_SPEED FAN=circulation_fan SPEED=0.6"
+TYPES = "; filament_type = PLA;PETG;ASA\n"
 
 
 def u1_file(used, extra=U1, start="PRINT_START TOOL=0\n"):
@@ -330,6 +332,35 @@ class TopCoverTest(unittest.TestCase):
                    "; chamber_temperature = 60,60,0\n")
         cover = self.run_on(u1_file([2], extra=U1 + chamber)).text.splitlines()[1]
         self.assertEqual(cover, WARM + " ; U1 top cover: keep warm")
+
+    def test_cooling_runs_the_filter_for_fumes(self):
+        # PLA beside ASA: strong cooling for the PLA, the filter for the ASA.
+        result = self.run_on(u1_file([0, 2], extra=U1 + TYPES))
+        self.assertEqual(result.text.splitlines()[1:4],
+                         [STRONG + " ; U1 top cover: strong cooling",
+                          FILTER + " ; U1 top cover: filter for ASA", "G28 X Y"])
+        self.assertTrue(result.summary().endswith(", U1 top cover: strong cooling with the filter on"))
+
+    def test_keep_warm_runs_the_filter_by_itself(self):
+        lines = self.run_on(u1_file([2], extra=U1 + TYPES)).text.splitlines()
+        self.assertEqual(lines[1:3], [WARM + " ; U1 top cover: keep warm", "G28 X Y"])
+
+    def test_no_filter_without_fumes(self):
+        self.assertNotIn(FILTER, self.run_on(u1_file([0, 1], extra=U1 + TYPES)).text)
+
+    def test_filament_types_that_want_the_filter(self):
+        for kind, wants in (("ABS", True), ("ABS-GF", True), ("asa", True), ("ASA-AERO", True),
+                            ("PA", True), ("PA-CF", True), ("PA12-GF", True), ("PAHT-CF", True),
+                            ("PPA-CF", True), ("PC-ABS", True), ("PLA", False), ("PETG", False),
+                            ("PC", False), ("PP", False), ("PET-CF", False), ("", False)):
+            settings = g.FileSettings(types=["PLA", kind])
+            self.assertEqual(g.filter_filament(settings, [0, 1]), kind if wants else "", kind)
+
+    def test_filter_line_once_with_windows_line_ends(self):
+        once = self.run_on(u1_file([0, 2], extra=U1 + TYPES).replace("\n", "\r\n")).text
+        self.assertIn(STRONG + " ; U1 top cover: strong cooling\r\n" + FILTER, once)
+        self.assertEqual(self.run_on(once).text, once)
+        self.assertEqual(once.count(FILTER), 1)
 
 
 # What OrcaSlicer 2.5 writes for a filament with chamber temperature control on
