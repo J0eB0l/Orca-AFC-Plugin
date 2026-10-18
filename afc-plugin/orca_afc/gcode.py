@@ -31,8 +31,10 @@ rewrites the file for what AFC does with it:
   settings, a U1 file sets the top cover's filter and exhaust fan right after
   `PRINT_START`, the way Snapmaker's OrcaSlicer does from its U1 start G-code:
   strong cooling when a filament the plate prints softens at 50 °C or below,
-  light cooling at 70 °C or below, else keep warm. A file that already sets it
-  is left as it is.
+  light cooling at 70 °C or below, else keep warm. Keep warm aims for 45 °C, or
+  with "Support controlling chamber temperature" on, for the highest chamber
+  temperature those filaments ask for (the U1 has no M141 or M191). A file that
+  already sets it is left as it is.
 
 Only Klipper files are changed. Nothing here talks to the network or to
 OrcaSlicer, so all of it is unit-tested.
@@ -66,9 +68,10 @@ _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | 
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
 TOP_COVER_NOTE = "; U1 top cover"
+KEEP_WARM_TEMP = 45
 # The modes of Snapmaker's U1 start G-code, by the name its comments give them.
 TOP_COVER_MODES = {
-    "keep warm": "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP=45 FAN_SPEED=0.6 DELAY_OFF=600",
+    "keep warm": "SET_PURIFIER_MODE MODE=3 DESIRE_TEMP={temp} FAN_SPEED=0.6 DELAY_OFF=600",
     "light cooling": "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=45 ALARM_TEMP=51 FAN_SPEED=0.6 DELAY_OFF=0",
     "strong cooling": "SET_PURIFIER_MODE MODE=1 DESIRE_TEMP=42 ALARM_TEMP=48 FAN_SPEED=0.6 DELAY_OFF=0",
 }
@@ -136,6 +139,9 @@ class FileSettings:
     sliced_toolheads: list = field(default_factory=list)  # filament_toolhead as sliced, -1 = not known
     top_cover: bool = False  # a Snapmaker U1 with "Support air filtration" on
     softening: list = field(default_factory=list)  # temperature_vitrification per filament, °C
+    chamber_control: bool = False  # "Support controlling chamber temperature"
+    chamber_on: list = field(default_factory=list)  # activate_chamber_temp_control per filament
+    chamber_temps: list = field(default_factory=list)  # chamber_temperature per filament, °C
 
     @classmethod
     def from_config(cls, config: dict) -> "FileSettings":
@@ -159,6 +165,9 @@ class FileSettings:
             top_cover=(_on(config, "support_air_filtration")
                        and config.get("printer_model", "").startswith("Snapmaker U1")),
             softening=_floats(config.get("temperature_vitrification", "")),
+            chamber_control=_on(config, "support_chamber_temp_control"),
+            chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
+            chamber_temps=_ints(config.get("chamber_temperature", "")),
         )
 
     @property
@@ -213,6 +222,18 @@ def top_cover_mode(settings: FileSettings, used: list) -> str:
     if softest is not None and softest <= 70:
         return "light cooling"
     return "keep warm"
+
+
+def top_cover_gcode(settings: FileSettings, used: list) -> str:
+    """The U1 top cover line for a plate printing the filaments `used`."""
+    mode = top_cover_mode(settings, used)
+    target = 0
+    if settings.chamber_control:
+        target = max((settings.chamber_temps[f] for f in used
+                      if f < len(settings.chamber_on) and settings.chamber_on[f]
+                      and f < len(settings.chamber_temps)), default=0)
+    line = TOP_COVER_MODES[mode].format(temp=target if target > 0 else KEEP_WARM_TEMP)
+    return "%s %s: %s" % (line, TOP_COVER_NOTE, mode)
 
 
 # ------------------------------------------------------------------ what to print
@@ -294,8 +315,9 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
 
     cover = ""
     if settings.top_cover and not _PURIFIER_LINE.search(text):
-        result.top_cover = top_cover_mode(settings, filaments_used(text))
-        cover = "%s %s: %s" % (TOP_COVER_MODES[result.top_cover], TOP_COVER_NOTE, result.top_cover)
+        used = filaments_used(text)
+        result.top_cover = top_cover_mode(settings, used)
+        cover = top_cover_gcode(settings, used)
 
     lines = text.splitlines(keepends=True)
     loaded = {}           # toolhead -> filament it holds

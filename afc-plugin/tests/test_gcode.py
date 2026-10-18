@@ -314,6 +314,23 @@ class TopCoverTest(unittest.TestCase):
     def test_summary(self):
         self.assertTrue(self.run_on(u1_file([0])).summary().endswith(", U1 top cover: strong cooling"))
 
+    def test_keep_warm_aims_for_the_chamber_temperature(self):
+        chamber = ("; support_chamber_temp_control = 1\n; activate_chamber_temp_control = 0,1,1\n"
+                   "; chamber_temperature = 0,40,55\n")
+        cover = self.run_on(u1_file([2], extra=U1 + chamber)).text.splitlines()[1]
+        self.assertEqual(cover, WARM.replace("DESIRE_TEMP=45", "DESIRE_TEMP=55") + " ; U1 top cover: keep warm")
+
+    def test_chamber_temperature_needs_the_printer_setting(self):
+        chamber = "; activate_chamber_temp_control = 0,0,1\n; chamber_temperature = 0,0,55\n"
+        cover = self.run_on(u1_file([2], extra=U1 + chamber)).text.splitlines()[1]
+        self.assertEqual(cover, WARM + " ; U1 top cover: keep warm")
+
+    def test_chamber_temperature_of_a_filament_not_printed(self):
+        chamber = ("; support_chamber_temp_control = 1\n; activate_chamber_temp_control = 1,1,0\n"
+                   "; chamber_temperature = 60,60,0\n")
+        cover = self.run_on(u1_file([2], extra=U1 + chamber)).text.splitlines()[1]
+        self.assertEqual(cover, WARM + " ; U1 top cover: keep warm")
+
 
 if __name__ == "__main__":
     unittest.main()

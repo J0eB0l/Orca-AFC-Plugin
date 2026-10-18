@@ -33,8 +33,10 @@ Klipper file to AFC:
   OrcaSlicer picks it. A plate with a filament that softens at 50 °C or below
   (PLA) gets strong cooling, one at 70 °C or below (PETG) light cooling, and
   anything else (ABS, ASA, PC) keep warm. The softening temperature is the
-  filament's **Softening temperature** setting. A start G-code that already sets
-  the mode keeps its own.
+  filament's **Softening temperature** setting. Keep warm aims for 45 °C; with
+  **Support controlling chamber temperature** on, it aims for the highest
+  chamber temperature those filaments ask for instead, since the U1 has no
+  `M141` or `M191`. A start G-code that already sets the mode keeps its own.
 
 It reads AFC from the printer for which toolhead each T number feeds and its
 spool's K. A printer that does not answer still gets its file; on a single-nozzle
