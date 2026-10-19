@@ -94,8 +94,9 @@ class UnitLayoutTest(unittest.TestCase):
                          [("0", "0001"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
         turtle, ace, tool1, tool2, ht = ams["ams"]
         self.assertEqual((turtle["humidity"], "dryer" in turtle), ("0", False))  # an AMS, no humidity shown
-        # Four-tray units show their AFC unit's name; an AMS HT keeps OrcaSlicer's.
-        self.assertEqual([u.get("unit_name") for u in ams["ams"]], ["Turtle_1", "Ace_1", None, None, None])
+        # Four-tray units show their AFC unit's name, a toolchanger's tools their extruder's;
+        # another AMS HT keeps OrcaSlicer's.
+        self.assertEqual([u.get("unit_name") for u in ams["ams"]], ["Turtle_1", "Ace_1", "extruder1", "extruder2", None])
         self.assertEqual([t["tool"] for t in turtle["tray"]] + [t["tool"] for t in ace["tray"]], [0, 1, 2, 3, 6, 7, 8, 9])
         self.assertEqual((tool1["tray"][0]["tool"], tool1["dryer"], tool2["tray"][0]["tool"], ht["tray"][0]["tool"]),
                          (4, False, 5, 12))

@@ -273,6 +273,10 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
         entry = {"id": str(box.ams_id), "info": "%04X" % info, "tray": slots}
         if box.unit and not box.single:
             entry["unit_name"] = unit_name(shown, box)
+        elif unit is not None and unit.type == TOOLCHANGER and trays.get(box.tools[0]) is not None:
+            # A toolchanger's tool shows its extruder's name, not "AMS HT".
+            tool_lane = trays[box.tools[0]]
+            entry["unit_name"] = tool_lane.extruder or tool_lane.name
         if dryer is not None:
             entry.update(dryer_json(dryer, dry_filaments.get(box.unit, "")))
         elif box.single:

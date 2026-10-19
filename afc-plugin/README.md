@@ -96,8 +96,8 @@ Then:
   build of OrcaSlicer shows each AFC unit as its own AMS instead, four lanes to
   one, and a unit of one lane (a Bambu AMS HT) or each tool of a toolchanger as
   an AMS HT. A unit of four lanes is labeled with its AFC name (a unit of more
-  than four is numbered, Turtle_1-1 and Turtle_1-2) in the print dialog's tray
-  list and the drying popup. A lane that also holds a print's T number (AFC maps a print's
+  than four is numbered, Turtle_1-1 and Turtle_1-2), and a toolchanger's tool
+  with its extruder's name, in the print dialog's tray list and the drying popup. A lane that also holds a print's T number (AFC maps a print's
   filaments onto lanes that way) is still one tray, under its own T number. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
   humidity and temperature; clicking the humidity opens OrcaSlicer's drying
   popup, which starts and stops the unit's dryer (ACE_DRY or
