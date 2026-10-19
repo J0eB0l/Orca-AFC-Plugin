@@ -2638,6 +2638,7 @@ void Tab::on_presets_changed()
     if (m_type == Preset::TYPE_PRINTER) {
         wxGetApp().switch_printer_agent();
         wxGetApp().detect_afc_on_printer();
+        wxGetApp().suggest_afc_settings();
 
         // Trigger per-vendor preset update check
         const Preset& printer_preset = m_preset_bundle->printers.get_edited_preset();
@@ -5963,6 +5964,13 @@ if (is_marlin_flavor)
         optgroup->append_single_option_line("machine_unload_filament_time", "printer_multimaterial_advanced#filament-unload-time");
         optgroup->append_single_option_line("machine_tool_change_time", "printer_multimaterial_advanced#tool-change-time");
 
+        // Orca: what OrcaSlicer does for an AFC printer, each part switchable. Shown with the AFC box ticked.
+        optgroup = page->new_optgroup(L("AFC"), L"param_advanced");
+        optgroup->append_single_option_line("afc_swap_times");
+        optgroup->append_single_option_line("afc_spool_check");
+        optgroup->append_single_option_line("afc_toolhead_check");
+        optgroup->append_single_option_line("afc_settings_check");
+
         // IDEX/IQEX (IMEX) parallel printing configuration
         optgroup = page->new_optgroup(L("IDEX/IQEX Configuration"), L"param_advanced");
         optgroup->append_single_option_line("is_imex", "printer_multimaterial_idex_iqex#idexiqex-printer");
@@ -6644,6 +6652,9 @@ void TabPrinter::toggle_options()
         toggle_option("manual_filament_change", bSEMM);
         // Orca: with Multi-material per toolhead it flushes a toolhead's lane changes on the tower.
         toggle_option("purge_in_prime_tower", (bSEMM || m_config->opt_bool("multi_extruder_multi_material")) && supports_wipe_tower_2);
+
+        for (auto el : {"afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_settings_check"})
+            toggle_line(el, m_config->opt_bool("afc_enabled"));
 
         // IDEX/IQEX: show carriage config options only when is_imex is enabled
         bool is_imex = m_config->opt_bool("is_imex");

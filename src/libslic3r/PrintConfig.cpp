@@ -1155,6 +1155,41 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("afc_swap_times", coBool);
+    def->label = L("Change times from AFC");
+    def->tooltip = L("Filament sync sets the filament load, filament unload and tool change times to the times AFC "
+                     "measured on the printer, so the time estimate counts its lane and tool changes. Untick it to "
+                     "keep the times you set.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("afc_spool_check", coBool);
+    def->label = L("Check spools before printing");
+    def->tooltip = L("The print dialog warns when a lane's spool holds less filament than the print uses from it. "
+                     "A lane with a runout lane counts that lane's spool too.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("afc_settings_check", coBool);
+    def->label = L("Suggest AFC's settings");
+    def->tooltip = L("Once a session, offers AFC's recommended printer settings when they differ (ramming, cooling "
+                     "moves and retraction when switching material off, the first tool passed to PRINT_START), and on "
+                     "a printer with several toolheads offers to heat the next tool ahead of each tool change. "
+                     "Nothing changes until the offer is clicked.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("afc_toolhead_check", coBool);
+    def->label = L("Check toolheads before printing");
+    def->tooltip = L("The print dialog warns when the file uses more toolheads than the printer has, or when a "
+                     "toolhead's nozzle size on the printer differs from the one the file was sliced for.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("print_host", coString);
     def->label = L("Hostname, IP or URL");
     // The URL is an example of the format to type, not a link, so it stays in the text.

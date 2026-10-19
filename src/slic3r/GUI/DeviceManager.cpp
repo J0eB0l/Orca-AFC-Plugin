@@ -1504,6 +1504,15 @@ int MachineObject::command_clean_print_error_uiop(int print_error)
     return this->publish_json(j);
 }
 
+// Orca: drops the printer agent's message the Device tab shows (agent_message).
+int MachineObject::command_clear_agent_message()
+{
+    json j;
+    j["print"]["command"]     = "clear_agent_message";
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 int MachineObject::command_upgrade_confirm()
 {
     BOOST_LOG_TRIVIAL(info) << "command_upgrade_confirm";
@@ -3273,6 +3282,26 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 // Orca: a printer agent's AMS 2 Pro and AMS HT units take the drying controls.
                 if (jj.contains("support_remote_dry") && jj["support_remote_dry"].is_boolean()) {
                     is_support_remote_dry = jj["support_remote_dry"].get<bool>();
+                }
+                // Orca: a printer agent's measured change times, which filament sync puts in the printer preset.
+                if (jj.contains("swap_times") && jj["swap_times"].is_object()) {
+                    const json& times   = jj["swap_times"];
+                    const auto  seconds = [&times](const char* key) {
+                        return times.contains(key) && times[key].is_number() ? times[key].get<float>() : -1.f;
+                    };
+                    measured_load_time        = seconds("load");
+                    measured_unload_time      = seconds("unload");
+                    measured_tool_change_time = seconds("tool_change");
+                }
+                if (jj.contains("toolhead_nozzles") && jj["toolhead_nozzles"].is_array()) {
+                    toolhead_nozzle_diameters.clear();
+                    for (const json& size : jj["toolhead_nozzles"])
+                        toolhead_nozzle_diameters.push_back(size.is_number() ? size.get<float>() : 0.f);
+                }
+                if (jj.contains("agent_message") && jj["agent_message"].is_object()) {
+                    const json& message    = jj["agent_message"];
+                    agent_message          = message.contains("text") && message["text"].is_string() ? message["text"].get<std::string>() : std::string();
+                    agent_message_is_error = message.contains("type") && message["type"] == "error";
                 }
 
               m_fan->ParseV2_0(jj);

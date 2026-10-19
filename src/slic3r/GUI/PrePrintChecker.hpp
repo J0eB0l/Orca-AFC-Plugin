@@ -117,6 +117,8 @@ enum PrintDialogStatus : unsigned int {
     // Orca: a nozzle diameter that differs from the one the printer remembers is a warning,
     // not an error, so non-standard nozzles can still be printed with.
     PrintStatusNozzleDiameterMismatch,
+    // Orca: an AFC printer has fewer toolheads than the file prints with.
+    PrintStatusToolheadCountMismatch,
     PrintStatusOptionalPrinterModel,
     PrintStatusPrinterWarningEnd,
 
@@ -131,9 +133,9 @@ enum PrintDialogStatus : unsigned int {
     PrintStatusWarningExtFilamentNotMatch,
     PrintStatusFilamentWarningNozzleHRC,
     PrintStatusFilamentCrossExtruderWarning,
-    // Non-blocking advisories. FilamentWarningRemainNotEnough is declared but not wired (missing
-    // device-model surface); PrintTimeEstimateWarning has no call site or message and is kept only
-    // to match the reference enum table.
+    // Non-blocking advisories. FilamentWarningRemainNotEnough is raised for printer agents that report
+    // the grams left on each spool (SelectMachineDialog::CheckWarningSpoolRemain); PrintTimeEstimateWarning
+    // has no call site or message and is kept only to match the reference enum table.
     PrintStatusTPUUnsupportCaliOn,
     PrintStatusTPUUnsuggestCali,
     PrintStatusSmartNozzleBlobNeedAuto,

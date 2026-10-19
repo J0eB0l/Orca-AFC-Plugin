@@ -50,6 +50,7 @@
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/Widgets/TextInput.hpp"
 #include "slic3r/GUI/PrePrintChecker.hpp"
+#include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/DeviceTab/uiAMSBestPositionPopup.hpp"
 #include <wx/anybutton.h>
 #include "slic3r/GUI/Widgets/Button.hpp"
@@ -4568,6 +4569,135 @@ bool SelectMachineDialog::CheckErrorRackStatus(MachineObject* obj_)
     return true;
 }
 
+void SelectMachineDialog::CheckWarningSpoolRemain(MachineObject* obj_)
+{
+    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto*               afc     = printer.option<ConfigOptionBool>("afc_enabled");
+    const auto*               check   = printer.option<ConfigOptionBool>("afc_spool_check");
+    if (!obj_ || !afc || !afc->value || !check || !check->value)
+        return;
+
+    // Grams of each filament the print uses: from the slice, or from the file printed from the printer.
+    std::map<int, float> used_g;
+    if (m_print_type == PrintFromType::FROM_NORMAL) {
+        PartPlate*                  plate  = m_plater->get_partplate_list().get_curr_plate();
+        const GCodeProcessorResult* result = plate ? plate->get_slice_result() : nullptr;
+        if (!result)
+            return;
+        for (const auto& [id, volume] : result->print_statistics.total_volumes_per_extruder)
+            if (id < result->filament_densities.size())
+                used_g[int(id)] += float(volume * result->filament_densities[id] * 0.001);
+    } else {
+        for (const FilamentInfo& fila : m_filaments)
+            used_g[fila.id] += fila.used_g;
+    }
+
+    // A tray and the trays that refill it share their spools: the grams the print takes from each such
+    // group, which the grams left on them must cover. A spool the printer has no weight for is not checked.
+    struct Group
+    {
+        float needed{0.f};
+        int   left{0};
+        bool  known{true};
+        std::vector<int> tools;
+    };
+    std::map<std::vector<DevAmsSlotId>, Group> groups;
+    for (const FilamentInfo& mapped : m_ams_mapping_result) {
+        if (mapped.ams_id.empty() || devPrinterUtil::IsVirtualSlot(mapped.ams_id))
+            continue;
+        const DevAmsSlotId slot{mapped.get_ams_id(), mapped.get_slot_id()};
+        std::vector<DevAmsSlotId> members = obj_->GetExtderSystem()->GetBackupAmsSlotInGroup(slot);
+        members.push_back(slot);
+        std::sort(members.begin(), members.end());
+        members.erase(std::unique(members.begin(), members.end()), members.end());
+        auto [it, added] = groups.try_emplace(members);
+        Group& group = it->second;
+        group.needed += used_g[mapped.id];
+        if (!added)
+            continue;
+        for (const DevAmsSlotId& member : members) {
+            const std::string ams_id = std::to_string(member.first), slot_id = std::to_string(member.second);
+            const DevAmsTray  tray   = obj_->contains_tray(ams_id, slot_id) ? obj_->get_tray(ams_id, slot_id) : DevAmsTray("");
+            group.known = group.known && tray.remain_g >= 0;
+            group.left += std::max(tray.remain_g, 0);
+            if (tray.tool >= 0)
+                group.tools.push_back(tray.tool);
+        }
+    }
+
+    for (const auto& [members, group] : groups) {
+        if (!group.known || group.needed <= float(group.left))
+            continue;
+        wxString trays;
+        for (int tool : group.tools)
+            trays += (trays.empty() ? "" : ", ") + wxString::Format("T%d", tool);
+        const int needed = int(std::ceil(group.needed));
+        // TRN %1%: the lanes, "T3, T7"; %2%: grams left on their spools; %3%: grams the print uses.
+        const wxString msg = group.tools.size() > 1 ?
+            format_wxstr(_L("The spools in %1% may run out during this print, their runout lanes included: about %2% g of filament is left and the print uses about %3% g."),
+                         trays, group.left, needed) :
+            // TRN %1%: the lane, "T3"; %2%: grams left on its spool; %3%: grams the print uses.
+            format_wxstr(_L("The spool in %1% may run out during this print: about %2% g of filament is left and the print uses about %3% g."),
+                         trays.empty() ? wxString("?") : trays, group.left, needed);
+        show_status(PrintDialogStatus::PrintStatusFilamentWarningRemainNotEnough, {msg});
+    }
+}
+
+void SelectMachineDialog::CheckWarningToolheads(MachineObject* obj_)
+{
+    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto*               afc     = printer.option<ConfigOptionBool>("afc_enabled");
+    const auto*               check   = printer.option<ConfigOptionBool>("afc_toolhead_check");
+    if (!obj_ || !afc || !afc->value || !check || !check->value || m_print_type != PrintFromType::FROM_NORMAL)
+        return;
+    const std::vector<float>& installed = obj_->toolhead_nozzle_diameters;
+    if (installed.empty())
+        return;
+
+    PartPlate*  plate     = m_plater->get_partplate_list().get_curr_plate();
+    const auto* diameters = printer.option<ConfigOptionFloats>("nozzle_diameter");
+    if (!plate || !diameters)
+        return;
+
+    // The extruder each used filament prints with is the Klipper extruder of that number on an AFC printer.
+    const DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config();
+    std::set<int>        missing;
+    std::map<int, float> sliced; // extruder -> nozzle size the file was sliced for, where the printer's differs
+    for (int filament : plate->get_used_filaments()) {
+        const int idx = plate->get_logical_extruder_by_filament_id(full_config, filament);
+        if (idx < 0)
+            continue;
+        if (idx >= int(installed.size())) {
+            missing.insert(idx);
+            continue;
+        }
+        const float size = float(diameters->get_at(idx));
+        if (installed[idx] > 0.f && size > 0.f && std::abs(installed[idx] - size) > 0.001f)
+            sliced[idx] = size;
+    }
+
+    if (!missing.empty()) {
+        const int count = int(installed.size());
+        // TRN %1%: an extruder number, from 1; %2%: how many toolheads the printer has.
+        show_status(PrintDialogStatus::PrintStatusToolheadCountMismatch,
+                    {format_wxstr(_L_PLURAL("The file prints with extruder %1%, but the printer has only %2% toolhead.",
+                                            "The file prints with extruder %1%, but the printer has only %2% toolheads.", count),
+                                  *missing.rbegin() + 1, count)});
+    }
+    if (!sliced.empty()) {
+        wxString msg;
+        for (const auto& [idx, size] : sliced) {
+            if (!msg.empty())
+                msg += "\n";
+            // TRN %1%: an extruder number, from 1; %2% and %3%: nozzle sizes in mm.
+            msg += format_wxstr(_L("Extruder %1% has a %2% mm nozzle on the printer, but the file was sliced for a %3% mm nozzle."),
+                                idx + 1, installed[idx], size);
+        }
+        m_nozzle_diameter_mismatch_msg = msg;
+        show_status(PrintDialogStatus::PrintStatusNozzleDiameterMismatch, {msg});
+    }
+}
+
 void SelectMachineDialog::CheckWarningRackStatus(MachineObject* obj_)
 {
     if (!obj_) {
@@ -5270,6 +5400,9 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
         }
     }
     ext_mismatch:
+
+    CheckWarningSpoolRemain(obj_);
+    CheckWarningToolheads(obj_);
 
     /*STUDIO-10970 check the k value and flow cali option*/
     if (m_checkbox_list["flow_cali"]->IsShown() && m_checkbox_list["flow_cali"]->getValue() == "auto") {

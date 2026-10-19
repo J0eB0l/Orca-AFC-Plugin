@@ -4399,6 +4399,125 @@ void GUI_App::detect_afc_on_printer()
     });
 }
 
+// Orca: filament sync on an AFC printer also takes the lane load, lane unload and tool swap times its
+// agent measured, so the time estimate counts the printer's own lane and tool changes. A user preset
+// with no other edits is saved with them, as detect_afc_on_printer() saves its tick.
+void GUI_App::apply_measured_swap_times(const MachineObject& obj)
+{
+    if (!preset_bundle)
+        return;
+    const Preset& preset = preset_bundle->printers.get_edited_preset();
+    const auto* use = preset.config.option<ConfigOptionBool>("afc_swap_times");
+    if (!printer_has_afc(preset.config) || !use || !use->value)
+        return;
+    DynamicPrintConfig times;
+    bool changed = false;
+    for (const auto& [key, seconds] : {std::make_pair("machine_load_filament_time", obj.measured_load_time),
+                                       std::make_pair("machine_unload_filament_time", obj.measured_unload_time),
+                                       std::make_pair("machine_tool_change_time", obj.measured_tool_change_time)}) {
+        const auto* current = preset.config.option<ConfigOptionFloat>(key);
+        const double value = std::round(seconds * 10.) / 10.;
+        if (seconds < 0.f || !current || std::abs(current->value - value) < 0.05)
+            continue;
+        times.set_key_value(key, new ConfigOptionFloat(value));
+        changed = true;
+    }
+    Tab* tab = get_tab(Preset::TYPE_PRINTER);
+    if (!changed || !tab)
+        return;
+    const std::string name = preset.name;
+    const bool was_dirty = tab->current_preset_is_dirty();
+    tab->load_config(times);
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC's measured change times set on preset " << name;
+    if (!was_dirty && preset_bundle->printers.get_selected_preset().is_user())
+        tab->save_preset(name);
+}
+
+// Orca: AFC forms the filament tip and loads each lane itself, and its PRINT_START loads the first tool
+// (afcproject.dev, slicer setup): the printer settings that differ from that, as changes to apply.
+static DynamicPrintConfig afc_recommended_printer_changes(const DynamicPrintConfig& printer)
+{
+    DynamicPrintConfig changes;
+    for (const char* key : {"enable_filament_ramming", "high_current_on_filament_swap"})
+        if (const auto* opt = printer.option<ConfigOptionBool>(key); opt && opt->value)
+            changes.set_key_value(key, new ConfigOptionBool(false));
+    for (const char* key : {"cooling_tube_retraction", "cooling_tube_length", "parking_pos_retraction", "extra_loading_move"})
+        if (const auto* opt = printer.option<ConfigOptionFloat>(key); opt && opt->value != 0.)
+            changes.set_key_value(key, new ConfigOptionFloat(0.));
+    // Retraction when switching material, per extruder.
+    for (const char* key : {"retract_length_toolchange", "retract_restart_extra_toolchange"})
+        if (const auto* opt = printer.option<ConfigOptionFloats>(key);
+            opt && std::any_of(opt->values.begin(), opt->values.end(), [](double v) { return v != 0.; })) {
+            auto* zero = new ConfigOptionFloats(*opt);
+            std::fill(zero->values.begin(), zero->values.end(), 0.);
+            changes.set_key_value(key, zero);
+        }
+    // The first PRINT_START line names the first tool.
+    std::string            start = printer.opt_string("machine_start_gcode");
+    static const std::regex start_line(R"(^[ \t]*(?:PRINT_START|START_PRINT)\b[^;\r]*)", std::regex::icase);
+    static const std::regex names_tool(R"(\b(?:INITIAL_)?TOOL=)", std::regex::icase);
+    for (size_t begin = 0; begin < start.size();) {
+        const size_t      end  = std::min(start.find('\n', begin), start.size());
+        const std::string text = start.substr(begin, end - begin);
+        std::smatch       line;
+        if (std::regex_search(text, line, start_line)) {
+            if (!std::regex_search(line.str(), names_tool)) {
+                size_t at = begin + line.length();
+                while (at > begin && (start[at - 1] == ' ' || start[at - 1] == '\t'))
+                    --at;
+                start.insert(at, " TOOL={initial_tool}");
+                changes.set_key_value("machine_start_gcode", new ConfigOptionString(start));
+            }
+            break;
+        }
+        begin = end + 1;
+    }
+    return changes;
+}
+
+// Orca: once a session an AFC printer preset whose settings differ from AFC's recommendations offers them,
+// and an AFC toolchanger without ooze prevention offers to heat the next tool ahead of each tool change.
+// Both wait for a click, so a printer whose macros handle these itself keeps its settings.
+void GUI_App::suggest_afc_settings()
+{
+    if (!preset_bundle || !plater() || is_closing())
+        return;
+    const Preset& preset = preset_bundle->printers.get_edited_preset();
+    const auto*   check  = preset.config.option<ConfigOptionBool>("afc_settings_check");
+    if (!printer_has_afc(preset.config) || !check || !check->value || !m_afc_suggested.insert(preset.name).second)
+        return;
+    NotificationManager* notifications = plater()->get_notification_manager();
+    if (!notifications)
+        return;
+
+    if (!afc_recommended_printer_changes(preset.config).empty())
+        notifications->push_notification(NotificationType::AFCRecommendedSettings, NotificationManager::NotificationLevel::ImportantNotificationLevel,
+            _u8L("Some printer settings differ from what AFC recommends: AFC forms the filament tip and loads each lane itself, "
+                 "and its PRINT_START loads the first tool."),
+            _u8L("Use AFC's settings"), [this](wxEvtHandler*) {
+                Tab* tab = get_tab(Preset::TYPE_PRINTER);
+                if (tab && preset_bundle && printer_has_afc(preset_bundle->printers.get_edited_preset().config))
+                    tab->load_config(afc_recommended_printer_changes(preset_bundle->printers.get_edited_preset().config));
+                return true;
+            });
+
+    // Ooze prevention, which also keeps idle tools a little cooler; a single extruder printer never uses it.
+    const auto* ooze    = preset_bundle->prints.get_edited_preset().config.option<ConfigOptionBool>("ooze_prevention");
+    const auto* nozzles = preset.config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (nozzles && nozzles->size() > 1 && !preset.config.opt_bool("single_extruder_multi_material") && ooze && !ooze->value)
+        notifications->push_notification(NotificationType::AFCToolchangerPreheat, NotificationManager::NotificationLevel::ImportantNotificationLevel,
+            _u8L("OrcaSlicer can keep idle tools a little cooler and heat the next tool ahead of each tool change, so it is hot "
+                 "when it is picked up. Leave this off when the printer's macros handle tool temperatures."),
+            _u8L("Turn on preheating"), [this](wxEvtHandler*) {
+                if (Tab* tab = get_tab(Preset::TYPE_PRINT)) {
+                    DynamicPrintConfig preheat;
+                    preheat.set_key_value("ooze_prevention", new ConfigOptionBool(true));
+                    tab->load_config(preheat);
+                }
+                return true;
+            });
+}
+
 void GUI_App::switch_printer_agent()
 {
     if (!m_agent) {

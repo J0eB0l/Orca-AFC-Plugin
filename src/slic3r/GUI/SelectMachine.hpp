@@ -566,6 +566,12 @@ public:
     // Warn (without blocking) when the rack inventory looks insufficient for the sliced plate:
     // fewer matching hotends than the plate needs, or matches relying on unreliable nozzle info.
     void CheckWarningRackStatus(MachineObject* obj_);
+    // Orca: warn (without blocking) when an AFC printer's spools hold less filament than the print
+    // uses from them, a refill group's spools (AFC's runout lanes) counted together (afc_spool_check).
+    void CheckWarningSpoolRemain(MachineObject* obj_);
+    // Orca: warn when an AFC printer lacks a toolhead the file prints with, or has another nozzle size
+    // on one than the file was sliced for (afc_toolhead_check); a size needs acknowledging as above.
+    void CheckWarningToolheads(MachineObject* obj_);
     // Compare the slicing file's nozzle requirements (validity, flow, diameter) against the
     // printer; the rack extruder is checked against its whole inventory (mounted + rack).
     bool CheckErrorExtruderNozzleWithSlicing(MachineObject* obj_);//return true if no errors

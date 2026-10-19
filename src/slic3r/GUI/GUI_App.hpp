@@ -423,6 +423,10 @@ public:
     bool use_printer_agents() const;
     // Orca: ask a Klipper printer once whether it runs AFC and tick its AFC box when it does.
     void detect_afc_on_printer();
+    // Orca: puts the change times an AFC printer's agent measured in its printer preset (afc_swap_times)
+    void apply_measured_swap_times(const MachineObject& obj);
+    // Orca: offers AFC's recommended settings for an AFC printer preset, once a session (afc_settings_check)
+    void suggest_afc_settings();
 
     FilamentColorCodeQuery* get_filament_color_code_query();
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
@@ -900,6 +904,8 @@ private:
     void set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent); // null clears the selection
     // Printer presets and hosts asked about AFC this session, as "<preset>|<host>".
     std::set<std::string> m_afc_probed;
+    // AFC printer presets offered AFC's recommended settings this session.
+    std::set<std::string> m_afc_suggested;
 
     bool            config_wizard_startup();
 	void            check_updates(const bool verbose);

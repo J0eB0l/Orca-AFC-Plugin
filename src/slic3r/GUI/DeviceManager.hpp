@@ -630,6 +630,15 @@ public:
     bool is_support_send_to_sdcard {false};
     bool is_support_upload_only {false}; // Orca: a printer agent maps trays on a file it stores without starting it
     bool is_support_tray_k {false}; // Orca: a printer agent keeps the K typed in the tray popup
+    // Orca: a printer agent's measured lane load, lane unload and tool swap times, in seconds (-1 unknown)
+    float measured_load_time {-1.f};
+    float measured_unload_time {-1.f};
+    float measured_tool_change_time {-1.f};
+    // Orca: a printer agent's nozzle size of each toolhead, by extruder number (0 unknown), for the print dialog
+    std::vector<float> toolhead_nozzle_diameters;
+    // Orca: a printer agent's own error or warning, shown on the Device tab until cleared (clear_agent_message)
+    std::string agent_message;
+    bool        agent_message_is_error {false};
 
     bool is_support_filament_backup{false};
     bool is_support_timelapse{false};
@@ -760,6 +769,7 @@ public:
     int command_pushing(std::string cmd);
     int command_clean_print_error(std::string task_id, int print_error);
     int command_clean_print_error_uiop(int print_error);
+    int command_clear_agent_message();
     int command_set_printer_nozzle(std::string nozzle_type, float diameter);
     int command_set_printer_nozzle2(int id, std::string nozzle_type, float diameter);
     int command_get_access_code();

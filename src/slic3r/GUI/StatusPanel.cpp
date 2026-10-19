@@ -1114,10 +1114,11 @@ void PrintingTaskPanel::error_info_reset()
     }
 }
 
-void PrintingTaskPanel::show_error_msg(wxString msg)
+void PrintingTaskPanel::show_error_msg(wxString msg, const wxColour& colour)
 {
     m_staticline->Show();
     m_panel_error_txt->Show();
+    m_error_text->SetForegroundColour(colour);
     m_error_text->SetLabel(msg);
 }
 
@@ -2834,11 +2835,19 @@ void StatusPanel::on_subtask_abort(wxCommandEvent &event)
 
 void StatusPanel::error_info_reset()
 {
+    m_agent_message_shown.clear();
     m_project_task_panel->error_info_reset();
 }
 
 void StatusPanel::on_print_error_clean(wxCommandEvent &event)
 {
+    // Orca: Clear on a printer agent's message drops it on the printer too.
+    if (obj && obj->print_error <= 0 && !m_agent_message_shown.empty()) {
+        m_agent_message_cleared = m_agent_message_shown;
+        error_info_reset();
+        obj->command_clear_agent_message();
+        return;
+    }
     error_info_reset();
     skip_print_error = obj->print_error;
     char buf[32];
@@ -3059,8 +3068,19 @@ void StatusPanel::update_error_message()
     static int last_error = -1;
 
     if (obj->print_error <= 0) {
-        error_info_reset();
+        // Orca: a printer agent's own error or warning, until Clear drops it (on_print_error_clean).
+        if (obj->agent_message != m_agent_message_cleared)
+            m_agent_message_cleared.clear();
+        if (obj->agent_message.empty() || obj->agent_message == m_agent_message_cleared) {
+            error_info_reset();
+        } else if (obj->agent_message != m_agent_message_shown) {
+            m_agent_message_shown = obj->agent_message;
+            m_project_task_panel->show_error_msg(from_u8(obj->agent_message),
+                                                 obj->agent_message_is_error ? wxColour(255, 0, 0) : wxColour("#FF6F00"));
+            m_project_task_panel->Layout();
+        }
     } else if (obj->print_error != last_error) {
+        m_agent_message_shown.clear();
         /* clear old dialog */
         if (m_print_error_dlg) { delete m_print_error_dlg; }
 

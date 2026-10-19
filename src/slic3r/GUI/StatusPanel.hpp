@@ -353,7 +353,7 @@ public:
     void init_bitmaps();
     void init_scaled_buttons();
     void error_info_reset();
-    void show_error_msg(wxString msg);
+    void show_error_msg(wxString msg, const wxColour& colour = wxColour(255, 0, 0));
     void reset_printing_value();
     void msw_rescale();
 
@@ -632,6 +632,9 @@ public:
     void reset_temp_misc_control();
     int before_error_code = 0;
     int skip_print_error = 0;
+    // Orca: the printer agent's message shown, and the one Clear dropped until the printer drops it too
+    std::string m_agent_message_shown;
+    std::string m_agent_message_cleared;
     wxBoxSizer *create_ams_group(wxWindow *parent);
     wxBoxSizer *create_settings_group(wxWindow *parent);
     wxBoxSizer* create_filament_group(wxWindow* parent);

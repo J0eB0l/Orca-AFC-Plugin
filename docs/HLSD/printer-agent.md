@@ -122,6 +122,25 @@ installs it when no copy is installed or the installed one is older, keeping the
 state, capability switches and permissions. Each shipped version is installed once, so a newer
 plugin installed by hand keeps working and a removed one stays removed until a newer build ships.
 
+A printer agent's `push_status` can carry fields a Bambu printer never sends. `MachineObject` reads
+them when present, and an AFC printer preset puts them to use, each use with its own switch in the
+printer settings' AFC group (Multimaterial page, shown with the AFC box ticked):
+
+| Field | Use | Switch |
+| --- | --- | --- |
+| `swap_times` (`load`, `unload`, `tool_change`, seconds) | Filament sync writes them into the printer's load, unload and tool change times, so the time estimate counts the printer's own lane and tool changes. A user preset with no other edits is saved with them. | `afc_swap_times` |
+| `toolhead_nozzles` (mm, by extruder) | The print dialog warns when a plate uses a toolhead the printer lacks, and asks to confirm a nozzle size that differs from the preset's. | `afc_toolhead_check` |
+| `filam_bak`, `support_filament_backup` | Bambu's auto refill groups (an AFC lane and its runout lanes). The print dialog's spool check counts a group's spools together. | `afc_spool_check` |
+| `agent_message` (`text`, `type`) | The Device tab shows it in the task panel's error line while no device error does. Clear sends `clear_agent_message`. | none |
+
+The spool check compares each filament's weight in the sliced plate with what its tray's spool, and its
+refill group, has left. With `afc_settings_check`, a preset whose settings differ from what AFC needs
+(no ramming or cooling moves, no retraction on a material change, the first tool passed to
+`PRINT_START`) is offered those settings once a session in a notification, and a toolchanger without
+ooze prevention is offered preheating. Neither changes a setting without a click, so a printer whose
+macros handle these keeps its own. The `afc_*` options are written into the G-code config block only
+when `afc_enabled` is ticked.
+
 The registry rejects conflicting agent IDs. This matters for Python plugins because an agent ID is the
 stable identity used by presets and device ownership; two enabled plugin capabilities must not claim
 the same ID.
