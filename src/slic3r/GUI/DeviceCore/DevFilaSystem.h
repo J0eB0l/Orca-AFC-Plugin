@@ -199,6 +199,7 @@ public:
         Upgrading = 7,
         InsufficientPowerNeedPluginPower = 8,
         FilamentAtAmsOutletManualUnload = 10,
+        Disconnected = 100, // Orca: a printer agent's unit that is not connected to the printer
     };
 
     struct DrySettings

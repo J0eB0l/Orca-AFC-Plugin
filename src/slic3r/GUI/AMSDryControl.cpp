@@ -1392,6 +1392,10 @@ wxString get_cannot_reason_text(DevAms::CannotDryReason reason)
         cannot_reason_text = "*" + _L("Filament in AMS outlet") + "\n";
         cannot_reason_text += _L("  The high drying temperature may cause AMS blockage. Please unload the filament manually before proceeding.") + "\n";
         break;
+    case DevAms::CannotDryReason::Disconnected:
+        cannot_reason_text = "*" + _L("Not connected") + "\n";
+        cannot_reason_text += _L("  The unit is not connected to the printer. Connect it before drying.") + "\n";
+        break;
     default:
         cannot_reason_text = "*" + _L("System is busy") + "\n";
         cannot_reason_text += _L("  Initiating other drying processes, please wait a few seconds...") + "\n";
@@ -1427,6 +1431,8 @@ wxString organize_cannot_reasons_text(std::vector<DevAms::CannotDryReason>& reas
             cannot_reasons_text += get_cannot_reason_text(DevAms::CannotDryReason::InitiatingAmsDrying);
         } else if (reason == DevAms::CannotDryReason::Upgrading) {
             cannot_reasons_text += get_cannot_reason_text(DevAms::CannotDryReason::Upgrading);
+        } else if (reason == DevAms::CannotDryReason::Disconnected) {
+            cannot_reasons_text += get_cannot_reason_text(DevAms::CannotDryReason::Disconnected);
         }
     }
 
