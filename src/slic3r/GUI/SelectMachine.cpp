@@ -7123,8 +7123,10 @@ void PrinterInfoBox::SetPrinters(const std::vector<MachineObject*>& sorted_print
         }
         catch (const std::exception&)
         {
-            drop_item.icon = create_scaled_bitmap("printer_preview_BL-P001", this, 32);
-            drop_item.icon_textctrl = create_scaled_bitmap("printer_preview_BL-P001", this, 52);
+            // Orca: a printer with no preview of its own, such as one behind a printer agent, shows the
+            // selected printer preset's picture, as the sidebar does, rather than an X1.
+            drop_item.icon = Sidebar::get_printer_thumbnail(this, 32);
+            drop_item.icon_textctrl = Sidebar::get_printer_thumbnail(this, 52);
         }
 
         drop_item.tip = obj->get_printer_type_display_str();

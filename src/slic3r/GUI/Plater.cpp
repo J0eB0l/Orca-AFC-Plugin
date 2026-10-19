@@ -6997,11 +6997,16 @@ static std::map<std::string, std::string> printer_thumbnails = {};
 
 void Sidebar::update_printer_thumbnail()
 {
+    p->image_printer->SetBitmap(get_printer_thumbnail(this, PRINTER_THUMBNAIL_SIZE.GetHeight()));
+}
+
+wxBitmap Sidebar::get_printer_thumbnail(wxWindow* win, int px_cnt)
+{
     auto& preset_bundle = wxGetApp().preset_bundle;
     Preset & selected_preset = preset_bundle->printers.get_edited_preset();
     std::string printer_type    = selected_preset.get_current_printer_type(preset_bundle);
     if (printer_thumbnails.find(printer_type) != printer_thumbnails.end()) // Use known cache first
-        p->image_printer->SetBitmap(create_scaled_bitmap(printer_thumbnails[printer_type], this, PRINTER_THUMBNAIL_SIZE.GetHeight()));
+        return create_scaled_bitmap(printer_thumbnails[printer_type], win, px_cnt);
     else {
         /* ORCA this part check images folder for BBL covers but not checks file existence and causes crash on Linux
         *       BBL covers already exist on profile folder so no need to use this section
@@ -7026,16 +7031,16 @@ void Sidebar::update_printer_thumbnail()
                                                              .make_preferred();
                     if (boost::filesystem::exists(cover_path)) {
                         try {
-                            p->image_printer->SetBitmap(create_scaled_bitmap(cover_path.string(), this, PRINTER_THUMBNAIL_SIZE.GetHeight()));
+                            wxBitmap bitmap = create_scaled_bitmap(cover_path.string(), win, px_cnt);
                             printer_thumbnails[printer_type] = cover_path.string(); // Cache the path so we don't look up again
-                            return;
+                            return bitmap;
                         } catch (...) {}
                     }
                 }
             }
         }
-        p->image_printer->SetBitmap(create_scaled_bitmap("printer_placeholder", this, PRINTER_THUMBNAIL_SIZE.GetHeight()));
         printer_thumbnails[printer_type] = "printer_placeholder"; // Avoid unnecessary try
+        return create_scaled_bitmap("printer_placeholder", win, px_cnt);
     }
 }
 

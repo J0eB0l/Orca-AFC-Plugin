@@ -26,6 +26,7 @@
 #include <boost/filesystem/path.hpp>
 
 #include <wx/arrstr.h>
+#include <wx/bitmap.h>
 #include <wx/colour.h>
 #include <wx/event.h>
 #include <wx/gdicmn.h>
@@ -322,6 +323,8 @@ public:
     Search::SettingsIndex&          settings_index();
     std::string&                    get_search_line();
     void                            update_printer_thumbnail();
+    // The selected printer preset's picture: its model cover, else the placeholder.
+    static wxBitmap                 get_printer_thumbnail(wxWindow* win, int px_cnt);
 
     bool need_auto_sync_after_connect_printer() const { return m_need_auto_sync_after_connect_printer; }
     void set_need_auto_sync_after_connect_printer(bool need_auto_sync) { m_need_auto_sync_after_connect_printer = need_auto_sync; }
