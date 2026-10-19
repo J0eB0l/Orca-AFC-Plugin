@@ -233,6 +233,12 @@ def dryer_json(dryer: Dryer, filament: str = "") -> dict:
     return out
 
 
+def unit_name(shown: Layout, box: Box) -> str:
+    """The AFC unit a four-tray unit shows, numbered when it takes more than one."""
+    parts = [b for b in shown.boxes if b.unit == box.unit and not b.single]
+    return box.unit if len(parts) == 1 else "%s-%d" % (box.unit, parts.index(box) + 1)
+
+
 def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None, reading=(),
              by_unit: bool = False, dry_filaments: dict | None = None) -> dict:
     """The "ams" object of a push_status message for AFC's lanes, laid out by
@@ -262,6 +268,8 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
         # "info": the AMS type, on the first extruder, and its dryer's state.
         info = kind | ((DRYING << 4 | HEATING << 22) if dryer is not None and dryer.drying else 0)
         entry = {"id": str(box.ams_id), "info": "%04X" % info, "tray": slots}
+        if box.unit and not box.single:
+            entry["unit_name"] = unit_name(shown, box)
         if dryer is not None:
             entry.update(dryer_json(dryer, dry_filaments.get(box.unit, "")))
         elif box.single:

@@ -88,6 +88,8 @@ class UnitLayoutTest(unittest.TestCase):
                          [("0", "0001"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
         turtle, ace, tool1, tool2, ht = ams["ams"]
         self.assertEqual((turtle["humidity"], "dryer" in turtle), ("0", False))  # an AMS, no humidity shown
+        # Four-tray units show their AFC unit's name; an AMS HT keeps OrcaSlicer's.
+        self.assertEqual([u.get("unit_name") for u in ams["ams"]], ["Turtle_1", "Ace_1", None, None, None])
         self.assertEqual([t["tool"] for t in turtle["tray"]] + [t["tool"] for t in ace["tray"]], [0, 1, 2, 3, 6, 7, 8, 9])
         self.assertEqual((tool1["tray"][0]["tool"], tool1["dryer"], tool2["tray"][0]["tool"], ht["tray"][0]["tool"]),
                          (4, False, 5, 12))
@@ -121,6 +123,15 @@ class UnitLayoutTest(unittest.TestCase):
         self.assertEqual([box.tools for box in shown.boxes if not box.single],
                          [[1, 2, 3], [6, 7, 8, 9], [13, 14, 15, 16], [17, 18, 19, 20]])
         self.assertEqual((shown.tray(0), shown.tray(6), shown.tool(1, 0)), (4, 4, 6))
+
+    def test_a_unit_of_more_than_four_lanes_is_numbered(self):
+        snap = units_snapshot()
+        snap.lanes += [loaded("lane5", 13, unit="Turtle_1")]
+        snap.find_unit("Turtle_1").lanes.append("lane5")
+        ams = trays.ams_json(snap, {}, by_unit=True)
+        self.assertEqual([u.get("unit_name") for u in ams["ams"] if int(u["id"]) < trays.HT_ID],
+                         ["Turtle_1-1", "Turtle_1-2", "Ace_1"])
+        self.assertNotIn("unit_name", trays.ams_json(snap, {})["ams"][0])  # by T number
 
     def test_t_numbers_when_the_units_do_not_fit(self):
         snap = units_snapshot()
