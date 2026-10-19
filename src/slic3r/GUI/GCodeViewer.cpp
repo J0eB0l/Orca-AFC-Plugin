@@ -5655,7 +5655,7 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     ImGui::PopStyleVar(2);
 }
 
-// Orca: an AFC printer's toolheads, each in a panel with its nozzle size and the filaments that print on it,
+// Orca: an AFC printer's tools, each in a panel with its nozzle size and the filaments that print on it,
 // three panels a row, drawn like the two-nozzle grouping box (render_legend_color_arr_recommen).
 void GCodeViewer::render_legend_toolhead_groups(float window_padding)
 {
@@ -5673,10 +5673,22 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
             text_height = std::max(text_height, size.y);
         }
 
+    // Each panel's title and nozzle size, and the room a panel needs for them or two chips: the legend
+    // widens to fit three such panels a row.
+    const float              gap = ImGui::GetStyle().ItemSpacing.x;
+    std::vector<std::string> titles, sizes;
+    float                    header_width = 0.f;
+    for (size_t head = 0; head < m_toolhead_filaments.size(); ++head) {
+        // TRN %1%: a tool's number, from 1, in the preview's filament grouping box.
+        titles.push_back(format(_u8L("Tool %1%"), head + 1));
+        char size[32];
+        ::sprintf(size, "%g mm", m_toolhead_nozzles[head]);
+        sizes.emplace_back(size);
+        header_width = std::max(header_width, imgui.calc_text_size(titles.back()).x + gap + imgui.calc_text_size(sizes.back()).x);
+    }
     const size_t columns     = std::min<size_t>(m_toolhead_filaments.size(), 3);
-    const float  gap         = ImGui::GetStyle().ItemSpacing.x;
     const float  panel_width = std::max((ImGui::GetContentRegionAvail().x - gap * (columns - 1)) / columns,
-                                        2 * window_padding * 2 + 2 * chip_width + spacing);
+                                        2 * window_padding * 2 + std::max(2 * chip_width + spacing, header_width));
     const size_t per_line    = std::max<size_t>(1, size_t((panel_width - 2 * window_padding * 2 + spacing) / (chip_width + spacing)));
 
     ImGui::Dummy({window_padding, window_padding});
@@ -5703,18 +5715,16 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
             draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + panel_width, cursor_pos.y + line_height), IM_COL32(255, 255, 255, 10));
             ImGui::BeginChild(("#Toolhead" + std::to_string(head)).c_str(), ImVec2(panel_width, panel_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
             {
-                // TRN %1%: a toolhead's number, from 1, in the preview's filament grouping box.
-                const std::string title = format(_u8L("Toolhead %1%"), head + 1);
-                imgui.text(title);
-                char size[32];
-                ::sprintf(size, "%g mm", m_toolhead_nozzles[head]);
-                // The nozzle size at the panel's right edge, or after the title when it does not fit.
-                ImGui::SameLine(std::max(window_padding * 2 + imgui.calc_text_size(title).x + gap,
-                                         panel_width - window_padding * 2 - imgui.calc_text_size(std::string_view(size)).x));
-                imgui.text_colored(ImVec4(1.0f, 1.0f, 1.0f, 0.6f), size);
+                imgui.text(titles[head]);
+                // The nozzle size at the panel's right edge.
+                ImGui::SameLine(panel_width - window_padding * 2 - imgui.calc_text_size(sizes[head]).x);
+                imgui.text_colored(ImVec4(1.0f, 1.0f, 1.0f, 0.6f), sizes[head]);
                 ImGui::Dummy({window_padding, window_padding});
-                if (m_toolhead_filaments[head].empty())
-                    imgui.text_colored(ImVec4(1.0f, 1.0f, 1.0f, 0.6f), _u8L("Not used on this plate"));
+                if (m_toolhead_filaments[head].empty()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 0.6f));
+                    imgui.text_wrapped(_u8L("Not used on this plate"), ImGui::GetContentRegionAvail().x);
+                    ImGui::PopStyleColor();
+                }
                 size_t index = 1;
                 for (const ExtruderFilament& filament : m_toolhead_filaments[head]) {
                     imgui.filament_group(filament_group_display_type(filament.type, filament.is_support_filament), filament.hex_color.c_str(),
@@ -5731,7 +5741,7 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
     ImGui::PopStyleColor(1);
 
     ImGui::Dummy({window_padding, window_padding});
-    imgui.text_wrapped(_u8L("Synced filaments print on the toolhead their AFC lane feeds."), ImGui::GetContentRegionAvail().x);
+    imgui.text_wrapped(_u8L("Synced filaments print on the tool their AFC lane feeds."), ImGui::GetContentRegionAvail().x);
     ImGui::Dummy({window_padding, window_padding});
 }
 
