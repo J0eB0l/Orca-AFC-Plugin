@@ -1784,6 +1784,21 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
             m_right_extruder_filament.push_back({type_opt[extruder_id], color_opt[extruder_id], extruder_id, (bool)(support_filament_opt[extruder_id])});
         }
     }
+    // Orca: an AFC printer with several toolheads shows which toolhead each used filament prints on: its
+    // filament_map with Multi-material per toolhead, else the toolhead of its own number.
+    m_toolhead_filaments.clear();
+    m_toolhead_nozzles.clear();
+    const auto* afc = print.full_print_config().option<ConfigOptionBool>("afc_enabled");
+    if (!print.is_BBL_printer() && afc && afc->value && print.config().nozzle_diameter.values.size() > 1) {
+        m_toolhead_nozzles = print.config().nozzle_diameter.values;
+        m_toolhead_filaments.resize(m_toolhead_nozzles.size());
+        const bool per_toolhead = print.config().multi_extruder_multi_material.value;
+        for (auto extruder_id : m_viewer.get_used_extruders_ids()) {
+            const int head = !per_toolhead ? int(extruder_id) : extruder_id < filament_maps.size() ? filament_maps[extruder_id] - 1 : -1;
+            if (head >= 0 && size_t(head) < m_toolhead_filaments.size())
+                m_toolhead_filaments[head].push_back({type_opt[extruder_id], color_opt[extruder_id], extruder_id, (bool)(support_filament_opt[extruder_id])});
+        }
+    }
 
     m_settings_ids = gcode_result.settings_ids;
     m_filament_diameters = gcode_result.filament_diameters;
@@ -1981,6 +1996,8 @@ void GCodeViewer::reset()
     m_support_masses.clear();
     m_left_extruder_filament.clear();
     m_right_extruder_filament.clear();
+    m_toolhead_filaments.clear();
+    m_toolhead_nozzles.clear();
     m_sequential_view.gcode_window.reset();
     m_contained_in_bed = true;
 }
@@ -3763,6 +3780,14 @@ void GCodeViewer::render_all_plates_stats(const std::vector<const GCodeProcessor
     return;
 }
 
+// The material a filament group chip shows, a support filament of a common material marked as one.
+static std::string filament_group_display_type(const std::string& type, bool is_support)
+{
+    if (is_support && (type == "PLA" || type == "PA" || type == "ABS"))
+        return "Sup." + type;
+    return type;
+}
+
 void GCodeViewer::render_legend_color_arr_recommen(float window_padding)
 {
     ImGuiWrapper &imgui = *wxGetApp().imgui();
@@ -3848,9 +3873,7 @@ void GCodeViewer::render_legend_color_arr_recommen(float window_padding)
     bool all_more_to_best = delta_weight_to_best > EPSILON && delta_change_to_best > 0;
 
     auto get_filament_display_type = [](const ExtruderFilament& filament) {
-        if (filament.is_support_filament && (filament.type == "PLA" || filament.type == "PA" || filament.type == "ABS"))
-            return "Sup." + filament.type;
-        return filament.type;
+        return filament_group_display_type(filament.type, filament.is_support_filament);
         };
 
 
@@ -5622,12 +5645,94 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
     ImGui::Dummy({ window_padding, window_padding });
     if (m_nozzle_nums > 1 && (m_viewer.get_view_type() == libvgcode::EViewType::Summary || m_viewer.get_view_type() == libvgcode::EViewType::ColorPrint)) // ORCA show only on summary and filament tab
         render_legend_color_arr_recommen(window_padding);
+    else if (!m_toolhead_filaments.empty() && (m_viewer.get_view_type() == libvgcode::EViewType::Summary || m_viewer.get_view_type() == libvgcode::EViewType::ColorPrint))
+        render_legend_toolhead_groups(window_padding);
 
 
     legend_height = ImGui::GetCurrentWindow()->Size.y;
     imgui.end();
     ImGui::PopStyleColor(7);
     ImGui::PopStyleVar(2);
+}
+
+// Orca: an AFC printer's toolheads, each in a panel with its nozzle size and the filaments that print on it,
+// three panels a row, drawn like the two-nozzle grouping box (render_legend_color_arr_recommen).
+void GCodeViewer::render_legend_toolhead_groups(float window_padding)
+{
+    ImGuiWrapper& imgui = *wxGetApp().imgui();
+
+    const float spacing     = 18.0f * m_scale;
+    const float line_height = ImGui::GetFrameHeight();
+    const float chip_height = imgui.calc_text_size("ABC"sv).x * 1.3f;
+    float       chip_width  = imgui.calc_text_size("ABC"sv).x;
+    float       text_height = ImGui::GetTextLineHeight();
+    for (const auto& filaments : m_toolhead_filaments)
+        for (const ExtruderFilament& filament : filaments) {
+            const ImVec2 size = std::get<0>(imgui.calculate_filament_group_text_size(filament_group_display_type(filament.type, filament.is_support_filament)));
+            chip_width  = std::max(chip_width, size.x);
+            text_height = std::max(text_height, size.y);
+        }
+
+    const size_t columns     = std::min<size_t>(m_toolhead_filaments.size(), 3);
+    const float  gap         = ImGui::GetStyle().ItemSpacing.x;
+    const float  panel_width = std::max((ImGui::GetContentRegionAvail().x - gap * (columns - 1)) / columns,
+                                        2 * window_padding * 2 + 2 * chip_width + spacing);
+    const size_t per_line    = std::max<size_t>(1, size_t((panel_width - 2 * window_padding * 2 + spacing) / (chip_width + spacing)));
+
+    ImGui::Dummy({window_padding, window_padding});
+    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1.0f, 1.0f, 1.0f, 0.6f));
+    imgui.bold_text(_u8L("Filament Grouping"));
+    ImGui::Separator();
+    ImGui::PopStyleColor();
+    ImGui::Dummy({window_padding, window_padding});
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(1, 1, 1, 0.05f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(window_padding * 2, window_padding));
+    for (size_t row = 0; row < m_toolhead_filaments.size(); row += columns) {
+        // The panels of a row are as tall as the one with the most chip lines.
+        size_t lines = 1;
+        for (size_t head = row; head < std::min(row + columns, m_toolhead_filaments.size()); ++head)
+            lines = std::max(lines, (m_toolhead_filaments[head].size() + per_line - 1) / per_line);
+        const float panel_height = 2 * line_height + lines * (chip_height + text_height);
+
+        for (size_t head = row; head < std::min(row + columns, m_toolhead_filaments.size()); ++head) {
+            if (head > row)
+                ImGui::SameLine();
+            ImDrawList* draw_list  = ImGui::GetWindowDrawList();
+            ImVec2      cursor_pos = ImGui::GetCursorScreenPos();
+            draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + panel_width, cursor_pos.y + line_height), IM_COL32(255, 255, 255, 10));
+            ImGui::BeginChild(("#Toolhead" + std::to_string(head)).c_str(), ImVec2(panel_width, panel_height), false, ImGuiWindowFlags_AlwaysUseWindowPadding);
+            {
+                // TRN %1%: a toolhead's number, from 1, in the preview's filament grouping box.
+                const std::string title = format(_u8L("Toolhead %1%"), head + 1);
+                imgui.text(title);
+                char size[32];
+                ::sprintf(size, "%g mm", m_toolhead_nozzles[head]);
+                // The nozzle size at the panel's right edge, or after the title when it does not fit.
+                ImGui::SameLine(std::max(window_padding * 2 + imgui.calc_text_size(title).x + gap,
+                                         panel_width - window_padding * 2 - imgui.calc_text_size(std::string_view(size)).x));
+                imgui.text_colored(ImVec4(1.0f, 1.0f, 1.0f, 0.6f), size);
+                ImGui::Dummy({window_padding, window_padding});
+                if (m_toolhead_filaments[head].empty())
+                    imgui.text_colored(ImVec4(1.0f, 1.0f, 1.0f, 0.6f), _u8L("Not used on this plate"));
+                size_t index = 1;
+                for (const ExtruderFilament& filament : m_toolhead_filaments[head]) {
+                    imgui.filament_group(filament_group_display_type(filament.type, filament.is_support_filament), filament.hex_color.c_str(),
+                                         filament.filament_id, chip_width);
+                    if (index % per_line != 0)
+                        ImGui::SameLine(0, spacing);
+                    index++;
+                }
+            }
+            ImGui::EndChild();
+        }
+    }
+    ImGui::PopStyleVar(1);
+    ImGui::PopStyleColor(1);
+
+    ImGui::Dummy({window_padding, window_padding});
+    imgui.text_wrapped(_u8L("Synced filaments print on the toolhead their AFC lane feeds."), ImGui::GetContentRegionAvail().x);
+    ImGui::Dummy({window_padding, window_padding});
 }
 
 void GCodeViewer::push_combo_style()

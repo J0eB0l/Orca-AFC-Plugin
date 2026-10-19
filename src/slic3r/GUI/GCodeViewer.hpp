@@ -220,6 +220,9 @@ private:
     std::vector<ExtruderFilament> m_left_extruder_filament;
     std::vector<ExtruderFilament> m_right_extruder_filament;
     size_t m_nozzle_nums;
+    // Orca: an AFC printer's used filaments by the toolhead each prints on, and the toolheads' nozzle sizes
+    std::vector<std::vector<ExtruderFilament>> m_toolhead_filaments;
+    std::vector<double>                        m_toolhead_nozzles;
 
     // bounding box of toolpaths
     BoundingBoxf3 m_paths_bounding_box;
@@ -539,6 +542,7 @@ private:
     //BBS: GUI refactor: add canvas size
     void render_legend(float &legend_height, int canvas_width, int canvas_height, int right_margin);
     void render_legend_color_arr_recommen(float window_padding);
+    void render_legend_toolhead_groups(float window_padding);
     void render_slider(int canvas_width, int canvas_height);
 };
 
