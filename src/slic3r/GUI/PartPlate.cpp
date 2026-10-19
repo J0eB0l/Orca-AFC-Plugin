@@ -2966,7 +2966,7 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 int PartPlate::get_physical_extruder_by_filament_id(const DynamicConfig& g_config, int idx) const
 {
 	const std::vector<int>& filament_map = get_real_filament_maps(g_config);
-	if (filament_map.size() < idx)
+	if (idx <= 0 || idx > (int)filament_map.size())
 	{
 		return -1;
 	}
@@ -2977,8 +2977,16 @@ int PartPlate::get_physical_extruder_by_filament_id(const DynamicConfig& g_confi
 		return -1;
 	}
 
+	// A printer profile without its own map keeps the one-entry default; the effective map then
+	// lists every toolhead in order, so a filament on a later toolhead stays in range.
+	const auto* nozzles = g_config.option<ConfigOptionFloats>("nozzle_diameter");
+	const ConfigOptionInts pem = effective_physical_extruder_map(the_map, nozzles ? (int)nozzles->values.size() : 0);
 	int zero_base_logical_idx = filament_map[idx - 1] - 1;
-	return the_map->values[zero_base_logical_idx];
+	if (zero_base_logical_idx < 0 || zero_base_logical_idx >= (int)pem.values.size())
+	{
+		return -1;
+	}
+	return pem.values[zero_base_logical_idx];
 }
 
 int PartPlate::get_logical_extruder_by_filament_id(const DynamicConfig& g_config, int idx) const
