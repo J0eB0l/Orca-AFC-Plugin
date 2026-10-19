@@ -275,6 +275,7 @@ private:
     AmsType       m_ams_type = AmsType::AMS;
     std::string   m_ams_id;
     int           m_ext_id;//extruder id
+    wxString      m_unit_name; // Orca: a printer agent's own name for this unit, shown instead of the type and number
     // Orca: pull-mode / multi-vendor agent model — keeps the legacy single m_ext_id for existing
     // consumers and carries the switch-aware binding alongside it. Without a Filament Track Switch
     // the set is {m_ext_id}; with one installed the device binds both extruders and records which

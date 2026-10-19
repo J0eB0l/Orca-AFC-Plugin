@@ -207,6 +207,10 @@ static std::unordered_map<int, wxString> s_ams_display_formats = {
 
 wxString DevAms::GetDisplayName() const
 {
+    if (!m_unit_name.empty()) {
+        return m_unit_name;
+    }
+
     wxString ams_display_format;
     // GetAmsType() maps AMS_LITE_MIXED -> AMS_LITE so N9 shows the AMS-Lite name.
     auto iter = s_ams_display_formats.find(GetAmsType());
@@ -650,6 +654,11 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                     {
                         curr_ams->m_left_dry_time = (*it)["dry_time"].get<int>();
                     }
+
+                    // Orca: a printer agent can name its units.
+                    auto unit_name_it = it->find("unit_name");
+                    curr_ams->m_unit_name = unit_name_it != it->end() && unit_name_it->is_string() ?
+                                                wxString::FromUTF8(unit_name_it->get<std::string>()) : wxString();
 
                     // Orca: a printer agent shows a single-lane unit as an AMS HT, with "dryer": false when it has no dryer.
                     auto dryer_it = it->find("dryer");
