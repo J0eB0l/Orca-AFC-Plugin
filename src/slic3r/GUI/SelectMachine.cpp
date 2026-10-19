@@ -7075,14 +7075,51 @@ void PrinterInfoBox::UpdatePlate(const std::string& plate_name)
     }
 }
 
+// Orca: the printer preset that prints to the printer at obj_'s address (the selected preset first),
+// such as a printer agent's, or nullptr.
+static const Preset* _get_printer_preset(MachineObject* obj_)
+{
+    const PresetCollection& printers = wxGetApp().preset_bundle->printers;
+    auto prints_to = [obj_](const Preset& preset) {
+        const auto* host = preset.config.option<ConfigOptionString>("print_host");
+        const auto* port = preset.config.option<ConfigOptionString>("printhost_port");
+        return host && !host->value.empty() &&
+               MachineObject::dev_id_from_address(host->value, port ? port->value : std::string()) == obj_->get_dev_id();
+    };
+    if (prints_to(printers.get_selected_preset()))
+        return &printers.get_selected_preset();
+    for (const Preset& preset : printers)
+        if (preset.is_visible && prints_to(preset))
+            return &preset;
+    return nullptr;
+}
+
 static wxString _get_tips(MachineObject* obj_)
 {
-    wxString tips;
-    tips = obj_->get_printer_type_display_str();
+    // Orca: a printer that does not report its model or nozzle, such as one behind a printer agent, shows
+    // those of the printer preset that prints to it, and leaves out what that does not say either,
+    // rather than showing "Unknown".
+    const Preset* preset = nullptr;
+    wxString tips = from_u8(obj_->get_printer_type_display_name());
+    if (tips.empty() && (preset = _get_printer_preset(obj_))) {
+        if (const auto* model = preset->config.option<ConfigOptionString>("printer_model"))
+            tips = from_u8(model->value);
+    }
 
     wxString ext_diameter;
     if (obj_->GetExtderSystem()->GetTotalExtderCount() == 1) {
-        ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(0));
+        if (obj_->GetExtderSystem()->GetNozzleDiameter(0) > 0.0f) {
+            ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(0));
+        } else if (preset || (preset = _get_printer_preset(obj_))) {
+            // Each of the preset's distinct nozzle sizes, in toolhead order.
+            std::vector<double> diameters;
+            if (const auto* nozzles = preset->config.option<ConfigOptionFloats>("nozzle_diameter"))
+                for (double diameter : nozzles->values)
+                    if (diameter > 0 && std::find(diameters.begin(), diameters.end(), diameter) == diameters.end())
+                        diameters.push_back(diameter);
+            for (double diameter : diameters)
+                ext_diameter += (ext_diameter.empty() ? "" : "/") + format_nozzle_diameter(float(diameter));
+        }
     } else if (obj_->GetExtderSystem()->GetTotalExtderCount() == 2) {
         ext_diameter += format_nozzle_diameter(obj_->GetExtderSystem()->GetNozzleDiameter(1));//Left
         ext_diameter += "/";
@@ -7092,7 +7129,8 @@ static wxString _get_tips(MachineObject* obj_)
     }
 
     if (!ext_diameter.empty()) {
-        tips += "  ";
+        if (!tips.empty())
+            tips += "  ";
         tips += ext_diameter;
     }
 

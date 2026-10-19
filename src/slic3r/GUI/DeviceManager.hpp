@@ -252,6 +252,7 @@ public:
     PrinterArch get_printer_arch() const;
     std::string get_printer_ams_type() const;
     wxString get_printer_type_display_str() const;
+    std::string get_printer_type_display_name() const; // Orca: the model's name, empty when it is not known
     std::string get_auto_pa_cali_thumbnail_img_str() const;
 
     // check printer device series

@@ -435,6 +435,15 @@ NozzleVolumeType convert_to_nozzle_type(const std::string &str)
 
 wxString MachineObject::get_printer_type_display_str() const
 {
+    std::string display_name = get_printer_type_display_name();
+    if (!display_name.empty())
+        return display_name;
+    else
+        return _L("Unknown");
+}
+
+std::string MachineObject::get_printer_type_display_name() const
+{
     std::string display_name = DevPrinterConfigUtil::get_printer_display_name(printer_type);
 
     // Bambu printers use m_resource_file_path + "/printers/" + type_str + ".json", which is a semantic that only works for their profiles.
@@ -448,12 +457,9 @@ wxString MachineObject::get_printer_type_display_str() const
         }
     }
 
-    if (!display_name.empty())
-        return display_name;
-    else if (printer_type == "orcasonar")
-        return "OrcaSonar Printer";
-    else
-        return _L("Unknown");
+    if (display_name.empty() && printer_type == "orcasonar")
+        display_name = "OrcaSonar Printer";
+    return display_name;
 }
 
 std::string MachineObject::get_printer_thumbnail_img_str() const
