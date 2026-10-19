@@ -527,6 +527,26 @@ def spool_key(lane) -> tuple:
     return lane.spool_id, (lane.vendor or "").lower(), (lane.filament_name or "").lower()
 
 
+def filament_setting_reply(request: dict, lane) -> dict:
+    """The tray popup's request echoed back, as a Bambu printer reports an
+    ams_filament_setting it took. OrcaSlicer reads every field, the temperatures
+    as numbers; the lane's own stand in for ones the request lacks."""
+    def temp(key):
+        value = request.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else max(lane.nozzle_temp, 0)
+
+    ams_id, slot_id = request.get("ams_id"), request.get("slot_id")
+    tray_id = request.get("tray_id")
+    reply = {"command": "ams_filament_setting", "result": "success",
+             "ams_id": ams_id, "slot_id": slot_id, "tray_id": tray_id if isinstance(tray_id, int) else slot_id,
+             "tray_info_idx": str(request.get("tray_info_idx") or ""), "tray_type": str(request.get("tray_type") or ""),
+             "tray_color": str(request.get("tray_color") or ""),
+             "nozzle_temp_min": temp("nozzle_temp_min"), "nozzle_temp_max": temp("nozzle_temp_max")}
+    if isinstance(request.get("sequence_id"), str):
+        reply["sequence_id"] = request["sequence_id"]
+    return reply
+
+
 _Base = getattr(getattr(orca, "printer_agent", None), "PrinterAgentBase", None)
 
 if _Base is None:  # an OrcaSlicer without printer agents in plugins
@@ -994,6 +1014,11 @@ else:
                     printer.lane_presets.pop(lane.name, None)
                 elif isinstance(preset, str) and preset:
                     printer.lane_presets[lane.name] = (preset, spool_key(lane))
+            if not reset:
+                # Echoed as a Bambu printer does: OrcaSlicer shows the tray's new filament from the
+                # echo and holds it through the next three pushes, which would otherwise keep it.
+                reply = filament_setting_reply(job, lane)
+                self._worker.submit(lambda: self._send(printer, {"print": reply}))
             if script:
                 self._run(printer, "\n".join(script), push=True)
             else:

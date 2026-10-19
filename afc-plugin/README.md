@@ -148,7 +148,7 @@ Then:
   of a kind are known; **Change times from AFC** in the printer settings' AFC
   group turns this off.
 - On the Device tab, a tray's edit popup lists the printer's presets and sets
-  the lane's color and material; the preset picked there is what sync uses
+  the lane's color and material, which the tray shows at once; the preset picked there is what sync uses
   until the lane gets another spool. In the AFC build of OrcaSlicer the popup
   also has the spool's Factor K, saved as its Spoolman `flow_k`. A lane
   without a Spoolman spool keeps its K in the plugin until OrcaSlicer closes,

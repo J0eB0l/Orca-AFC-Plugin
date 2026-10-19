@@ -462,10 +462,17 @@ class DeviceTabTest(Case):
         tray = self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][0]
         self.assertEqual(tray["filament_preset"], "Generic PETG @System")
         self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_COLOR LANE=lane1 COLOR=00FF00", self.fake.scripts)
-        # The popup's reset drops the pick.
+        # Echoed, as OrcaSlicer holds the tray through three pushes after the popup and shows the echo.
+        echo = self.calls.messages("print", "ams_filament_setting")[0]
+        self.assertEqual({k: echo[k] for k in ("ams_id", "tray_id", "tray_info_idx", "tray_type", "tray_color",
+                                                "nozzle_temp_min", "nozzle_temp_max", "result")},
+                         {"ams_id": 0, "tray_id": 0, "tray_info_idx": "OGFG99", "tray_type": "PETG",
+                          "tray_color": "00FF00FF", "nozzle_temp_min": 220, "nozzle_temp_max": 250, "result": "success"})
+        # The popup's reset drops the pick, and is not echoed: the lane keeps its filament.
         self.assertEqual(self.popup(tray_info_idx="", tray_type="", tray_color="00000000"), 0)
         tray = self.calls.messages("print", "push_status", 3)[-1]["ams"]["ams"][0]["tray"][0]
         self.assertNotIn("filament_preset", tray)
+        self.assertEqual(len(self.calls.messages("print", "ams_filament_setting")), 1)
 
     def test_preset_pick_ends_with_the_spool(self):
         self.connect()
@@ -653,6 +660,8 @@ class UnitLayoutTest(Case):
         self.assertEqual(self.send({"print": request}), 0)
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["SET_MATERIAL LANE=extruder2 MATERIAL=PETG"])
+        echo = self.calls.messages("print", "ams_filament_setting")[0]
+        self.assertEqual((echo["ams_id"], echo["tray_id"], echo["nozzle_temp_min"]), (128, 0, 215))  # the lane's own temperature
 
     def test_drying_popup_runs_the_units_dryer(self):
         self.connect()
