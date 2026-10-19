@@ -140,7 +140,9 @@ def rfid_scan_gcode(lane: Lane, readers: dict) -> str:
         return "AFC_OAMS_RFID_SCAN UNIT=%s LANE=%s" % (unit, name)
     kind = lane.unit_type.upper()
     if kind.startswith("BAMBU"):
-        return "AFC_BAMBU_SCAN LANE=" + name
+        # The insert's pull-in and read; AFC_BAMBU_SCAN only reads, and it
+        # pulls on a spool held in a toolhead until the AMS stalls.
+        return "AFC_BAMBU_CAPSCAN LANE=" + name
     # A V1 ACE's firmware reads the tag; an ACE 2 needs AFC's reader on the lane.
     if unit_ok and kind.startswith("ACE") and (not kind.startswith("ACE2") or name in readers.get("AFC_ACE2_rfid", {})):
         return "ACE_RFID_RESCAN UNIT=%s LANE=%s" % (unit, name)

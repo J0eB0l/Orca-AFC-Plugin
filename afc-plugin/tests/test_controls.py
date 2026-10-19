@@ -46,7 +46,7 @@ class RfidTest(unittest.TestCase):
         return controls.rfid_scan_gcode(the_lane, readers or {})
 
     def test_each_units_own_command(self):
-        self.assertEqual(self.scan(lane("lane5", 4, "Bambu_AMS_1", "BambuAMS")), "AFC_BAMBU_SCAN LANE=lane5")
+        self.assertEqual(self.scan(lane("lane5", 4, "Bambu_AMS_1", "BambuAMS")), "AFC_BAMBU_CAPSCAN LANE=lane5")
         self.assertEqual(self.scan(lane("lane1", 0, "Ace_1", "ACE")), "ACE_RFID_RESCAN UNIT=Ace_1 LANE=lane1")
         readers = {"AFC_ACE2_rfid": {"lane2": 1}, "AFC_OpenAMS_rfid": {"lane9": 0},
                    "AFC_BoxTurtle_rfid": {"lane8": "reader0"}, "AFC_Vivid_rfid": {"lane3": 2},

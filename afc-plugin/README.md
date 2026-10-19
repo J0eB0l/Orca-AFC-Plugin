@@ -122,9 +122,11 @@ Then:
   also has the spool's Factor K, saved as its Spoolman `flow_k`. A lane
   without a Spoolman spool keeps its K in the plugin until OrcaSlicer closes,
   and sync and prints use it as they would a spool's. A tray's refresh button reads the spool's
-  tag again with the command of the lane's unit (AFC_BAMBU_SCAN, ACE_RFID_RESCAN,
+  tag again with the command of the lane's unit (AFC_BAMBU_CAPSCAN, ACE_RFID_RESCAN,
   AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
-  FILAMENT_DT_UPDATE); a lane with no reader says so. The lane in the active
+  FILAMENT_DT_UPDATE); a lane with no reader says so. A Bambu AMS pulls the
+  spool in, reads its tag and measures it, as on an insert, and refuses while
+  one of its lanes is in a toolhead. The lane in the active
   toolhead shows its filament path to the extruder, as a Bambu printer's loaded
   tray does. Official OrcaSlicer 2.5 then refuses the refresh buttons while a
   lane is loaded, as on a Bambu printer; the AFC build does not. **Load** and

@@ -444,7 +444,7 @@ class DeviceTabTest(Case):
         self.fake.gcode_delay = 0.5
         self.assertEqual(self.agent.command_ams_refresh_rfid(self.dev_id, 1, 0, 1, True), 0)  # T4: lane5, Bambu AMS
         self.agent._gcode.call(lambda: None, 5)
-        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_SCAN LANE=lane5"])
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_CAPSCAN LANE=lane5"])
         statuses = self.calls.messages("print", "push_status", 3)
         self.assertEqual(statuses[1]["ams"]["tray_reading_bits"], "10")  # the tray spins while it reads
         self.assertEqual(statuses[-1]["ams"]["tray_reading_bits"], "0")
