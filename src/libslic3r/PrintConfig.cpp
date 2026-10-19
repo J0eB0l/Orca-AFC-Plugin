@@ -1146,6 +1146,15 @@ void PrintConfigDef::init_common_params()
     def->plugin_type = "printer-connection";
     def->set_default_value(new ConfigOptionString(""));
 
+    def = this->add("afc_enabled", coBool);
+    def->label = L("AFC");
+    def->tooltip = L("The printer runs AFC (Automated Filament Control) for Klipper. OrcaSlicer ticks this when it "
+                     "finds AFC on the printer; untick it if AFC is removed. An AFC printer uses the AFC printer "
+                     "agent unless another one is picked, and its G-code goes through the AFC G-code step.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("print_host", coString);
     def->label = L("Hostname, IP or URL");
     // The URL is an example of the format to type, not a link, so it stays in the text.

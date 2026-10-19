@@ -418,6 +418,12 @@ public:
     // then, all resolve and canonical would just be ORCA<->""
     std::string canonical_printer_agent_id(const std::string& picked_id);
 
+    // Orca: the printer agent flow is on when the preference asks for it, and always for a printer
+    // ticked as running AFC; every other printer keeps the print-host flow while the preference is off.
+    bool use_printer_agents() const;
+    // Orca: ask a Klipper printer once whether it runs AFC and tick its AFC box when it does.
+    void detect_afc_on_printer();
+
     FilamentColorCodeQuery* get_filament_color_code_query();
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
@@ -892,6 +898,8 @@ private:
     // and the plugin load/unload callbacks (init_plugin_gui_wiring).
     void refresh_printer_agent_dropdown();
     void set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent); // null clears the selection
+    // Printer presets and hosts asked about AFC this session, as "<preset>|<host>".
+    std::set<std::string> m_afc_probed;
 
     bool            config_wizard_startup();
 	void            check_updates(const bool verbose);

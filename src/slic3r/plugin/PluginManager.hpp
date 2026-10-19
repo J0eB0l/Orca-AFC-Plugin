@@ -343,6 +343,15 @@ void execute_capabilities_from_refs(const ConfigOptionStrings& capabilities,
             }
         }
 
+        // Orca: a capability added for the printer (the AFC G-code step, see Print::apply) has no manifest
+        // reference; run the loaded plugin that provides it.
+        if (!ref) {
+            PluginDescriptor descriptor;
+            if (plugin_mgr.try_get_plugin_descriptor_for_capability(capability, type, descriptor))
+                ref = PluginCapabilityRef{descriptor.is_cloud_plugin() ? descriptor.name : descriptor.plugin_key, capability,
+                                          descriptor.cloud_uuid()};
+        }
+
         if (!ref) {
             BOOST_LOG_TRIVIAL(warning) << tag << ": no plugin reference found for capability '" << capability << "'; skipping";
             continue;

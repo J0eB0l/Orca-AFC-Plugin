@@ -1362,6 +1362,15 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         }
     }
 
+    // Orca: a printer ticked as running AFC runs the AFC plugin's G-code step after any picked in the
+    // process preset, so the step follows the printer rather than every process preset. Done here, not
+    // in the preset bundle, so the project file and the presets keep what the user picked.
+    if (const auto* afc = new_full_config.option<ConfigOptionBool>("afc_enabled"); afc && afc->value) {
+        auto& steps = new_full_config.option<ConfigOptionStrings>("slicing_pipeline_plugin", true)->values;
+        if (std::find(steps.begin(), steps.end(), "AFC G-code") == steps.end())
+            steps.emplace_back("AFC G-code");
+    }
+
     //new_full_config.normalize_fdm(used_filaments);
     new_full_config.normalize_fdm_1();
     t_config_option_keys changed_keys = new_full_config.normalize_fdm_2(objects().size(), used_filaments.size());

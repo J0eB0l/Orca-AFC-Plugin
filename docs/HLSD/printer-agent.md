@@ -109,6 +109,19 @@ presets select the native Orca agent. When a preset is changed, `GUI_App` resolv
 ID, obtains the corresponding cloud agent, creates the printer agent through the registry, and installs
 it in `NetworkAgent`.
 
+A printer preset with its AFC box ticked (`afc_enabled`) defaults to the AFC plugin's agent (`afc`)
+while that plugin is registered, and uses the printer-agent flow even with the "Use printer agents
+instead of print hosts" preference off (`GUI_App::use_printer_agents()`). Every other printer keeps
+the print-host flow while the preference is off, because the native Orca agent has no print path of
+its own. `GUI_App::detect_afc_on_printer()` asks a Klipper preset's print host once per session
+whether AFC is loaded and ticks the box when it is. A tick saved into a user preset is recorded in the
+app config, so the printer is not asked again and a box the user unticks stays off.
+
+The AFC plugin ships in `resources/plugins`. At startup, before the enabled plugins load, the build
+installs it when no copy is installed or the installed one is older, keeping the user's enabled
+state, capability switches and permissions. Each shipped version is installed once, so a newer
+plugin installed by hand keeps working and a removed one stays removed until a newer build ships.
+
 The registry rejects conflicting agent IDs. This matters for Python plugins because an agent ID is the
 stable identity used by presets and device ownership; two enabled plugin capabilities must not claim
 the same ID.

@@ -199,6 +199,7 @@
 #include "../Utils/Process.hpp"
 #include "../Utils/wxInspectorPlugins/Registration.hpp"
 #include "../Utils/Http.hpp"
+#include "../Utils/Moonraker.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
@@ -3143,6 +3144,79 @@ void GUI_App::init_plugin_gui_wiring()
     Slic3r::GUI::bump_texture_library_generation();
 }
 
+// Orca: plugins shipped in resources/plugins (the AFC plugin) are installed at the first start and whenever
+// the build ships a newer version than the one installed, keeping the user's enabled state, capability
+// switches and the permissions already granted to that plugin. An installed copy at the same or a newer
+// version is left alone, so the plugin can still be updated on its own, and each shipped version is put in
+// only once, so a plugin the user removed stays removed until the build ships a newer one.
+static void install_bundled_plugins(PluginManager& plugin_mgr, AppConfig& app_config)
+{
+    namespace fs = boost::filesystem;
+    const fs::path dir = fs::path(resources_dir()) / "plugins";
+    boost::system::error_code ec;
+    if (!fs::is_directory(dir, ec))
+        return;
+
+    bool installed_any = false;
+    for (const fs::directory_entry& entry : fs::directory_iterator(dir, ec)) {
+        if (entry.path().extension() != ".whl")
+            continue;
+        PluginDescriptor shipped;
+        bool             existing = false;
+        std::string      error;
+        if (!plugin_mgr.inspect_local_plugin_package(entry.path(), shipped, existing, error)) {
+            BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << entry.path().string() << " is unreadable: " << error;
+            continue;
+        }
+        const std::string key = make_local_plugin_key(entry.path().stem().string());
+        if (app_config.get("bundled_plugins", key) == shipped.version)
+            continue;
+
+        // The installed copy is the one under the same key, or a local plugin of the same name the user
+        // put in from a differently named wheel.
+        std::optional<PluginDescriptor> installed;
+        for (const PluginDescriptor& plugin : plugin_mgr.get_plugin_descriptors(true))
+            if (!plugin.is_cloud_plugin() && !plugin.plugin_root.empty() &&
+                (plugin.plugin_key == key || (!installed && plugin.name == shipped.name)))
+                installed = plugin;
+        const auto shipped_version = Semver::parse(shipped.version);
+        if (installed) {
+            const auto installed_version = Semver::parse(installed->installed_version.empty() ? installed->version :
+                                                                                                installed->installed_version);
+            if (installed_version && shipped_version && *installed_version >= *shipped_version) {
+                app_config.set("bundled_plugins", key, shipped.version);
+                continue;
+            }
+            if (installed->plugin_key != key) // a copy under another key would load the same plugin twice
+                continue;
+        }
+
+        PluginInstallState kept;
+        const bool keep_state = installed && read_install_state(fs::path(installed->plugin_root), kept);
+        PluginDescriptor descriptor;
+        if (!plugin_mgr.install_plugin(entry.path(), descriptor, error)) {
+            BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " failed to install: " << error;
+            continue;
+        }
+        if (keep_state) {
+            // install_plugin() wrote a fresh state and revoked the permissions; this is the same plugin,
+            // shipped by the build the user installed, so it keeps what the user already allowed.
+            PluginInstallState state;
+            if (read_install_state(fs::path(descriptor.plugin_root), state)) {
+                state.enabled      = kept.enabled;
+                state.capabilities = kept.capabilities;
+                state.permissions  = kept.permissions;
+                write_install_state(fs::path(descriptor.plugin_root), state);
+            }
+        }
+        BOOST_LOG_TRIVIAL(info) << "Installed bundled plugin " << key << " " << shipped.version;
+        app_config.set("bundled_plugins", key, shipped.version);
+        installed_any = true;
+    }
+    if (installed_any)
+        plugin_mgr.rescan_plugins();
+}
+
 bool GUI_App::on_init_inner()
 {
     wxLog::SetActiveTarget(new wxBoostLog());
@@ -3585,6 +3659,7 @@ bool GUI_App::on_init_inner()
     }
 
     plugin_mgr.discover_plugins(false, true);
+    install_bundled_plugins(plugin_mgr, *app_config);
 
     init_plugin_gui_wiring();
 
@@ -4245,16 +4320,83 @@ void GUI_App::set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent)
     sidebar().update_all_preset_comboboxes();
 }
 
+// Orca: the printer agent the bundled AFC plugin registers (orca_afc/agent.py AGENT_ID).
+static constexpr char AFC_PRINTER_AGENT_ID[] = "afc";
+
+static bool printer_has_afc(const DynamicPrintConfig& config)
+{
+    const auto* afc = config.option<ConfigOptionBool>("afc_enabled");
+    return afc != nullptr && afc->value;
+}
+
 std::string GUI_App::resolve_printer_agent_id(const std::string& stored_id) const
 {
     if (!stored_id.empty())
         return stored_id;
-    return (preset_bundle && preset_bundle->is_bbl_vendor()) ? BBL_PRINTER_AGENT_ID : ORCA_PRINTER_AGENT_ID;
+    if (preset_bundle && preset_bundle->is_bbl_vendor())
+        return BBL_PRINTER_AGENT_ID;
+    // Orca: an AFC printer defaults to the AFC agent while the AFC plugin serves it
+    if (preset_bundle && printer_has_afc(preset_bundle->printers.get_edited_preset().config) &&
+        NetworkAgentFactory::is_printer_agent_registered(AFC_PRINTER_AGENT_ID))
+        return AFC_PRINTER_AGENT_ID;
+    return ORCA_PRINTER_AGENT_ID;
 }
 
 std::string GUI_App::canonical_printer_agent_id(const std::string& picked_id)
 {
     return picked_id == resolve_printer_agent_id("") ? std::string() : picked_id;
+}
+
+bool GUI_App::use_printer_agents() const
+{
+    if (app_config && app_config->get_bool("use_printer_agents"))
+        return true;
+    return preset_bundle && printer_has_afc(preset_bundle->printers.get_edited_preset().config);
+}
+
+// Orca: a Klipper printer preset with a print host is asked once per session whether it runs AFC, and a
+// "yes" ticks its AFC box. Once a tick is saved, the preset is recorded in the "afc_detected" section and
+// never asked again, so a box the user unticks stays off. A printer without AFC is asked again next
+// session, which picks up AFC added later.
+void GUI_App::detect_afc_on_printer()
+{
+    if (!preset_bundle || !app_config || is_closing())
+        return;
+    const Preset& preset = preset_bundle->printers.get_edited_preset();
+    if (preset.printer_technology() != ptFFF || preset_bundle->is_bbl_vendor() || printer_has_afc(preset.config))
+        return;
+    const auto* flavor = preset.config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor");
+    const std::string name = preset.name;
+    const std::string host = preset.config.opt_string("print_host");
+    if (!flavor || flavor->value != gcfKlipper || host.empty() || app_config->has("afc_detected", name) ||
+        !m_afc_probed.insert(name + "|" + host).second)
+        return;
+
+    // Moonraker answers on the print host whichever host type the preset names (OctoPrint on Klipper too).
+    DynamicPrintConfig host_config = preset.config;
+    Moonraker(&host_config).query_afc([this, name, host](bool found) {
+        if (!found)
+            return;
+        CallAfter([this, name, host] {
+            if (is_closing() || !preset_bundle)
+                return;
+            const Preset& edited = preset_bundle->printers.get_edited_preset();
+            Tab* tab = get_tab(Preset::TYPE_PRINTER);
+            if (!tab || edited.name != name || edited.config.opt_string("print_host") != host || printer_has_afc(edited.config))
+                return;
+            const bool was_dirty = tab->current_preset_is_dirty();
+            DynamicPrintConfig afc;
+            afc.set_key_value("afc_enabled", new ConfigOptionBool(true));
+            tab->load_config(afc);
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC found on the printer of preset " << name;
+            // A user preset with no other edits keeps the tick; a system preset, or one with unsaved edits,
+            // carries it as an edit until the user saves, and is asked again next session.
+            if (!was_dirty && preset_bundle->printers.get_selected_preset().is_user()) {
+                tab->save_preset(name);
+                app_config->set("afc_detected", name, "1");
+            }
+        });
+    });
 }
 
 void GUI_App::switch_printer_agent()

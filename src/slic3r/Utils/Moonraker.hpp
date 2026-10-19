@@ -1,6 +1,7 @@
 #ifndef slic3r_Moonraker_hpp_
 #define slic3r_Moonraker_hpp_
 
+#include <functional>
 #include <string>
 #include <wx/string.h>
 #include <wx/arrstr.h>
@@ -26,6 +27,7 @@ class Http;
 //   POST /server/files/upload (multipart)  -- upload gcode (form fields: file, root, print,
 //                                             plateindex)
 //   POST /printer/print/start (json)       -- {"filename":"<name>.gcode"} starts print
+//   GET  /printer/objects/query?AFC        -- whether the AFC add-on is loaded (query_afc)
 //
 // Auth: Send X-Api-Key when `printhost_apikey` is non-empty. Without a key,
 // requests rely on Moonraker's `[authorization] trusted_clients`; `force_logins`
@@ -50,6 +52,9 @@ public:
     bool get_storage(wxArrayString &storage_path, wxArrayString &storage_name) const override;
     const std::string& get_apikey() const { return m_apikey; }
     const std::string& get_cafile() const { return m_cafile; }
+    // Asks Klipper, without blocking, whether the AFC add-on is loaded. `done` runs on the request's own
+    // thread, with true when the printer reports an AFC object.
+    void query_afc(std::function<void(bool)> done) const;
 
 protected:
     std::string m_host;

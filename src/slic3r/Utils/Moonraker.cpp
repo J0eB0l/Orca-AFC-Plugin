@@ -111,6 +111,33 @@ bool Moonraker::test(wxString &msg) const
     return res;
 }
 
+void Moonraker::query_afc(std::function<void(bool)> done) const
+{
+    //ORCA: Klipper leaves an object it does not have out of {"result": {"status": {...}}}, so a missing or
+    //      empty "AFC" means the printer has no AFC. Errors answer false as well: the caller asks again later.
+    auto http = Http::get(make_url("printer/objects/query?AFC"));
+    set_auth(http);
+    http.timeout_connect(5)
+        .timeout_max(10)
+        .on_error([done](std::string, std::string, unsigned) { done(false); })
+        .on_complete([done](std::string body, unsigned) {
+            bool found = false;
+            try {
+                std::stringstream ss(body);
+                pt::ptree ptree;
+                pt::read_json(ss, ptree);
+                const auto afc = ptree.get_child_optional("result.status.AFC");
+                found = afc && !afc->empty();
+            } catch (const std::exception&) {
+            }
+            done(found);
+        })
+#ifdef WIN32
+        .ssl_revoke_best_effort(m_ssl_revoke_best_effort)
+#endif
+        .perform();
+}
+
 bool Moonraker::get_storage(wxArrayString &storage_path, wxArrayString &storage_name) const
 {
     //ORCA: GET /server/files/roots enumerates Moonraker's storage roots (default "gcodes" plus any

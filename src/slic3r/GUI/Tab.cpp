@@ -2637,6 +2637,7 @@ void Tab::on_presets_changed()
     // Check if printer agent needs switching
     if (m_type == Preset::TYPE_PRINTER) {
         wxGetApp().switch_printer_agent();
+        wxGetApp().detect_afc_on_printer();
 
         // Trigger per-vendor preset update check
         const Preset& printer_preset = m_preset_bundle->printers.get_edited_preset();
@@ -5305,6 +5306,7 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("gcode_skip_config_block", "printer_basic_information_advanced#skip-g-code-config-block");
         optgroup->append_single_option_line("pellet_modded_printer", "printer_basic_information_advanced#pellet-modded-printer");
         optgroup->append_single_option_line("bbl_use_printhost", "printer_basic_information_advanced#use-3rd-party-print-host");
+        optgroup->append_single_option_line("afc_enabled");
 
         // "Printer Agent" dropdown - printer_agent is a coString; gui_type routes it to
         // PrinterAgentChoice instead of a TextCtrl. Rows and values come from the live agent
@@ -6558,6 +6560,10 @@ void TabPrinter::toggle_options()
         bool gcf_is_marlin_firmware = m_config->option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value == GCodeFlavor::gcfMarlinFirmware;
         toggle_line("enable_power_loss_recovery", is_BBL_printer || gcf_is_marlin_firmware);
 
+        // Orca: AFC runs on Klipper. A ticked box stays visible so it can still be unticked.
+        const bool gcf_is_klipper = m_config->option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value == GCodeFlavor::gcfKlipper;
+        toggle_line("afc_enabled", !is_BBL_printer && (gcf_is_klipper || m_config->opt_bool("afc_enabled")));
+
         // Belt printer: show belt-specific settings only when belt_printer is enabled.
         bool is_belt = m_config->opt_bool("belt_printer");
         // update_fff() derives build_plate_tilt_{x,y} from the belt tilt on a belt
@@ -6919,6 +6925,10 @@ void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& v
             }
         }
     }
+
+    // Orca: the AFC box moves an unset Printer Agent between the default agent and AFC's.
+    if (opt_key == "afc_enabled")
+        refresh_printer_agent_dropdown();
 
     // Orca: report Extruder page changes as "key#<extruder>", as the former "Extruder N" pages did,
     // so per-extruder handling in Tab::on_value_change() sees the extruder that was edited.

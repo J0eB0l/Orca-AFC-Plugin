@@ -8209,7 +8209,13 @@ void GCode::append_full_config(const Print &print, std::string &str)
         return banned_keys.find(key) != banned_keys.end();
     };
     std::ostringstream ss;
+    // Orca: afc_enabled is written only when ticked, for the AFC plugin's G-code step to read, so the
+    // config block of every printer without AFC stays as it was.
+    const auto* afc_enabled = cfg.option<ConfigOptionBool>("afc_enabled");
+    const bool  skip_afc    = afc_enabled == nullptr || !afc_enabled->value;
     for (const std::string& key : cfg.keys()) {
+        if (skip_afc && key == "afc_enabled")
+            continue;
         if (!is_banned(key) && !cfg.option(key)->is_nil()) {
             if (key == "wipe_tower_x" || key == "wipe_tower_y") {
                 ss << std::fixed << std::setprecision(3) << "; " << key << " = " << dynamic_cast<const ConfigOptionFloats*>(cfg.option(key))->get_at(print.get_plate_index()) << "\n";
