@@ -34,6 +34,7 @@ MAX_BOXES, MAX_BOXES_WITH_HT = 7, 4
 # AMS types in a unit's "info": an AMS, an AMS 2 Pro, an AMS HT.
 AMS, AMS_2_PRO, AMS_HT = 1, 3, 4
 DRYING, HEATING = 2, 1  # the dry status and sub status OrcaSlicer reads in "info"
+DRY_DISCONNECTED = 100  # the AFC build of OrcaSlicer's "cannot dry" reason for a unit not connected
 TOOLCHANGER = "Toolchanger"  # AFC's unit type for a toolchanger's tools
 
 
@@ -224,7 +225,9 @@ def humidity_level(percent: float) -> int:
 def dryer_json(dryer: Dryer, filament: str = "") -> dict:
     """A dryer unit's humidity, temperature and drying, as an AMS 2 Pro or AMS
     HT reports them; `filament` is what the drying popup named."""
-    out = {"dry_time": -(-dryer.remaining_s // 60) if dryer.drying else 0}
+    out = {"dry_time": -(-dryer.remaining_s // 60) if dryer.drying else 0,
+           # Why it cannot dry, sent every time so the AFC build of OrcaSlicer clears it once plugged in.
+           "dry_sf_reason": [] if dryer.online else [DRY_DISCONNECTED]}
     if dryer.humidity >= 0:
         out["humidity_raw"] = str(int(round(dryer.humidity)))
         out["humidity"] = str(humidity_level(dryer.humidity))

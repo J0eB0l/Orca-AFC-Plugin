@@ -626,6 +626,16 @@ class UnitLayoutTest(Case):
         self.assertEqual(self.fake.scripts[-1], "AFC_BAMBU_HEATER_STOP UNIT=Bambu_AMS_1")
         self.assertEqual(self.drying(ams_id=0), afc_agent.ERR_CAP_NOT_AVAILABLE)  # the Box Turtle has no dryer
 
+    def test_an_unplugged_unit_cannot_start_drying(self):
+        self.connect()
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"]["bridge_online"] = False
+        self.assertEqual(self.push_by_unit()["ams"]["ams"][1]["dry_sf_reason"], [100])
+        self.assertEqual(self.drying(), afc_agent.ERR_CAP_NOT_AVAILABLE)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, [])
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"]["bridge_online"] = True
+        self.assertEqual(self.push_by_unit(2)["ams"]["ams"][1]["dry_sf_reason"], [])  # cleared once back
+
 
 class PrintTest(Case):
     def project(self, text=PLATE, plate=1):

@@ -102,7 +102,8 @@ Then:
   humidity and temperature; clicking the humidity opens OrcaSlicer's drying
   popup, which starts and stops the unit's dryer (ACE_DRY or
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
-  dries cooler (an ACE's 55 °C) dries at its most. AFC units that would need
+  dries cooler (an ACE's 55 °C) dries at its most. A unit that is not
+  connected cannot start; in the AFC build the popup says so. AFC units that would need
   more than four AMS beside AMS HT units (or eight AMS HT) are shown by T number.
   The AFC build also shows the chamber's temperature when Klipper has a
   heater_generic, temperature_sensor or temperature_fan named with chamber,

@@ -579,7 +579,7 @@ def merge_dryer_status(status, out: Snapshot) -> None:
         if _is_ace(prefix):
             d.kind = "ace"
             d.model = prefix
-            d.online = _bool(o, "ace_connected") if "ace_connected" in o else True
+            d.online = _bool(o, "ace_connected") if o.get("ace_connected") is not None else True
             d.state = _str(o, "ace_dryer")
             state = d.state.upper()
             d.drying = bool(state) and state not in ("STOP", "STOPPED", "STOPPING", "IDLE") and "ERROR" not in state
@@ -599,7 +599,7 @@ def merge_dryer_status(status, out: Snapshot) -> None:
                 continue  # AMS 1 / AMS lite: no heater
             d.kind = "bambu"
             d.model = _str(o, "ams_model")
-            d.online = _bool(o, "bridge_online") if "bridge_online" in o else True
+            d.online = _bool(o, "bridge_online") if o.get("bridge_online") is not None else True
             d.drying = _bool(o, "drying")
             d.target = _num(o, "dry_target", 0)
             d.remaining_s = _int(_num(o, "dry_remaining", 0))
