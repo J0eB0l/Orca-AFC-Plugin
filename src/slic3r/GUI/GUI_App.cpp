@@ -4433,7 +4433,7 @@ void GUI_App::apply_measured_swap_times(const MachineObject& obj)
         tab->save_preset(name);
 }
 
-// Orca: AFC forms the filament tip and loads each lane itself, and its PRINT_START loads the first tool
+// Orca: AFC unloads and loads each lane itself, cutting or forming the tip, and its PRINT_START loads the first tool
 // (afcproject.dev, slicer setup): the printer settings that differ from that, as changes to apply.
 static DynamicPrintConfig afc_recommended_printer_changes(const DynamicPrintConfig& printer)
 {
@@ -4492,8 +4492,8 @@ void GUI_App::suggest_afc_settings()
 
     if (!afc_recommended_printer_changes(preset.config).empty())
         notifications->push_notification(NotificationType::AFCRecommendedSettings, NotificationManager::NotificationLevel::ImportantNotificationLevel,
-            _u8L("Some printer settings differ from what AFC recommends: AFC forms the filament tip and loads each lane itself, "
-                 "and its PRINT_START loads the first tool."),
+            _u8L("Some printer settings differ from what AFC recommends: AFC unloads and loads each lane itself, cutting or "
+                 "forming the tip, and its PRINT_START loads the first tool."),
             _u8L("Use AFC's settings"), [this](wxEvtHandler*) {
                 Tab* tab = get_tab(Preset::TYPE_PRINTER);
                 if (tab && preset_bundle && printer_has_afc(preset_bundle->printers.get_edited_preset().config))
