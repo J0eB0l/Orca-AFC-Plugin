@@ -50,9 +50,9 @@ Klipper file to AFC:
   with `WAIT_CHAMBER_TEMP` in Snapmaker's U1 start G-code.
 
 It reads AFC from the printer for which toolhead each T number feeds and its
-spool's K. A printer that does not answer still gets its file; on a single-nozzle
-printer the purges are still there, the spool K is not. Other G-code flavors are
-left as they are.
+spool's K. A printer without AFC, or one that does not answer, gets its file as
+it was sliced: nothing above is added or dropped. Other G-code flavors are left
+as they are.
 
 ## Install
 

@@ -420,9 +420,10 @@ class PrintJob:
 def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
     filaments (laid out by AFC unit when `by_unit`), AFC's purges and spool
-    flow K, and on a U1 its print switches."""
+    flow K, and on a U1 its print switches. A printer without AFC gets the
+    file as it was sliced, apart from the U1's switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
-    if settings.klipper:
+    if settings.klipper and snapshot is not None and snapshot.present:
         shown = trays.layout(snapshot, by_unit)
         mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
         text = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, mapping, settings), settings).text

@@ -4,7 +4,7 @@ Others, Advanced mode).
 
 It reads AFC from the printer for the toolhead each T number's lane feeds and
 its spool's flow K, then rewrites the file with gcode.transform(). A printer
-that does not answer still gets the file, without what only AFC knows.
+without AFC, or one that does not answer, gets the file as it was sliced.
 """
 
 from __future__ import annotations
@@ -60,13 +60,13 @@ def process_file(path: str, config: dict, value, timeout: float = READ_TIMEOUT) 
     if not settings.klipper:
         return "AFC G-code: not a Klipper file, left as it is"
     snapshot, why = read_afc(config, value, timeout)
-    plan = gcode.plan_for(snapshot, settings.filaments, None, settings)
-    result = gcode.transform(text, plan, settings)
+    if snapshot is None:
+        return "AFC G-code: left as it is, without AFC: " + why
+    result = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, None, settings), settings)
     if result.text != text:
         with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
             f.write(result.text)
-    message = "AFC G-code: " + result.summary()
-    return message + (" (without AFC: %s)" % why if why else "")
+    return "AFC G-code: " + result.summary()
 
 
 class AFCGcode(orca.slicing.SlicingPipelineCapabilityBase):

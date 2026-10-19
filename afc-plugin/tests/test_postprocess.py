@@ -56,13 +56,27 @@ class PostProcessTest(unittest.TestCase):
         self.assertEqual(message, "AFC G-code: 2 tool changes, 1 lane-change purges, 2 spool PA settings")
 
     def test_printer_not_answering(self):
-        self.write(BODY + CONFIG % "klipper")
+        text = BODY + CONFIG % "klipper"
+        self.write(text)
         message = postprocess.process_file(self.path, {"printer_url": closed_port_url()}, None, timeout=10)
-        lines = self.read().splitlines()
-        # One nozzle: every lane feeds it, so the lane change still purges. No spool K without AFC.
-        self.assertEqual(lines[3], "T1 PURGE_LENGTH=" + PURGE)
-        self.assertNotIn("SET_PRESSURE_ADVANCE", self.read())
-        self.assertIn("without AFC", message)
+        # Nothing is known about the printer, so the file stays as it was sliced.
+        self.assertEqual(self.read(), text)
+        self.assertIn("left as it is, without AFC", message)
+
+    def test_printer_without_afc(self):
+        text = BODY + CONFIG % "klipper"
+        self.write(text)
+        self.fake.webhook = None
+        message = postprocess.process_file(self.path, {}, lambda key: None)
+        self.assertEqual(self.read(), text)
+        self.assertIn("left as it is, without AFC", message)
+
+    def test_no_print_host(self):
+        text = BODY + CONFIG % "klipper"
+        self.write(text)
+        orca.bundle = fake_orca.PresetBundle()
+        self.assertIn("left as it is, without AFC", postprocess.process_file(self.path, {}, lambda key: None))
+        self.assertEqual(self.read(), text)
 
     def test_other_flavors_untouched(self):
         text = BODY + CONFIG % "marlin2"

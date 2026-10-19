@@ -784,6 +784,10 @@ class FileTest(unittest.TestCase):
         self.assertEqual(afc_agent.model_id("Voron 0.1", os.path.join(machine, "Voron 0.1 0.4 nozzle.json")), "Voron0")
         self.assertEqual(afc_agent.model_id("Voron 0.1", ""), "")
 
+    def test_prepare_leaves_a_printer_without_afc(self):
+        self.assertEqual(afc_agent.prepare(PLATE, afc_agent.PrintJob(ams_mapping="[4,0]"), Snapshot()), PLATE)
+        self.assertEqual(afc_agent.prepare(PLATE, afc_agent.PrintJob(ams_mapping="[4,0]"), None), PLATE)
+
     def test_prepare_leaves_other_flavors(self):
         text = PLATE.replace("gcode_flavor = klipper", "gcode_flavor = marlin2")
         self.assertEqual(afc_agent.prepare(text, afc_agent.PrintJob(ams_mapping="[4,0]"), Snapshot()), text)
