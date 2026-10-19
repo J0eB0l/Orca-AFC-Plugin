@@ -208,6 +208,13 @@ class CommandTest(Case):
             self.assertTrue(self.manager.wait_lane_move(5))
         self.assertNotIn("error", self.manager.state(self.client.url))
 
+    def test_lane_action_proxy_timeout_is_not_an_error(self):
+        # nginx in front of Moonraker answers 504 once a move runs past 60 s; Klipper carries on.
+        self.fake.gcode_gateway_timeout = True
+        self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}), "")
+        self.assertTrue(self.manager.wait_lane_move(5))
+        self.assertNotIn("error", self.manager.state(self.client.url))
+
     def test_lane_action_printing(self):
         self.fake.objects["print_stats"]["state"] = "printing"
         self.assertEqual(self.manager.lane_action(self.client, {"lane": "lane1", "action": "load"}),

@@ -11,7 +11,7 @@ import threading
 import time
 
 from . import protocol
-from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
+from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
 from .protocol import AFCError, Snapshot
 
 # How long a spool's flow K is trusted before it is read again. AFC autocal only
@@ -239,6 +239,8 @@ class AFCManager:
                 # A timeout only means Klipper is still at it; anything else is worth saying.
                 if "timed out" not in str(error):
                     self._move_error = "%s: %s" % (lane, error)
+            except GatewayTimeout:
+                pass    # the same, from a proxy in front of Moonraker
             except MoonrakerError as error:
                 self._move_error = "%s: %s" % (lane, error)
             finally:

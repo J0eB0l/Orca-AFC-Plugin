@@ -29,6 +29,10 @@ class PrinterUnreachable(MoonrakerError):
     """No answer at all: wrong address, printer off, network down."""
 
 
+class GatewayTimeout(MoonrakerError):
+    """A proxy in front of Moonraker (nginx gives up after 60 s) stopped waiting; Klipper is still at it."""
+
+
 def base_url(print_host: str) -> str:
     """"192.168.1.20", "printer.local:7125/", "https://x" -> a URL with a scheme
     and no trailing slash. Empty when there is no host."""
@@ -60,7 +64,7 @@ class Moonraker:
             with self._open(request, timeout=timeout or self.timeout, context=_ssl_context(self.url)) as answer:
                 raw = answer.read()
         except urllib.error.HTTPError as error:
-            raise MoonrakerError(_http_error_message(error)) from None
+            raise (GatewayTimeout if error.code == 504 else MoonrakerError)(_http_error_message(error)) from None
         except urllib.error.URLError as error:
             raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error.reason)) from None
         except (OSError, ValueError) as error:

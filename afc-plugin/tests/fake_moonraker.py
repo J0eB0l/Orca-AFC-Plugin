@@ -19,6 +19,7 @@ class FakeMoonraker:
     webcams   the /server/webcams/list webcams
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
+    gcode_gateway_timeout  True to answer G-code calls 504, as nginx in front of Moonraker does past 60 s
     info      the /printer/info result
     uploads   files uploaded to the gcodes root, by name
     metadata  /server/files/metadata results by file name (404 for any other)
@@ -37,6 +38,7 @@ class FakeMoonraker:
         self.proxy = True
         self.gcode_error = ""
         self.gcode_delay = 0.0
+        self.gcode_gateway_timeout = False
         self.api_key = ""
         self.info = {"state": "ready", "hostname": "voron", "software_version": "v0.12.0-500"}
         self.uploads = {}
@@ -91,6 +93,8 @@ class FakeMoonraker:
             self.scripts.append(body.get("script"))
             if self.gcode_delay:
                 time.sleep(self.gcode_delay)
+            if self.gcode_gateway_timeout:
+                return 504, {}
             if self.gcode_error:
                 return 400, {"error": {"code": 400, "message": self.gcode_error}}
             return 200, {"result": "ok"}

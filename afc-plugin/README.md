@@ -10,7 +10,9 @@ you can:
 - start and stop drying on an ACE, ACE 2 Pro, AMS 2 Pro or AMS HT;
 - see each spool's flow K, which AFC autocal saves in Spoolman.
 
-It talks to Moonraker over HTTP.
+It talks to Moonraker over HTTP. A lane move that outlasts a web proxy's wait
+(nginx in front of Moonraker gives up after 60 s) keeps running on the printer
+and is not reported as an error.
 
 The plugin also has an **AFC G-code** step that fits each exported or uploaded
 Klipper file to AFC:
