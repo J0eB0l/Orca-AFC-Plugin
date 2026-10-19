@@ -25,10 +25,13 @@ class AmsTest(unittest.TestCase):
         self.assertEqual((first["id"], first["info"], len(first["tray"]), len(second["tray"])), ("0", "0001", 4, 3))
         t0 = first["tray"][0]
         self.assertEqual((t0["tray_info_idx"], t0["tray_color"], t0["remain"]), ("GFL99", "FF8800FF", 25))
+        self.assertEqual(t0["remain_g"], 250)
+        self.assertTrue(ams["calibrate_remain_flag"])  # OrcaSlicer draws spool fill only with it
         self.assertEqual(first["tray"][1]["tray_slot_placeholder"], "1")  # lane2 holds nothing
         t6 = second["tray"][2]
         self.assertEqual((t6["id"], t6["tray_type"], t6["cols"]), ("2", "PETG", ["FF0000FF", "0000FFFF"]))
         self.assertNotIn("remain", t6)  # no weight from AFC
+        self.assertNotIn("remain_g", t6)
 
     def test_loaded_tray_reading_and_spool(self):
         snap = Snapshot(present=True, current_lane="lane5", lanes=[

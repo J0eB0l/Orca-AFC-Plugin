@@ -189,6 +189,8 @@ def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None
     left = remaining(lane)
     if left >= 0:
         tray["remain"] = left
+        # The AFC build of OrcaSlicer draws the share left on any spool that has it, and checks a print fits.
+        tray["remain_g"] = int(round(lane.weight))
     # 0 for none: OrcaSlicer keeps a tray's last K when the field is missing.
     tray["k"] = max(lane.flow_k, 0.0)
     if lane.extruder_index >= 0:
@@ -288,8 +290,10 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             entry["humidity"] = "0"  # an AMS shows a humidity level 1-5 (5 when not sent)
         units.append(entry)
     now = "%d" % shown.tray(current_tray(snapshot))
+    # calibrate_remain_flag: OrcaSlicer draws how full each spool is only while the printer says it tracks it.
     return {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits,
-            "tray_now": now, "tray_tar": now, "tray_reading_bits": "%X" % reading_bits}
+            "tray_now": now, "tray_tar": now, "tray_reading_bits": "%X" % reading_bits,
+            "calibrate_remain_flag": True}
 
 
 def mapping_from_print(ams_mapping: str, ams_mapping2: str, filaments: int, shown: Layout | None = None) -> dict:

@@ -161,6 +161,7 @@ class FileSettings:
     chamber_control: bool = False  # "Support controlling chamber temperature"
     chamber_on: list = field(default_factory=list)  # activate_chamber_temp_control per filament
     chamber_temps: list = field(default_factory=list)  # chamber_temperature per filament, °C
+    afc: bool | None = None  # the printer's AFC box (afc_enabled); None when the file does not say
 
     @classmethod
     def from_config(cls, config: dict) -> "FileSettings":
@@ -189,6 +190,7 @@ class FileSettings:
             chamber_control=_on(config, "support_chamber_temp_control"),
             chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
             chamber_temps=_ints(config.get("chamber_temperature", "")),
+            afc=_on(config, "afc_enabled") if "afc_enabled" in config else None,
         )
 
     @property

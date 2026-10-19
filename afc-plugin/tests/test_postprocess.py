@@ -78,6 +78,21 @@ class PostProcessTest(unittest.TestCase):
         self.assertIn("left as it is, without AFC", postprocess.process_file(self.path, {}, lambda key: None))
         self.assertEqual(self.read(), text)
 
+    def test_afc_box_ticked_purges_while_the_printer_is_off(self):
+        self.write(BODY + CONFIG.replace("; flush", "; afc_enabled = 1\n; flush") % "klipper")
+        message = postprocess.process_file(self.path, {"printer_url": closed_port_url()}, None, timeout=10)
+        # The box says AFC does the lane changes, so they get its purges without the printer.
+        self.assertEqual(self.read().splitlines()[3], "T1 PURGE_LENGTH=" + PURGE)
+        self.assertIn("1 lane-change purges", message)
+        self.assertIn("(without AFC:", message)
+
+    def test_afc_box_off_leaves_the_file_without_asking(self):
+        text = BODY + CONFIG.replace("; flush", "; afc_enabled = 0\n; flush") % "klipper"
+        self.write(text)
+        self.assertIn("AFC box is off", postprocess.process_file(self.path, {}, lambda key: None))
+        self.assertEqual(self.read(), text)
+        self.assertEqual(self.fake.requests, [])
+
     def test_other_flavors_untouched(self):
         text = BODY + CONFIG % "marlin2"
         self.write(text)

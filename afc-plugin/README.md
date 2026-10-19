@@ -52,7 +52,9 @@ Klipper file to AFC:
 It reads AFC from the printer for which toolhead each T number feeds and its
 spool's K. A printer without AFC, or one that does not answer, gets its file as
 it was sliced: nothing above is added or dropped. Other G-code flavors are left
-as they are.
+as they are. In the AFC build of OrcaSlicer, the printer settings' **AFC** box
+decides instead: a ticked printer gets AFC's purges even while it is off, and an
+unticked one is left alone without being asked.
 
 ## Install
 
@@ -66,9 +68,17 @@ as they are.
 Installing a newer `orca_afc.whl` replaces the old one. Keep the file name as it
 is: OrcaSlicer names the plugin after the file.
 
+The AFC build of OrcaSlicer ships the plugin and installs it at its first start,
+and again when a newer build ships a newer plugin. A newer `orca_afc.whl`
+installed by hand stays until the build ships one newer still.
+
 To turn on the G-code step, switch OrcaSlicer to Advanced mode, open the process
 settings, **Others**, and pick **AFC G-code** under **Slicing Pipeline Plugin**.
 It runs on **Export G-code** and on uploads to the printer (not on the preview).
+In the AFC build of OrcaSlicer it runs for every printer with the **AFC** box
+ticked (printer settings, **Basic information**, **Advanced**), without picking
+it. OrcaSlicer ticks the box itself when a Klipper printer answers with AFC, once
+per printer preset; untick it if AFC is removed from the printer.
 
 ## Printer agent
 
@@ -91,6 +101,9 @@ tab, filament sync and print dialog. To use it:
    its row. Then switch the agent and restart OrcaSlicer: until the restart, no
    agent can use the printer.
 
+In the AFC build of OrcaSlicer, a printer with the **AFC** box ticked uses this
+agent without either step, unless another agent is picked for it.
+
 Then:
 
 - The **Device** tab shows the printer, with AFC's lanes as its AMS trays: one
@@ -110,6 +123,9 @@ Then:
   The AFC build also shows the chamber's temperature when Klipper has a
   heater_generic, temperature_sensor or temperature_fan named with chamber,
   cavity, enclosure or cabinet.
+  Each tray shows how full its spool is from AFC's weight (the share of the
+  spool's starting weight, 1000 g when Spoolman has none); the AFC build draws
+  it on any spool, official OrcaSlicer only in the print dialog's tray list.
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
   named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a

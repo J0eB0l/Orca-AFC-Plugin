@@ -59,14 +59,18 @@ def process_file(path: str, config: dict, value, timeout: float = READ_TIMEOUT) 
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
     if not settings.klipper:
         return "AFC G-code: not a Klipper file, left as it is"
+    if settings.afc is False:
+        return "AFC G-code: the printer's AFC box is off, left as it is"
     snapshot, why = read_afc(config, value, timeout)
-    if snapshot is None:
+    # A printer with its AFC box ticked gets AFC's purges even while it is off; without the box, a printer
+    # that does not answer with AFC gets its file as sliced.
+    if snapshot is None and not settings.afc:
         return "AFC G-code: left as it is, without AFC: " + why
     result = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, None, settings), settings)
     if result.text != text:
         with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
             f.write(result.text)
-    return "AFC G-code: " + result.summary()
+    return "AFC G-code: " + result.summary() + (" (without AFC: %s)" % why if snapshot is None else "")
 
 
 class AFCGcode(orca.slicing.SlicingPipelineCapabilityBase):
