@@ -3021,6 +3021,8 @@ void GUI_App::init_plugin_gui_wiring()
 
     // why: a newly loaded plugin only adds a selectable agent
     // refresh the dropdown and leave the live agent alone
+    // Orca: except when the selected printer has no live agent and this plugin now serves its agent
+    // (the plugin was reloaded or updated): bring it back, as choosing the printer again would
     auto refresh_printer_agent_dropdown_after_load = [](const std::string&)
     {
         if (!wxTheApp)
@@ -3032,8 +3034,16 @@ void GUI_App::init_plugin_gui_wiring()
 
         app->CallAfter([app]
         {
-            if (!app->is_closing())
-                app->refresh_printer_agent_dropdown();
+            if (app->is_closing())
+                return;
+            app->refresh_printer_agent_dropdown();
+            NetworkAgent* agent = app->getAgent();
+            if (agent && !agent->get_printer_agent() && app->preset_bundle && app->plater()) {
+                const std::string id = app->resolve_printer_agent_id(
+                    app->preset_bundle->printers.get_edited_preset().config.opt_string("printer_agent"));
+                if (NetworkAgentFactory::is_printer_agent_registered(id))
+                    app->switch_printer_agent();
+            }
         });
     };
 
