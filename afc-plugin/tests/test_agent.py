@@ -343,7 +343,12 @@ class StatusTest(Case):
         status = self.push()
         self.assertEqual((status["ams"]["tray_now"], status["hw_switch_state"]), ("4", 1))
         self.fake.webhook["status:"]["AFC"]["system"]["current_load"] = None
+        # The tray that left is named with the switch off first, so OrcaSlicer clears its path.
         status = self.push(2)
+        self.assertEqual((status["ams"]["tray_now"], status["ams"]["tray_tar"], status["hw_switch_state"]),
+                         ("4", "4", 0))
+        self.agent._printer.release_until = 0.0
+        status = self.push(3)
         self.assertEqual((status["ams"]["tray_now"], status["hw_switch_state"]), ("255", 0))
 
     def test_presets_read_again_when_syncing(self):
@@ -355,6 +360,38 @@ class StatusTest(Case):
         self.assertTrue(self.agent.fetch_filament_info(self.dev_id, "Subscription"))
         tray = self.calls.messages("print", "push_status")[-1]["ams"]["ams"][0]["tray"][1]
         self.assertEqual(tray["tray_info_idx"], "P_PETG")
+
+
+class ReleaseTrayTest(unittest.TestCase):
+    def setUp(self):
+        self.printer = afc_agent._Printer("1.2.3.4:7125", None, "")
+
+    def release(self, now, clock, switch=None):
+        out = {"ams": {"tray_now": now, "tray_tar": now}, "hw_switch_state": switch if switch is not None else int(now != "255")}
+        afc_agent.release_tray(out, self.printer, clock)
+        return out["ams"]["tray_now"], out["ams"]["tray_tar"], out["hw_switch_state"]
+
+    def test_another_tray_waits_for_the_one_that_left(self):
+        self.assertEqual(self.release("4", 0.0), ("4", "4", 1))
+        self.assertEqual(self.release("9", 5.0), ("4", "4", 0))
+        self.assertEqual(self.release("9", 5.0 + afc_agent.TRAY_RELEASE_S), ("9", "9", 1))
+        self.assertEqual(self.printer.drawn_tray, "9")
+
+    def test_the_same_tray_back_ends_the_release(self):
+        self.release("4", 0.0)
+        self.assertEqual(self.release("255", 1.0), ("4", "4", 0))
+        self.assertEqual(self.release("4", 2.0), ("4", "4", 1))
+        self.assertIsNone(self.printer.release_until)
+        # A later unload gets its own full release.
+        self.assertEqual(self.release("255", 100.0), ("4", "4", 0))
+        self.assertEqual(self.release("255", 100.0 + afc_agent.TRAY_RELEASE_S), ("255", "255", 0))
+        self.assertEqual(self.printer.drawn_tray, "")
+
+    def test_nothing_loaded_names_nothing(self):
+        self.assertEqual(self.release("255", 0.0), ("255", "255", 0))
+        out = {"hw_switch_state": 0}
+        afc_agent.release_tray(out, self.printer, 1.0)
+        self.assertEqual(out, {"hw_switch_state": 0})
 
 
 class LostTest(Case):

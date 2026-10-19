@@ -50,6 +50,7 @@ PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
+TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
 
 # What OrcaSlicer sends as the access code when the printer's API key is empty.
 NO_ACCESS_CODE = "88888888"
@@ -339,6 +340,28 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
+def release_tray(out: dict, printer, clock: float) -> None:
+    """OrcaSlicer clears a tray's path to the extruder only on a push that names
+    the tray with the filament switch off, as a Bambu printer reports an unload
+    before its tray_now goes to 255; a push with 255 leaves the path drawn. So
+    the tray that left the toolhead is still named, switched off, for
+    TRAY_RELEASE_S before `out` (push_status()'s "print") says what is there
+    now. `printer` keeps the tray drawn and when its release ends."""
+    ams = out.get("ams")
+    if not isinstance(ams, dict) or "tray_now" not in ams:
+        return
+    left = printer.drawn_tray
+    if left and ams["tray_now"] != left:
+        if printer.release_until is None:
+            printer.release_until = clock + TRAY_RELEASE_S
+        if clock < printer.release_until:
+            ams["tray_now"] = ams["tray_tar"] = left
+            out["hw_switch_state"] = 0
+            return
+    printer.release_until = None
+    printer.drawn_tray = ams["tray_now"] if out.get("hw_switch_state") == 1 else ""
+
+
 # ------------------------------------------------------------------ the print file
 
 
@@ -455,6 +478,8 @@ class _Printer:
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
     camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
     camera_due: float = 0.0                           # when to read the webcam list again
+    drawn_tray: str = ""                              # the tray the Device tab draws in the toolhead
+    release_until: float = None                       # when release_tray() stops naming a tray that left
 
 
 def spool_key(lane) -> tuple:
@@ -699,8 +724,10 @@ else:
                 dry_filaments = dict(printer.dry_filaments)
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
             self._camera(printer)
-            self._send(printer, push_status(status, snapshot, ids, extras, reading, printer.lights, job,
-                                            printer.by_unit, dry_filaments, printer.chamber))
+            message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
+                                  printer.by_unit, dry_filaments, printer.chamber)
+            release_tray(message["print"], printer, time.monotonic())
+            self._send(printer, message)
 
         def _job(self, printer: _Printer, filename) -> dict:
             """job_info() of the file being printed, read once per file, and
