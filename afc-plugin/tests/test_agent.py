@@ -539,6 +539,49 @@ class DeviceTabTest(Case):
         self.assertEqual(self.agent.get_camera_stream_mode(), orca.printer_agent.CameraStreamMode.HTTP_SNAPSHOT)
         self.assertEqual(self.agent.get_camera_url(), self.fake.url + "/webcam/snapshot.jpg")
 
+    def test_swap_times_from_afcs_log_and_stats(self):
+        self.fake.logs["AFC.log"] = "".join("lane1 is now loaded in toolhead t:%d\n" % v for v in (30, 31, 90))
+        self.fake.afc_stats = {"average_time": {"tool_load": 9000, "tool_unload": 0, "tool_swap": 0,
+                                                "new_average_calc": 1},
+                               "extruder": {"change_count": {"tool_load": 100, "tool_unload": 0, "tool_selected": 0}}}
+        self.connect()
+        self.assertEqual(self.push()["swap_times"], {"load": 31.0})
+        self.assertIn(("GET", "/server/database/item", {}), self.fake.requests)
+
+    def test_toolhead_nozzle_sizes_from_klippers_config(self):
+        self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},
+                                                        "extruder2": {"nozzle_diameter": 0.6},
+                                                        "extruder_stepper x": {"nozzle_diameter": 9.0},
+                                                        "heater_bed": {"max_temp": 120}}}
+        self.connect()
+        self.assertEqual(self.push()["toolhead_nozzles"], [0.4, 0.0, 0.6])
+
+    def test_runout_lanes_are_refill_groups(self):
+        afc = self.fake.webhook["status:"]["AFC"]
+        afc["Turtle_1"]["lane1"]["runout_lane"] = "lane2"
+        afc["Turtle_1"]["lane2"]["runout_lane"] = "NONE"
+        self.connect()
+        push = self.push()
+        self.assertEqual((push["filam_bak"], push["support_filament_backup"]), ([0b11], True))
+        self.assertTrue(push["home_flag"] & afc_agent.AUTO_REFILL)
+
+    def test_no_swap_times_without_changes(self):
+        self.connect()
+        push = self.push()
+        self.assertNotIn("swap_times", push)
+        self.assertNotIn("toolhead_nozzles", push)  # Klipper's config has none
+        self.assertEqual(push["filam_bak"], [])  # no runout lanes
+        self.assertFalse(push["home_flag"] & afc_agent.AUTO_REFILL)
+        self.assertEqual(push["agent_message"], {})
+
+    def test_afcs_message_on_the_device_tab(self):
+        self.fake.objects["AFC"]["message"] = {"message": "lane2 failed to load", "type": "error"}
+        self.connect()
+        self.assertEqual(self.push()["agent_message"], {"text": "lane2 failed to load", "type": "error"})
+        self.assertEqual(self.send({"print": {"command": "clear_agent_message", "sequence_id": "7"}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_CLEAR_MESSAGE"])
+
     def test_lamp(self):
         self.fake.objects["led main_led"] = {"color_data": [[0.0, 0.0, 0.0, 1.0]]}
         self.connect()

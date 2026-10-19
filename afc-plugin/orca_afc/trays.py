@@ -296,6 +296,43 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             "calibrate_remain_flag": True}
 
 
+def _refill_bit(tray: int):
+    """The bit of a tray id in Bambu's refill group masks, None past them:
+    trays 0-15 and 24-27 at their own bit, AMS HT units at 16-23."""
+    if 0 <= tray <= 15 or 24 <= tray <= 27:
+        return tray
+    if HT_ID <= tray < HT_ID + MAX_HT:
+        return 16 + tray - HT_ID
+    return None
+
+
+def refill_groups(snapshot: Snapshot, shown: Layout) -> list:
+    """AFC's runout lanes as Bambu's auto refill groups ("filam_bak"): a mask
+    of the trays of each set of lanes that run out onto one another, as far as
+    the masks reach. The print dialog lists them under "Auto Refill"."""
+    lanes = {lane.name: lane for lane in snapshot.lanes}
+    parent = {}
+
+    def root(name):
+        while parent.get(name, name) != name:
+            name = parent[name]
+        return name
+
+    linked = set()
+    for lane in snapshot.lanes:
+        if lane.runout_lane in lanes and lane.runout_lane != lane.name:
+            parent[root(lane.name)] = root(lane.runout_lane)
+            linked |= {lane.name, lane.runout_lane}
+    groups = {}  # root lane -> (tray bits, lanes with a tray)
+    for tool, lane in sorted(lanes_by_tray(snapshot).items()):
+        bit = _refill_bit(shown.tray(tool)) if lane.name in linked else None
+        if bit is not None:
+            bits, names = groups.setdefault(root(lane.name), (set(), set()))
+            bits.add(bit)
+            names.add(lane.name)
+    return [sum(1 << bit for bit in bits) for bits, names in groups.values() if len(names) > 1]
+
+
 def mapping_from_print(ams_mapping: str, ams_mapping2: str, filaments: int, shown: Layout | None = None) -> dict:
     """The print dialog's choice as file filament -> AFC T number. The
     dialog sends one entry per project filament: a tray id in ams_mapping,

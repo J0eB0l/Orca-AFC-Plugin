@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import controls, gcode, presets, protocol, trays
+from . import controls, gcode, presets, protocol, swaptimes, trays
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, base_url, opens_without_key
 from .protocol import AFCError
@@ -50,6 +50,8 @@ PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
+STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
+NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
 
 # What OrcaSlicer sends as the access code when the printer's API key is empty.
@@ -73,6 +75,7 @@ STAGE_CREATE, STAGE_UPLOAD, STAGE_SENDING = 0, 1, 3
 # home_flag bits: the storage OrcaSlicer prints from (bits 8-9, 1 = normal), and
 # the print dialog's flow and pressure advance calibration switches.
 SD_CARD_NORMAL = 1 << 8
+AUTO_REFILL = 1 << 10  # the printer goes on with a refill group's next tray when one runs out
 FLOW_CALIBRATION = 1 << 15
 PA_CALIBRATION = 1 << 16
 # flag3 bit: the printer takes up to 32 filaments. Without it the print dialog
@@ -211,6 +214,18 @@ def _number(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def toolhead_nozzles(settings) -> list:
+    """Each toolhead's nozzle_diameter from Klipper's configfile settings, by
+    extruder number (extruder, extruder1, ...), 0 for a number it lacks."""
+    sizes = {}
+    for name, section in (settings.items() if isinstance(settings, dict) else ()):
+        number = re.fullmatch(r"extruder(\d*)", name)
+        size = _number(section.get("nozzle_diameter")) if number and isinstance(section, dict) else None
+        if size:
+            sizes[int(number.group(1) or 0)] = float(size)
+    return [sizes.get(i, 0.0) for i in range(max(sizes) + 1)] if sizes else []
+
+
 def job_info(metadata, filename: str, url: str) -> dict:
     """What the Device tab shows of a print besides Klipper's status, from
     Moonraker's metadata for its file: the slicer's time estimate, the layer
@@ -251,13 +266,16 @@ def _layers(state: str, stats: dict, position, job: dict):
 
 
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
-                by_unit: bool = False, dry_filaments=None, chamber: str = "") -> dict:
+                by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
+                nozzles=()) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
     (trays.ams_json()), `lights` are the printer's lights, which the lamp
-    shows, `job` the print file's job_info() and `chamber` the Klipper
-    object that reads the chamber's temperature (controls.find_chamber())."""
+    shows, `job` the print file's job_info(), `chamber` the Klipper object
+    that reads the chamber's temperature (controls.find_chamber()),
+    `swap_times` AFC's measured change times (swaptimes.Tracker.times()) and
+    `nozzles` each toolhead's nozzle size (toolhead_nozzles())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -286,12 +304,20 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_tray_k": True,
         # ... and takes the drying popup on the units with a dryer (trays.ams_json()).
         "support_remote_dry": True,
+        # AFC's runout lanes, as Bambu's auto refill groups below.
+        "support_filament_backup": True,
         # The print dialog's switches, which only a U1 has a use for (its print_task_config).
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
         # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
         "support_chamber": bool(chamber),
     }
+    if swap_times:
+        # The AFC build of OrcaSlicer puts these in the printer's load, unload and tool change times on a sync.
+        out["swap_times"] = dict(swap_times)
+    if nozzles:
+        # ... and its print dialog checks the file's toolheads and nozzle sizes against them.
+        out["toolhead_nozzles"] = list(nozzles)
     nozzle = obj(str(toolhead.get("extruder") or "extruder"))
     bed = obj("heater_bed")
     for key, source, name in (("nozzle_temper", nozzle, "temperature"), ("nozzle_target_temper", nozzle, "target"),
@@ -337,6 +363,14 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # path to the extruder. Never with no tray (255), which OrcaSlicer reads as the external spool.
         now = out["ams"].get("tray_now")
         out["hw_switch_state"] = 1 if now not in (None, "%d" % trays.NO_TRAY) else 0
+        groups = trays.refill_groups(snapshot, trays.layout(snapshot, by_unit))
+        # Always sent, so a runout lane taken off leaves OrcaSlicer's groups too.
+        out["filam_bak"] = groups
+        if groups:
+            out["home_flag"] |= AUTO_REFILL
+        # The AFC build of OrcaSlicer shows AFC's oldest error or warning on the Device tab, where Clear
+        # sends clear_agent_message. Always sent, so a cleared message leaves the Device tab too.
+        out["agent_message"] = {"text": snapshot.message, "type": snapshot.message_type} if snapshot.message else {}
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -481,6 +515,10 @@ class _Printer:
     camera_due: float = 0.0                           # when to read the webcam list again
     drawn_tray: str = ""                              # the tray the Device tab draws in the toolhead
     release_until: float = None                       # when release_tray() stops naming a tray that left
+    swap: object = field(default_factory=swaptimes.Tracker)  # AFC's measured change times
+    stats_due: float = 0.0                            # when to read them again
+    nozzles: list = field(default_factory=list)       # toolhead_nozzles() of Klipper's config
+    nozzles_due: float = 0.0                          # when to read them again
 
 
 def spool_key(lane) -> tuple:
@@ -725,8 +763,11 @@ else:
                 dry_filaments = dict(printer.dry_filaments)
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
             self._camera(printer)
+            self._swap_times(printer)
+            self._nozzles(printer)
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
-                                  printer.by_unit, dry_filaments, printer.chamber)
+                                  printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
+                                  printer.nozzles)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -761,6 +802,37 @@ else:
                 return
             with self._lock:
                 printer.camera = camera
+
+        def _swap_times(self, printer: _Printer) -> None:
+            """AFC's change times (swaptimes.py): AFC.log once a connection, its
+            stats every STATS_EVERY s."""
+            if time.monotonic() < printer.stats_due:
+                return
+            printer.stats_due = time.monotonic() + STATS_EVERY
+            if not printer.swap.seeded:
+                try:
+                    printer.swap.seed(printer.client.log_tail("AFC.log", swaptimes.LOG_TAIL))
+                except MoonrakerError:
+                    printer.swap.seeded = True  # no log: only the changes seen while connected count
+            try:
+                printer.swap.update(printer.client.database_namespace("afc_stats"))
+            except MoonrakerError:
+                pass
+
+        def _nozzles(self, printer: _Printer) -> None:
+            """The toolheads' nozzle sizes, read every NOZZLES_EVERY s; a failed read keeps the last."""
+            if time.monotonic() < printer.nozzles_due:
+                return
+            printer.nozzles_due = time.monotonic() + NOZZLES_EVERY
+            try:
+                answer = printer.client.objects_query({"configfile": ["settings"]})
+            except MoonrakerError:
+                return
+            try:
+                settings = answer["status"]["configfile"]["settings"]
+            except (KeyError, TypeError):
+                return
+            printer.nozzles = toolhead_nozzles(settings) or printer.nozzles
 
         def _kept_k(self, printer: _Printer, snapshot) -> None:
             """Gives each lane with no Spoolman spool the K set for it in the tray
@@ -876,6 +948,8 @@ else:
                 self._run(printer, "SET_HEATER_TEMPERATURE HEATER=%s TARGET=%d" % (heater, job["target_temp"]))
             elif command == "home":
                 self._run(printer, "G28")
+            elif command == "clear_agent_message":
+                self._run(printer, "AFC_CLEAR_MESSAGE", push=True)
             elif command == "ams_filament_setting":
                 return self._filament_setting(printer, job)
             elif command == "extrusion_cali_set":

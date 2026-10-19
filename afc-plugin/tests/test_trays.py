@@ -154,6 +154,26 @@ class UnitLayoutTest(unittest.TestCase):
         self.assertEqual((shown.tool(3, 0), shown.tray(12)), (12, 12))
 
 
+class RefillGroupTest(unittest.TestCase):
+    def test_runout_chains_by_t_number(self):
+        snap = Snapshot(present=True, lanes=[loaded("lane1", 0, runout_lane="lane2"), loaded("lane2", 1, runout_lane="lane3"),
+                                             loaded("lane3", 5), loaded("lane4", 2), loaded("lane5", 20, runout_lane="lane4"),
+                                             loaded("lane6", 3, runout_lane="nowhere")])
+        # lane1 -> lane2 -> lane3 is one group; lane5's tray 20 is past Bambu's masks, which leaves lane4 alone.
+        self.assertEqual(trays.refill_groups(snap, trays.layout(snap)), [0b100011])
+
+    def test_by_unit_groups_reach_ams_ht_units(self):
+        snap = units_snapshot()
+        snap.find_lane("lane1").runout_lane = "lane12"
+        snap.find_lane("ace3").runout_lane = "extruder1"
+        shown = trays.layout(snap, by_unit=True)
+        # lane1 is tray 0 and lane12 the HT at 130 (bit 18); ace3 is tray 7 and extruder1 the HT at 128 (bit 16).
+        self.assertEqual(sorted(trays.refill_groups(snap, shown)), [(1 << 16) | (1 << 7), (1 << 18) | 1])
+
+    def test_no_runout_lanes(self):
+        self.assertEqual(trays.refill_groups(units_snapshot(), trays.layout(units_snapshot())), [])
+
+
 class MappingTest(unittest.TestCase):
     def test_tray_ids(self):
         self.assertEqual(trays.mapping_from_print("[4, 0, -1]", "", 3), {0: 4, 1: 0})

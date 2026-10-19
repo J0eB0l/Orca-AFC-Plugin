@@ -126,6 +126,10 @@ Then:
   Each tray shows how full its spool is from AFC's weight (the share of the
   spool's starting weight, 1000 g when Spoolman has none); the AFC build draws
   it on any spool, official OrcaSlicer only in the print dialog's tray list.
+  A lane and its runout lanes (AFC's `runout_lane`) are one of OrcaSlicer's
+  auto refill groups: **Auto Refill** on the Device tab and the print dialog's
+  tip list them. In the AFC build, AFC's oldest error or warning shows under
+  the print's progress until **Clear** (AFC_CLEAR_MESSAGE) or AFC drops it.
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
   named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a
@@ -137,6 +141,12 @@ Then:
   `flow_k`), which the slice uses over the preset's. This needs the AFC build of
   OrcaSlicer; official OrcaSlicer 2.5 picks the best fitting existing preset, or
   the generic one of the material.
+  In the AFC build, sync also puts the lane load, lane unload and tool swap
+  times AFC measured into the printer's load, unload and tool change times, so
+  the time estimate counts the printer's own changes. They are the median of
+  the last 25 changes AFC.log and Moonraker's `afc_stats` name, sent once three
+  of a kind are known; **Change times from AFC** in the printer settings' AFC
+  group turns this off.
 - On the Device tab, a tray's edit popup lists the printer's presets and sets
   the lane's color and material; the preset picked there is what sync uses
   until the lane gets another spool. In the AFC build of OrcaSlicer the popup
@@ -169,7 +179,11 @@ Then:
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds
   (and drops a U1's chamber lines), uploads the file to Moonraker and starts it.
   On a Snapmaker U1, the dialog's bed leveling, flow calibration and timelapse
-  switches go into the file. In the AFC build of OrcaSlicer the dialog also has
+  switches go into the file. In the AFC build the dialog warns when a spool
+  (with its runout lanes) has less filament left than the print uses, when the
+  file prints with more toolheads than Klipper's config has, and when a
+  toolhead's `nozzle_diameter` differs from the preset's; **Check spools before
+  printing** and **Check toolheads before printing** turn these off. In the AFC build of OrcaSlicer the dialog also has
   **Upload**, which does the same without starting the print. **Send** in the menu
   next to **Print plate** uploads the file as sliced, with no tray choice.
 

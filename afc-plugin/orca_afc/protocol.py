@@ -51,6 +51,7 @@ class Lane:
     status: str = ""          # AFC lane status text ("Ready", "Loaded", ...)
     td: str = ""              # TD-1 transmission distance, when scanned
     flow_k: float = -1.0      # pressure advance K saved on the Spoolman spool, -1 when none
+    runout_lane: str = ""     # the lane AFC goes on with when this one runs out, "" for none
 
     @property
     def has_filament(self) -> bool:
@@ -117,6 +118,8 @@ class Snapshot:
     lanes: list = field(default_factory=list)  # [Lane], unit order
     u1_print: U1PrintOptions = field(default_factory=U1PrintOptions)
     top_cover: bool = False   # a U1 reports its top cover (filter and exhaust fan) attached
+    message: str = ""         # AFC's oldest queued error or warning, until AFC_CLEAR_MESSAGE
+    message_type: str = ""    # "error" or "warning"
 
     def find_lane(self, name: str) -> Lane | None:
         return next((lane for lane in self.lanes if lane.name == name), None)
@@ -295,6 +298,8 @@ def _fill_lane(st: dict, lane: Lane) -> None:
         lane.tool_loaded = True
     lane.status = _str(st, "status")
     lane.td = _str(st, "td1_td")
+    runout = _str(st, "runout_lane")
+    lane.runout_lane = "" if runout.upper() == "NONE" else runout
 
 
 def _read_afc_object(afc: dict, out: Snapshot) -> None:
@@ -311,6 +316,14 @@ def _read_afc_object(afc: dict, out: Snapshot) -> None:
         out.extruders = _string_list(extruders)
     elif isinstance(extruders, dict):
         out.extruders = list(extruders.keys())
+    _read_message(afc, out)
+
+
+def _read_message(afc: dict, out: Snapshot) -> None:
+    message = afc.get("message")
+    if isinstance(message, dict):
+        out.message = _str(message, "message").strip()
+        out.message_type = _str(message, "type") if out.message else ""
 
 
 def _read_u1_print_options(status: dict, out: Snapshot) -> None:
@@ -396,7 +409,7 @@ def afc_object_query() -> dict:
     print_task_config switches and whether its top cover is on. A printer
     without those objects answers them with null fields (see
     _read_u1_print_options)."""
-    return {"AFC": ["multiple_tool_mapping"],
+    return {"AFC": ["multiple_tool_mapping", "message"],
             "print_task_config": ["auto_bed_leveling", "flow_calibrate", "time_lapse_camera"],
             "purifier": ["power_detected"]}
 
@@ -412,6 +425,8 @@ def merge_afc_object(status, out: Snapshot) -> None:
     afc = st.get("AFC")
     if isinstance(afc, dict) and afc.get("multiple_tool_mapping") is not None:
         out.multiple_mapping = _bool(afc, "multiple_tool_mapping")
+    if isinstance(afc, dict):
+        _read_message(afc, out)
 
 
 def lane_object_names(objects_list, lane_names: list) -> list:

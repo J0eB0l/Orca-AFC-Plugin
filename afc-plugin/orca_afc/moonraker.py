@@ -51,24 +51,28 @@ class Moonraker:
         self.timeout = timeout
         self._open = opener or urllib.request.urlopen
 
-    def _request(self, method: str, path: str, body=None, timeout=None):
-        data = None
-        headers = {"Accept": "application/json"}
-        if body is not None:
-            data = json.dumps(body).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+    def _fetch(self, method: str, path: str, data=None, headers=None, timeout=None) -> bytes:
+        headers = dict(headers or {})
         if self.api_key:
             headers["X-Api-Key"] = self.api_key
         request = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
         try:
             with self._open(request, timeout=timeout or self.timeout, context=_ssl_context(self.url)) as answer:
-                raw = answer.read()
+                return answer.read()
         except urllib.error.HTTPError as error:
             raise (GatewayTimeout if error.code == 504 else MoonrakerError)(_http_error_message(error)) from None
         except urllib.error.URLError as error:
             raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error.reason)) from None
         except (OSError, ValueError) as error:
             raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error)) from None
+
+    def _request(self, method: str, path: str, body=None, timeout=None):
+        data = None
+        headers = {"Accept": "application/json"}
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        raw = self._fetch(method, path, data, headers, timeout)
         try:
             answer = json.loads(raw.decode("utf-8") or "null")
         except ValueError:
@@ -97,6 +101,13 @@ class Moonraker:
 
     def database_namespace(self, namespace: str):
         return self.get("/server/database/item", {"namespace": namespace})
+
+    def log_tail(self, name: str, size: int, timeout: float = 10.0) -> str:
+        """The last `size` bytes of a file in Moonraker's logs folder (AFC.log)."""
+        raw = self._fetch("GET", "/server/files/logs/" + urllib.parse.quote(name),
+                          headers={"Range": "bytes=-%d" % size}, timeout=timeout)
+        # A server that ignores Range sends the whole file.
+        return raw[-size:].decode("utf-8", "replace")
 
     def gcode(self, script: str, timeout: float = 60.0):
         # A lane load can run for a while before Klipper answers.

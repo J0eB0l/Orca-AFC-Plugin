@@ -132,7 +132,7 @@ class AFCObjectTest(unittest.TestCase):
     def test_multiple_mapping(self):
         s = parsed()
         self.assertFalse(s.multiple_mapping)
-        self.assertEqual(p.afc_object_query()["AFC"], ["multiple_tool_mapping"])
+        self.assertEqual(p.afc_object_query()["AFC"], ["multiple_tool_mapping", "message"])
         p.merge_afc_object({"eventtime": 1.0, "status": {"AFC": {"multiple_tool_mapping": True}}}, s)
         self.assertTrue(s.multiple_mapping)
         self.assertEqual(len(s.lanes), 4)
@@ -143,6 +143,17 @@ class AFCObjectTest(unittest.TestCase):
         self.assertTrue(s.multiple_mapping)
         p.merge_afc_object({"AFC": {"multiple_tool_mapping": False}}, s)
         self.assertFalse(s.multiple_mapping)
+
+    def test_message(self):
+        s = parsed()
+        self.assertEqual((s.message, s.message_type), ("", ""))
+        p.merge_afc_object({"status": {"AFC": {"message": {"message": " lane2 failed to load\n", "type": "error"}}}}, s)
+        self.assertEqual((s.message, s.message_type), ("lane2 failed to load", "error"))
+        # An older AFC without the field leaves it; AFC_CLEAR_MESSAGE empties it.
+        p.merge_afc_object({"status": {"AFC": {"multiple_tool_mapping": True}}}, s)
+        self.assertEqual(s.message, "lane2 failed to load")
+        p.merge_afc_object({"status": {"AFC": {"message": {"message": "", "type": ""}}}}, s)
+        self.assertEqual((s.message, s.message_type), ("", ""))
 
     def test_u1_print_options(self):
         s = parsed()

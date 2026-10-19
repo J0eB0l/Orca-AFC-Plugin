@@ -1,6 +1,7 @@
 """A Moonraker stand-in on localhost that answers the calls the AFC tab makes."""
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -14,6 +15,8 @@ class FakeMoonraker:
     webhook   the /printer/afc/status result, or None for a 404 (no webhook)
     objects   Klipper objects by name, for /printer/objects/query and /list
     lane_data the lane_data namespace's value, or None for a 404
+    afc_stats the afc_stats namespace's value, or None for a 404
+    logs      files in Moonraker's logs folder by name, served with Range: bytes=-N
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     spool_fields  Spoolman's extra spool fields (/v1/field/spool)
     webcams   the /server/webcams/list webcams
@@ -32,6 +35,8 @@ class FakeMoonraker:
         self.webhook = None
         self.objects = {}
         self.lane_data = None
+        self.afc_stats = None
+        self.logs = {}       # Moonraker's logs folder: name -> text
         self.spools = {}
         self.spool_fields = []
         self.webcams = []
@@ -86,9 +91,17 @@ class FakeMoonraker:
                     status[name] = {f: obj.get(f) for f in fields} if fields else dict(obj)
             return 200, {"result": {"eventtime": 1.0, "status": status}}
         if method == "GET" and path == "/server/database/item":
-            if query.get("namespace") != "lane_data" or self.lane_data is None:
+            value = {"lane_data": self.lane_data, "afc_stats": self.afc_stats}.get(query.get("namespace"))
+            if value is None:
                 return 404, {"error": {"code": 404, "message": "Namespace '%s' not found" % query.get("namespace")}}
-            return 200, {"result": {"namespace": "lane_data", "key": None, "value": self.lane_data}}
+            return 200, {"result": {"namespace": query["namespace"], "key": None, "value": value}}
+        if method == "GET" and path.startswith("/server/files/logs/"):
+            text = self.logs.get(urllib.parse.unquote(path[len("/server/files/logs/"):]))
+            if text is None:
+                return 404, {"error": {"code": 404, "message": "No file"}}
+            raw = text.encode("utf-8")
+            tail = re.fullmatch(r"bytes=-(\d+)", headers.get("Range") or "")
+            return (206, raw[-int(tail.group(1)):]) if tail else (200, raw)
         if method == "POST" and path == "/printer/gcode/script":
             self.scripts.append(body.get("script"))
             if self.gcode_delay:
@@ -157,10 +170,10 @@ def _handler(fake):
             query = dict(urllib.parse.parse_qsl(parts.query))
             fake.requests.append((method, parts.path, body))
             code, answer = fake.answer(method, parts.path, query, body, self.headers)
-            raw = json.dumps(answer).encode("utf-8")
+            raw = answer if isinstance(answer, bytes) else json.dumps(answer).encode("utf-8")
             try:
                 self.send_response(code)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", "text/plain" if isinstance(answer, bytes) else "application/json")
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
