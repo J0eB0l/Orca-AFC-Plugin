@@ -88,6 +88,7 @@ public:
     std::optional<TraySpool> spool;               // Orca: the spool on the tray, as a printer agent describes it
     int             toolhead = -1;                // Orca: the toolhead the tray feeds, as a printer agent reports it (-1 = not known)
     int             tool = -1;                    // Orca: the tool (T number) a printer agent's tray is, which filament sync orders by (-1 = not known)
+    bool            in_tool = false;              // Orca: a printer agent's tray loaded in its own toolhead, which may not be the active one
     int             hold_count = 0;
     int             remain = 0;         // filament remain: 0 ~ 100
 

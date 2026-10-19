@@ -207,6 +207,7 @@ struct Caninfo
     float           k = 0.0f;
     float           n = 0.0f;
     std::vector<wxColour> material_cols;
+    bool            in_tool = false; // Orca: loaded in its own toolhead, as a printer agent reports it
 
 public:
     bool operator==(const Caninfo& other) const
@@ -221,7 +222,8 @@ public:
             filament_id == other.filament_id &&
             k == other.k &&
             n == other.n &&
-            material_cols == other.material_cols)
+            material_cols == other.material_cols &&
+            in_tool == other.in_tool)
         {
             return true;
         }

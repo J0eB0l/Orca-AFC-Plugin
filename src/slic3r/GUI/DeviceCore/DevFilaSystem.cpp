@@ -836,7 +836,7 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             // state when a previously empty slot receives a filament again.
                             curr_tray->is_slot_placeholder = tray_it->contains("tray_slot_placeholder");
                             // Orca: a printer agent may name the tray's filament preset, describe its spool and
-                            // say which toolhead the tray feeds and which tool it is.
+                            // say which toolhead the tray feeds, which tool it is and whether that tool holds it.
                             auto preset_it = tray_it->find("filament_preset");
                             curr_tray->filament_preset = preset_it != tray_it->end() && preset_it->is_string() ? preset_it->get<std::string>() : std::string();
                             curr_tray->spool = parse_tray_spool(*tray_it);
@@ -844,6 +844,8 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             curr_tray->toolhead = toolhead_it != tray_it->end() && toolhead_it->is_number_integer() ? toolhead_it->get<int>() : -1;
                             auto tool_it = tray_it->find("tool");
                             curr_tray->tool = tool_it != tray_it->end() && tool_it->is_number_integer() ? tool_it->get<int>() : -1;
+                            auto in_tool_it = tray_it->find("in_tool");
+                            curr_tray->in_tool = in_tool_it != tray_it->end() && in_tool_it->is_boolean() && in_tool_it->get<bool>();
                             int ams_id_int = 0;
                             int tray_id_int = 0;
                             try

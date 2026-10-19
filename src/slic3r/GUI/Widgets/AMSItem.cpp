@@ -136,6 +136,7 @@ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, 
                         info.material_remain = it->second->remain;
                     }
                 }
+                info.in_tool = it->second->in_tool;
 
 
             } else {
@@ -2264,6 +2265,11 @@ void AMSRoadUpPart::doRender(wxDC& dc)
             dc.SetPen(wxPen(_get_diff_clr(this, m_amsinfo.cans[m_load_slot_index].material_colour), 4, wxPENSTYLE_SOLID));
             dc.DrawLine((size.x / 2), (0), (size.x / 2), (size.y));
         }
+        else if (!m_amsinfo.cans.empty() && m_amsinfo.cans[0].in_tool) {
+            // Orca: a tray a printer agent has in its own toolhead shows loaded, though that toolhead is not the active one.
+            dc.SetPen(wxPen(_get_diff_clr(this, m_amsinfo.cans[0].material_colour), 4, wxPENSTYLE_SOLID));
+            dc.DrawLine((size.x / 2), (0), (size.x / 2), (size.y));
+        }
     }
     else{
         auto x_start = FromDIP(40);
@@ -2277,6 +2283,14 @@ void AMSRoadUpPart::doRender(wxDC& dc)
         x -= width;
         dc.DrawLine((x_start), (height), (x), (height));
         dc.DrawLine((size.x / 2), (height), (size.x / 2), (size.y));
+
+        // Orca: a tray a printer agent has in its own toolhead, which may not be the active one, shows its road out of the AMS.
+        for (int i = 0; i < 4 && i < int(m_amsinfo.cans.size()); i++) {
+            if (m_amsinfo.cans[i].in_tool) {
+                dc.SetPen(wxPen(_get_diff_clr(this, m_amsinfo.cans[i].material_colour), 4, wxPENSTYLE_SOLID));
+                dc.DrawLine((x_start + i * width), (0), (x_start + i * width), (height));
+            }
+        }
 
         dc.SetPen(wxPen(_get_diff_clr(this, m_amsinfo.cans[m_load_slot_index].material_colour), 4, wxPENSTYLE_SOLID));
         auto temp = m_amsinfo;
