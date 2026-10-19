@@ -473,6 +473,12 @@ void AmsMapingPopup::update_title(MachineObject* obj)
     size_t nozzle_nums = full_config.option<ConfigOptionFloatsNullable>("nozzle_diameter")->values.size();
     if (nozzle_nums > 1) {
         m_split_line_panel->Show();
+        // Orca: a printer that reports one extruder for a multi-toolhead preset, such as a toolchanger
+        // behind a printer agent, can feed any tray to any toolhead, so no nozzle is named.
+        if (obj && obj->GetExtderSystem()->GetTotalExtderCount() < 2) {
+            m_title_text->SetLabelText(_L("Please select the lane for this filament."));
+            return;
+        }
         if (m_show_type == ShowType::LEFT) {
             wxString nozzle_name = obj ? _L(DevPrinterConfigUtil::get_toolhead_display_name(
                 obj->printer_type, DEPUTY_EXTRUDER_ID, ToolHeadComponent::Nozzle, ToolHeadNameCase::LowerCase)) : _L("left nozzle");
