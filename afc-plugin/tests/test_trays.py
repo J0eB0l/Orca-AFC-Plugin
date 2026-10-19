@@ -51,6 +51,12 @@ class AmsTest(unittest.TestCase):
         self.assertEqual(first[0]["toolhead"], 2)
         self.assertNotIn("toolhead", first[1])  # AFC names no extruder for it
 
+    def test_a_lane_in_its_toolhead_shows_loaded(self):
+        snap = Snapshot(present=True, current_lane="lane1", lanes=[
+            loaded("lane1", 0, tool_loaded=True), loaded("lane2", 1, tool_loaded=True), loaded("lane3", 2)])
+        first = trays.ams_json(snap, {})["ams"][0]["tray"]
+        self.assertEqual([t.get("in_tool") for t in first[:3]], [True, True, None])  # lane2 in a docked tool
+
     def test_nothing_loaded_is_tray_255(self):
         snap = Snapshot(present=True, lanes=[loaded("lane1", 0)])
         self.assertEqual(trays.ams_json(snap, {})["tray_now"], "255")

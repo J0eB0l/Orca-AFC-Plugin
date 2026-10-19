@@ -193,6 +193,9 @@ def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None
     if lane.extruder_index >= 0:
         # The AFC build of OrcaSlicer keeps it per filament at sync, for "Purge in prime tower".
         tray["toolhead"] = lane.extruder_index
+    if lane.tool_loaded:
+        # The AFC build of OrcaSlicer shows it loaded, in a docked tool too.
+        tray["in_tool"] = True
     tray.update(extra or {})
     return tray
 

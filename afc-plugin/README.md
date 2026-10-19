@@ -130,7 +130,8 @@ Then:
   spool in, reads its tag and measures it, as on an insert, and refuses while
   one of its lanes is in a toolhead. The lane in the active
   toolhead shows its filament path to the extruder, as a Bambu printer's loaded
-  tray does. Official OrcaSlicer 2.5 then refuses the refresh buttons while a
+  tray does; in the AFC build, a lane in a docked tool shows its road out of
+  the unit in its color. Official OrcaSlicer 2.5 then refuses the refresh buttons while a
   lane is loaded, as on a Bambu printer; the AFC build does not. **Load** and
   **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
   Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
