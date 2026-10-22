@@ -120,7 +120,8 @@ Then:
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
   dries cooler (an ACE's 55 °C) dries at its most. A unit that is not
   connected cannot start; in the AFC build the popup says so. AFC units that would need
-  more than four AMS beside AMS HT units (or eight AMS HT) are shown by T number.
+  more than seven AMS, more than five beside AMS HT units, more than four AMS HT
+  beside five AMS, or more than eight AMS HT are shown by T number.
   The AFC build also shows the chamber's temperature when Klipper has a
   heater_generic, temperature_sensor or temperature_fan named with chamber,
   cavity, enclosure or cabinet.

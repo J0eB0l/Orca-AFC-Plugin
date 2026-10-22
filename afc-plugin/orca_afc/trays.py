@@ -28,9 +28,9 @@ from .protocol import Dryer, Lane, Snapshot, tool_number
 MAX_TRAY = 30
 NO_TRAY = 0xFF
 # An AMS HT's bits sit at 4 + n (unit) and 16 + n (tray) for unit id 128 + n,
-# so four-tray units beside them keep ids 0-3.
+# so beside more than four four-tray units the HT ids start past their trays' bits.
 HT_ID, MAX_HT = 128, 8
-MAX_BOXES, MAX_BOXES_WITH_HT = 7, 4
+MAX_BOXES = 7
 # AMS types in a unit's "info": an AMS, an AMS Lite, an AMS 2 Pro, an AMS HT.
 AMS, AMS_LITE, AMS_2_PRO, AMS_HT = 1, 2, 3, 4
 LITE = "lite"  # a Bambu unit's ams_model for an AMS Lite
@@ -146,11 +146,12 @@ def _unit_boxes(snapshot: Snapshot, trays: dict):
             singles += [(tool, name) for tool in tools]
         else:
             boxes += [(tools[i:i + 4], name) for i in range(0, len(tools), 4)]
-    if len(singles) > MAX_HT or len(boxes) > (MAX_BOXES_WITH_HT if singles else MAX_BOXES):
+    first_ht = max(0, 4 * len(boxes) - 16) if singles else 0
+    if len(boxes) > MAX_BOXES or first_ht + len(singles) > MAX_HT:
         return None
     aliases = {tool: own[lane.name] for tool, lane in trays.items() if own[lane.name] != tool}
     return ([Box(i, tools, name) for i, (tools, name) in enumerate(boxes)] +
-            [Box(HT_ID + i, [tool], name) for i, (tool, name) in enumerate(sorted(singles))]), aliases
+            [Box(HT_ID + first_ht + i, [tool], name) for i, (tool, name) in enumerate(sorted(singles))]), aliases
 
 
 def _color(hex_color: str) -> str:
@@ -259,6 +260,7 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
         return {"ams": [], "ams_exist_bits": "0", "tray_exist_bits": "0"}
     extras, dry_filaments = extras or {}, dry_filaments or {}
     shown = layout(snapshot, by_unit)
+    hts = [box for box in shown.boxes if box.single]
     units, ams_bits, tray_bits, reading_bits = [], 0, 0, 0
     for box in shown.boxes:
         unit = snapshot.find_unit(box.unit) if box.unit else None
@@ -286,6 +288,9 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             # A toolchanger's tool shows its extruder's name, not "AMS HT".
             tool_lane = trays[box.tools[0]]
             entry["unit_name"] = tool_lane.extruder or tool_lane.name
+        elif box.single and box.ams_id != HT_ID + hts.index(box):
+            # OrcaSlicer numbers an AMS HT by its id, which starts later beside five four-tray units.
+            entry["unit_name"] = "AMS HT-%d" % (hts.index(box) + 1)
         if dryer is not None:
             entry.update(dryer_json(dryer, dry_filaments.get(box.unit, "")))
         elif box.single:

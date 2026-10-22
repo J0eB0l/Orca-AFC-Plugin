@@ -160,9 +160,27 @@ class UnitLayoutTest(unittest.TestCase):
         snap.units.append(Unit("Lite", "BambuAMS", ["lite1", "lite2", "lite3"], model="lite"))
         self.assertEqual(trays.ams_json(snap, {}, by_unit=True)["ams"][2]["info"], "0001")
 
+    def test_five_units_of_four_beside_ams_ht_units(self):
+        # The HT ids start at 132, past the fifth unit's tray bits 16-19.
+        snap = units_snapshot()
+        for n, first in ((2, 13), (3, 17), (4, 21)):
+            names = ["t%d_%d" % (n, i) for i in range(4)]
+            snap.lanes += [loaded(name, first + i, unit="Turtle_%d" % n) for i, name in enumerate(names)]
+            snap.units.append(Unit("Turtle_%d" % n, "Box_Turtle", names))
+        ams = trays.ams_json(snap, {}, reading={12}, by_unit=True)
+        self.assertEqual([u["id"] for u in ams["ams"]], ["0", "1", "2", "3", "4", "132", "133", "134"])
+        # Unit bits 0-4 and 8-10, tray bits 0-19 and 20-22, the lane12 HT spinning on bit 22.
+        self.assertEqual((ams["ams_exist_bits"], ams["tray_exist_bits"], ams["tray_reading_bits"]),
+                         ("71F", "7FFFFF", "400000"))
+        # OrcaSlicer would number them AMS HT-5 on; a toolchanger's tools keep their extruder's name.
+        self.assertEqual([u.get("unit_name") for u in ams["ams"][5:]], ["extruder1", "extruder2", "AMS HT-3"])
+        shown = trays.layout(snap, by_unit=True)
+        self.assertEqual((shown.tray(12), shown.tool_of_tray(134), shown.tray(24), shown.tool(4, 3)), (134, 12, 19, 24))
+        self.assertEqual(ams["tray_now"], "133")  # extruder2, T5
+
     def test_t_numbers_when_the_units_do_not_fit(self):
         snap = units_snapshot()
-        for n in range(2, 5):  # five units of several lanes beside the HTs, one more than fits
+        for n in range(2, 6):  # six units of several lanes beside the HTs, one more than fits
             names = ["t%d_%d" % (n, i) for i in range(2)]
             snap.lanes += [loaded(name, 13 + 2 * (n - 2) + i, unit="Turtle_%d" % n) for i, name in enumerate(names)]
             snap.units.append(Unit("Turtle_%d" % n, "Box_Turtle", names))
