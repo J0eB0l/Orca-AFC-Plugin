@@ -85,6 +85,7 @@ class Unit:
     type: str = ""
     lanes: list = field(default_factory=list)  # lane names in AFC order
     dryer: Dryer | None = None
+    model: str = ""           # a Bambu unit's ams_model, e.g. "lite", from its own Klipper object
 
 
 @dataclass
@@ -579,7 +580,8 @@ def dryer_objects_query(snapshot: Snapshot) -> dict:
 
 
 def merge_dryer_status(status, out: Snapshot) -> None:
-    """Read an objects query answer for dryer_objects_query() into the units."""
+    """Read an objects query answer for dryer_objects_query() into the units,
+    and a Bambu unit's model with it."""
     st = status["status"] if isinstance(status, dict) and isinstance(status.get("status"), dict) else status
     if not isinstance(st, dict):
         return
@@ -610,6 +612,7 @@ def merge_dryer_status(status, out: Snapshot) -> None:
             if "ERROR" in state:
                 d.note = "Dryer reports " + d.state
         elif _is_bambu(prefix):
+            unit.model = _str(o, "ams_model")
             if "has_heater" in o and not _bool(o, "has_heater"):
                 continue  # AMS 1 / AMS lite: no heater
             d.kind = "bambu"

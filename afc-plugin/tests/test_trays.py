@@ -143,6 +143,23 @@ class UnitLayoutTest(unittest.TestCase):
                          ["Turtle_1-1", "Turtle_1-2", "Ace_1"])
         self.assertNotIn("unit_name", trays.ams_json(snap, {})["ams"][0])  # by T number
 
+    def test_an_ams_lite_of_four_lanes_is_drawn_as_one(self):
+        snap = units_snapshot()
+        names = ["lite%d" % i for i in range(1, 5)]
+        snap.lanes += [loaded(name, 12 + i, unit="Lite") for i, name in enumerate(names, 1)]
+        snap.units.append(Unit("Lite", "BambuAMS", names, model="lite"))
+        lite = trays.ams_json(snap, {}, by_unit=True)["ams"][2]
+        self.assertEqual((lite["info"], lite["unit_name"], [t["tool"] for t in lite["tray"]]),
+                         ("0002", "Lite", [13, 14, 15, 16]))
+        self.assertEqual(trays.ams_json(snap, {})["ams"][3]["info"], "0001")  # by T number: no unit
+
+    def test_an_ams_lite_of_fewer_lanes_is_an_ams(self):
+        # OrcaSlicer draws no trays for an AMS Lite that does not have four.
+        snap = units_snapshot()
+        snap.lanes += [loaded("lite%d" % i, 12 + i, unit="Lite") for i in range(1, 4)]
+        snap.units.append(Unit("Lite", "BambuAMS", ["lite1", "lite2", "lite3"], model="lite"))
+        self.assertEqual(trays.ams_json(snap, {}, by_unit=True)["ams"][2]["info"], "0001")
+
     def test_t_numbers_when_the_units_do_not_fit(self):
         snap = units_snapshot()
         for n in range(2, 5):  # five units of several lanes beside the HTs, one more than fits

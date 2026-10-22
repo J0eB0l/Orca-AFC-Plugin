@@ -13,7 +13,7 @@ four trays (ids 0-7, a tray id being unit * 4 + slot) and one-tray AMS HT units
   its own AMS, four to one, and a unit with one lane, or a toolchanger's tool,
   an AMS HT. A unit with a dryer is an AMS 2 Pro (one lane: an AMS HT), which
   shows its humidity and takes OrcaSlicer's drying popup; one without is an AMS
-  that shows no humidity.
+  that shows no humidity. A Bambu AMS Lite of four lanes is drawn as one.
 """
 
 from __future__ import annotations
@@ -31,8 +31,9 @@ NO_TRAY = 0xFF
 # so four-tray units beside them keep ids 0-3.
 HT_ID, MAX_HT = 128, 8
 MAX_BOXES, MAX_BOXES_WITH_HT = 7, 4
-# AMS types in a unit's "info": an AMS, an AMS 2 Pro, an AMS HT.
-AMS, AMS_2_PRO, AMS_HT = 1, 3, 4
+# AMS types in a unit's "info": an AMS, an AMS Lite, an AMS 2 Pro, an AMS HT.
+AMS, AMS_LITE, AMS_2_PRO, AMS_HT = 1, 2, 3, 4
+LITE = "lite"  # a Bambu unit's ams_model for an AMS Lite
 DRYING, HEATING = 2, 1  # the dry status and sub status OrcaSlicer reads in "info"
 DRY_DISCONNECTED = 100  # the AFC build of OrcaSlicer's "cannot dry" reason for a unit not connected
 TOOLCHANGER = "Toolchanger"  # AFC's unit type for a toolchanger's tools
@@ -273,6 +274,9 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
                 reading_bits |= 1 << bit
             slots.append(tray_json(slot, lane, filament_ids.get(tool, ""), extras.get(tool), tool))
         kind = AMS_HT if box.single else AMS_2_PRO if dryer is not None else AMS
+        # OrcaSlicer draws an AMS Lite's four trays in a square, and none at all for fewer.
+        if kind == AMS and unit is not None and unit.model == LITE and len(box.tools) == 4:
+            kind = AMS_LITE
         # "info": the AMS type, on the first extruder, and its dryer's state.
         info = kind | ((DRYING << 4 | HEATING << 22) if dryer is not None and dryer.drying else 0)
         entry = {"id": str(box.ams_id), "info": "%04X" % info, "tray": slots}

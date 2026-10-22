@@ -364,9 +364,12 @@ class DryerTest(unittest.TestCase):
         self.assertEqual((ht.drying, ht.duration_s, ht.note), (True, 720 * 60, "spools turning"))
         self.assertIsNone(s.find_unit("Turtle_1").dryer)
 
-        # A Bambu AMS without a heater (AMS 1) has no dryer: the row is skipped, not cleared.
-        p.merge_dryer_status({"AFC_BambuAMS Bambu_AMS_1": {"has_heater": False}}, s)
+        self.assertEqual((s.find_unit("Bambu_AMS_1").model, s.find_unit("Ace2_1").model), ("ams2", ""))
+
+        # A Bambu AMS without a heater (AMS 1, AMS Lite) has no dryer: the row is skipped, not cleared.
+        p.merge_dryer_status({"AFC_BambuAMS Bambu_AMS_1": {"has_heater": False, "ams_model": "lite"}}, s)
         self.assertIsNotNone(s.find_unit("Bambu_AMS_1").dryer)
+        self.assertEqual(s.find_unit("Bambu_AMS_1").model, "lite")  # its model is still read
         self.assertEqual(p.to_json(s)["units"][0]["dryer"]["kind"], "ace")
 
     def test_first_ace_minutes_and_cap(self):
