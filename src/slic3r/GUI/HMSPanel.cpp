@@ -291,7 +291,7 @@ void AgentLogPanel::show_problems(const std::vector<MachineObject::AgentLogProbl
     for (const MachineObject::AgentLogProblem& problem : problems) {
         auto row  = new wxBoxSizer(wxHORIZONTAL);
         auto icon = new wxStaticBitmap(m_problems_list, wxID_ANY,
-                                       create_scaled_bitmap(problem.error ? "hms_notify_lv1" : "hms_notify_lv3", this, 18));
+                                       create_scaled_bitmap(problem.error ? "hms_notify_lv1" : "hms_notify_lv2", this, 18));
         auto time = new Label(m_problems_list, Label::Body_13, from_u8(problem.time));
         time->SetForegroundColour(grey);
         auto text = new Label(m_problems_list, Label::Body_13, from_u8(problem.text));
