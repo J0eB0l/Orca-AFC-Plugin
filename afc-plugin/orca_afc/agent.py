@@ -446,6 +446,7 @@ class PrintJob:
     flow_calibrate: bool = False
     time_lapse: bool = False
     start: bool = True
+    stored: str = ""  # a file already on the printer (start_sdcard_print), by its path in the gcodes root
 
     @classmethod
     def from_params(cls, params, start: bool = True) -> "PrintJob":
@@ -454,6 +455,9 @@ class PrintJob:
                    ams_mapping=str(params.ams_mapping or ""), ams_mapping2=str(params.ams_mapping2 or ""),
                    bed_level=bool(params.task_bed_leveling), flow_calibrate=bool(params.task_flow_cali),
                    time_lapse=bool(params.task_record_timelapse), start=start)
+
+
+_U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
 def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
@@ -468,7 +472,11 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
         text = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, mapping, settings), settings).text
     if snapshot is not None and snapshot.u1_print.present:
         options = protocol.U1PrintOptions(True, job.bed_level, job.flow_calibrate, job.time_lapse)
-        text = gcode.insert_after_header(text, protocol.u1_file_print_options_gcode(options))
+        line = protocol.u1_file_print_options_gcode(options)
+        # A file printed before already has the line: it takes this print's switches.
+        text, found = _U1_OPTIONS_LINE.subn(line, text, count=1)
+        if not found:
+            text = gcode.insert_after_header(text, line)
     return text
 
 
@@ -1156,7 +1164,12 @@ else:
             return self._print(PrintJob.from_params(params), update_fn, cancel_fn)
 
         def start_sdcard_print(self, params, update_fn, cancel_fn):
-            return FAILED  # printing a file already on the printer is not something this agent offers
+            # Print on the Device tab's Storage page: a file already on the printer, on the dialog's trays.
+            job = PrintJob.from_params(params)
+            job.stored = str(params.dst_file or "")
+            if not job.stored:
+                return ERR_FILE_NOT_EXIST
+            return self._print(job, update_fn, cancel_fn)
 
         def _print(self, job: PrintJob, update_fn, cancel_fn) -> int:
             """Hand the print to the worker and wait here, on OrcaSlicer's job
@@ -1195,8 +1208,8 @@ else:
         def _send_print(self, printer: _Printer, job: PrintJob, progress: _Progress, canceled) -> int:
             progress.set(STAGE_CREATE, 0, "Preparing...")
             try:
-                data = plate_gcode(job.filename, job.plate)
-            except (OSError, zipfile.BadZipFile, KeyError):
+                data = printer.client.download(job.stored) if job.stored else plate_gcode(job.filename, job.plate)
+            except (OSError, zipfile.BadZipFile, KeyError, MoonrakerError):
                 data = None
             if data is None:
                 return ERR_FILE_NOT_EXIST
@@ -1204,23 +1217,29 @@ else:
             snapshot = self._manager.read(printer.client)
             if snapshot is not None:
                 self._kept_k(printer, snapshot)
-            text = prepare(data.decode("utf-8", "surrogateescape"), job, snapshot, printer.by_unit)
-            name = upload_name(job.project, job.plate)
+            original = data.decode("utf-8", "surrogateescape")
+            text = prepare(original, job, snapshot, printer.by_unit)
+            name = job.stored or upload_name(job.project, job.plate)
             if canceled.is_set():
                 return ERR_CANCELED
-            progress.set(STAGE_UPLOAD, 0, "0%")
+            # A stored file is written again only when this print changes it, and never under a running print.
+            if job.stored and text != original and printer.client.print_state() in ("printing", "paused"):
+                return ERR_START_FAILED
+            if not job.stored or text != original:
+                progress.set(STAGE_UPLOAD, 0, "0%")
 
-            def sent(done, total):
-                if canceled.is_set():
-                    return False
-                percent = int(done * 100 / total) if total else 100
-                progress.set(STAGE_UPLOAD, percent, "%d%%" % percent)
-                return True
+                def sent(done, total):
+                    if canceled.is_set():
+                        return False
+                    percent = int(done * 100 / total) if total else 100
+                    progress.set(STAGE_UPLOAD, percent, "%d%%" % percent)
+                    return True
 
-            try:
-                printer.client.upload(name, text.encode("utf-8", "surrogateescape"), sent)
-            except MoonrakerError:
-                return ERR_CANCELED if canceled.is_set() else ERR_UPLOAD_FAILED
+                folder, _, base = name.rpartition("/")
+                try:
+                    printer.client.upload(base, text.encode("utf-8", "surrogateescape"), sent, folder=folder)
+                except MoonrakerError:
+                    return ERR_CANCELED if canceled.is_set() else ERR_UPLOAD_FAILED
             if not job.start:
                 return SUCCESS
             if canceled.is_set():

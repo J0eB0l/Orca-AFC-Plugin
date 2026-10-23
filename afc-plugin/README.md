@@ -178,8 +178,14 @@ Then:
   other is set up.
 - In the AFC build, the Device tab's **Storage** page lists the printer's G-code
   files under **Model**, with their thumbnails, print time and weight, and the
-  moonraker-timelapse videos under **Timelapse**. Files download and delete there,
-  and **Print** on a G-code file starts it as it is, after asking.
+  moonraker-timelapse videos under **Timelapse**. Files download and delete there.
+  **Print** on a G-code file OrcaSlicer sliced opens the print dialog with the
+  file's filaments, so they can go to other trays: the agent renumbers the file
+  for the trays picked, writes it back over the stored file when that changes it
+  (never while the printer is printing) and starts it. The file keeps a
+  `; AFC filament tools = 4,0` line saying which T number prints each filament,
+  so it can be renumbered again. Any other G-code file starts as it is, after
+  asking.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

@@ -797,6 +797,57 @@ class PrintTest(Case):
         code, _ = self.start(self.print_params())
         self.assertEqual(code, afc_agent.ERR_START_FAILED)
 
+    def stored(self, **values):
+        # Print on the Device tab's Storage page: the file on the printer, the dialog's trays.
+        self.fake.stored.setdefault("parts/cube.gcode", PLATE.encode())
+        values.setdefault("dst_file", "parts/cube.gcode")
+        return self.agent.start_sdcard_print(self.print_params(filename="", **values), lambda *stage: None,
+                                             lambda: False)
+
+    def tools(self, text):
+        return [line.split(" ")[0] for line in text.splitlines() if line[:1] == "T"]
+
+    def test_a_stored_file_prints_on_the_dialogs_trays(self):
+        self.connect()
+        self.assertEqual(self.stored(), 0)
+        text = self.fake.uploads["parts/cube.gcode"].decode()
+        self.assertEqual(self.tools(text), ["T4", "T0"])
+        self.assertIn("PRINT_START TOOL=4", text)
+        self.assertIn("; AFC filament tools = 4,0\n; CONFIG_BLOCK_START", text)
+        self.assertEqual(self.fake.started, ["parts/cube.gcode"])
+
+    def test_a_stored_file_on_its_trays_already_is_not_written_again(self):
+        self.connect()
+        self.stored()
+        self.fake.stored["parts/cube.gcode"] = self.fake.uploads.pop("parts/cube.gcode")
+        self.assertEqual(self.stored(), 0)
+        self.assertEqual(self.fake.uploads, {})
+        self.assertEqual(self.fake.started, ["parts/cube.gcode", "parts/cube.gcode"])
+
+    def test_a_stored_file_goes_to_other_trays(self):
+        self.connect()
+        self.stored()
+        self.fake.stored["parts/cube.gcode"] = self.fake.uploads.pop("parts/cube.gcode")
+        code = self.stored(ams_mapping="[0,4]", ams_mapping2='[{"ams_id":0,"slot_id":0},{"ams_id":1,"slot_id":0}]')
+        self.assertEqual(code, 0)
+        text = self.fake.uploads["parts/cube.gcode"].decode()
+        self.assertEqual(self.tools(text), ["T0", "T4"])
+        self.assertIn("PRINT_START TOOL=0", text)
+        self.assertEqual(text.count("; AFC filament tools = "), 1)
+        self.assertIn("; AFC filament tools = 0,4\n", text)
+
+    def test_a_stored_file_is_not_rewritten_under_a_running_print(self):
+        self.connect()
+        self.fake.objects["print_stats"]["state"] = "printing"
+        self.assertEqual(self.stored(), afc_agent.ERR_START_FAILED)
+        self.assertEqual((self.fake.uploads, self.fake.started), ({}, []))
+
+    def test_a_stored_file_that_is_gone(self):
+        self.connect()
+        self.assertEqual(self.stored(dst_file="gone.gcode"), afc_agent.ERR_FILE_NOT_EXIST)
+        self.assertEqual(self.stored(dst_file=""), afc_agent.ERR_FILE_NOT_EXIST)
+        self.assertEqual((self.fake.uploads, self.fake.started), ({}, []))
+
 
 class FileTest(unittest.TestCase):
     def setUp(self):

@@ -24,9 +24,10 @@ class FakeMoonraker:
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
     gcode_gateway_timeout  True to answer G-code calls 504, as nginx in front of Moonraker does past 60 s
     info      the /printer/info result
-    uploads   files uploaded to the gcodes root, by name
+    uploads   files uploaded to the gcodes root, by path ("folder/name" with an upload's path field)
     metadata  /server/files/metadata results by file name (404 for any other)
     files     paths under the gcodes root that a GET serves (thumbnails)
+    stored    G-code files in the gcodes root by path, served as their bytes
     started   files /printer/print/start was asked to print
     offline   True to answer everything 503, as Moonraker does while Klipper restarts
     """
@@ -49,6 +50,7 @@ class FakeMoonraker:
         self.uploads = {}
         self.metadata = {}
         self.files = set()
+        self.stored = {}
         self.started = []
         self.offline = False
         self.requests = []   # (method, path, body)
@@ -114,8 +116,9 @@ class FakeMoonraker:
         if method == "GET" and path == "/printer/info":
             return 200, {"result": self.info}
         if method == "POST" and path == "/server/files/upload":
-            self.uploads[body["filename"]] = body["data"]
-            return 201, {"result": {"item": {"path": body["filename"], "root": body.get("root")},
+            name = body["path"] + "/" + body["filename"] if body.get("path") else body["filename"]
+            self.uploads[name] = body["data"]
+            return 201, {"result": {"item": {"path": name, "root": body.get("root")},
                                     "action": "create_file"}}
         if method == "GET" and path == "/server/files/metadata":
             meta = self.metadata.get(query.get("filename"))
@@ -123,6 +126,8 @@ class FakeMoonraker:
                 200, {"result": meta})
         if method == "GET" and path.startswith("/server/files/gcodes/"):
             name = urllib.parse.unquote(path[len("/server/files/gcodes/"):])
+            if name in self.stored:
+                return 200, self.stored[name]
             return (200, {"path": name}) if name in self.files else (404, {"error": {"code": 404, "message": "No file"}})
         if method == "POST" and path == "/printer/print/start":
             self.started.append(body.get("filename"))

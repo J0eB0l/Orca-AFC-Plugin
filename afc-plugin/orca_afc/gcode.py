@@ -9,7 +9,10 @@ rewrites the file for what AFC does with it:
   `T<n>` becomes that lane's T number, and so do the tool numbers AFC reads in
   the start G-code: the `T` of `M104` / `M109` (not one with an `A` parameter,
   a Snapmaker extruder number) and `TOOL=`, `INITIAL_TOOL=` and `T<n>_TEMP=`
-  of `PRINT_START` / `START_PRINT`.
+  of `PRINT_START` / `START_PRINT`. A renumbered file says which T number
+  prints each filament in a `; AFC filament tools = 4,0` line before its
+  settings block, so a file already on the printer can be renumbered again
+  for other lanes. A T number two filaments shared stays the first one's.
 - **Lane-change purge.** With "single extruder multi-material" off, a change
   between two lanes that feed one toolhead gets `PURGE_LENGTH=<mm>` on its `T`
   line for AFC's poop: the flushing volume from the filament that toolhead
@@ -73,6 +76,8 @@ _START_TEMP = re.compile(r"(?<=[ \t])T(\d+)_TEMP=", re.I)
 _PA_LINE = re.compile(r"^[ \t]*SET_PRESSURE_ADVANCE(?=[ \t;\r\n]|$)", re.I)
 _PA_VALUE = re.compile(r"(?<=[ \t])ADVANCE=[^ \t;\r\n]*", re.I)
 PA_NOTE = "; AFC spool flow K"
+TOOLS_NOTE = "; AFC filament tools = "
+_TOOLS_LINE = re.compile(r"^; AFC filament tools = ([0-9, ]*)\r?$", re.M)
 _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | re.M)
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
@@ -235,6 +240,15 @@ def filaments_used(text: str) -> list:
     return sorted({int(m.group(1)) for m in _ANY_T_LINE.finditer(text)})
 
 
+def printed_tools(text: str) -> dict:
+    """Filament -> the T number a file prints it as, from the line a
+    renumbering left in it. Empty for a file that prints each filament as its
+    own number."""
+    match = _TOOLS_LINE.search(text)
+    tools = [item.strip() for item in match.group(1).split(",")] if match else []
+    return {filament: int(tool) for filament, tool in enumerate(tools) if tool.isdigit()}
+
+
 def top_cover_mode(settings: FileSettings, used: list) -> str:
     """The U1 top cover mode for a plate printing the filaments `used`, as
     Snapmaker's OrcaSlicer picks it from their softening temperature."""
@@ -360,6 +374,19 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
         cover = top_cover_gcode(settings, used)
         result.top_cover = top_cover_mode(settings, used) + (" with the filter on" if len(cover) > 1 else "")
 
+    # The file's T numbers may be an earlier renumbering's: each names a filament.
+    filament_of = {}
+    for filament, tool in printed_tools(text).items():
+        filament_of.setdefault(tool, filament)
+    numbers = set(filament_of) | set(range(settings.filaments)) | set(plan.tools)
+    renumber = {}         # the file's T number -> the one to print
+    for number in numbers:
+        filament = filament_of.get(number, number)
+        if plan.tools.get(filament, filament) != number:
+            renumber[number] = plan.tools.get(filament, filament)
+    tools = [plan.tools.get(f, f) for f in range(settings.filaments)]
+    record = TOOLS_NOTE + ",".join(str(t) for t in tools) if any(t != f for f, t in enumerate(tools)) else ""
+
     lines = text.splitlines(keepends=True)
     loaded = {}           # toolhead -> filament it holds
     sliced = {}           # the same, by the toolheads the file was sliced with
@@ -375,8 +402,13 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
             if _AUX_FAN_OFF.match(line):
                 continue
         if first == ";":
+            if line.startswith(TOOLS_NOTE):
+                continue  # an earlier renumbering's; this one writes its own
             if line.startswith(CONFIG_START):
                 in_config = True
+                if record:
+                    out.append(record + ("\r\n" if line.endswith("\r\n") else "\n"))
+                    record = ""
             elif line.startswith(CONFIG_END):
                 in_config = False
             elif line.startswith(TOWER_CHANGE_START):
@@ -393,22 +425,23 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
             match = _T_LINE.match(line)
             if match:
                 indent, number, rest = match.group(1), int(match.group(2)), match.group(3)
+                filament = filament_of.get(number, number)
                 result.tool_changes += 1
-                active = number
+                active = filament
                 purge = 0.0
                 sliced_before = -1
-                if settings.tower_flushes and settings.sliced_toolhead(number) >= 0:
-                    sliced_before = sliced.get(settings.sliced_toolhead(number), -1)
-                    sliced[settings.sliced_toolhead(number)] = number
-                if settings.purges and number in plan.toolheads:
-                    head = plan.toolheads[number]
+                if settings.tower_flushes and settings.sliced_toolhead(filament) >= 0:
+                    sliced_before = sliced.get(settings.sliced_toolhead(filament), -1)
+                    sliced[settings.sliced_toolhead(filament)] = filament
+                if settings.purges and filament in plan.toolheads:
+                    head = plan.toolheads[filament]
                     before = loaded.get(head, -1)
-                    loaded[head] = number
+                    loaded[head] = filament
                     # The tower flushed this lane change as sliced, and the mapping kept it.
                     flushed = in_tower_change and before == sliced_before
-                    if before >= 0 and before != number and not flushed:
-                        area = settings.area(number)
-                        volume = settings.flush_volume(head, before, number)
+                    if before >= 0 and before != filament and not flushed:
+                        area = settings.area(filament)
+                        volume = settings.flush_volume(head, before, filament)
                         purge = volume / area if area > 0 else 0.0
                     # What the file had there is replaced, so the line carries only this purge.
                     rest = _PURGE.sub("", rest)
@@ -418,10 +451,10 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 if purge >= 0.05:
                     purge_text = " PURGE_LENGTH=" + _format(purge, 1)
                     result.purges += 1
-                line = "%sT%d%s%s%s" % (indent, plan.tools.get(number, number), purge_text, rest, newline)
+                line = "%sT%d%s%s%s" % (indent, renumber.get(number, number), purge_text, rest, newline)
                 out.append(line)
-                if number in plan.flow_k and not settings.adaptive(number):
-                    out.append("SET_PRESSURE_ADVANCE ADVANCE=%s %s\n" % (_format(plan.flow_k[number], 4), PA_NOTE))
+                if filament in plan.flow_k and not settings.adaptive(filament):
+                    out.append("SET_PRESSURE_ADVANCE ADVANCE=%s %s\n" % (_format(plan.flow_k[filament], 4), PA_NOTE))
                     result.pressure_advance += 1
                 continue
 
@@ -434,11 +467,11 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                         out.pop()
                     fan_off_next = True
                 continue
-        if plan.tools and (first in "Mm") and _TEMP_LINE.match(line):
-            out.append(_renumber_temp_line(line, plan.tools))
+        if renumber and (first in "Mm") and _TEMP_LINE.match(line):
+            out.append(_renumber_temp_line(line, renumber))
             continue
         if first in "PpSs" and _START_LINE.match(line):
-            out.append(_renumber_start_line(line, plan.tools) if plan.tools else line)
+            out.append(_renumber_start_line(line, renumber) if renumber else line)
             if cover:
                 newline = "\r\n" if line.endswith("\r\n") else "\n"
                 out.append(("" if line.endswith("\n") else newline) + newline.join(cover) + newline)

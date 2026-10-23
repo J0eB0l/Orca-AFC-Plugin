@@ -179,6 +179,30 @@ class RenumberTest(unittest.TestCase):
         lines = g.transform("T0\nT2\n" + config_block(), g.Plan(tools={1: 5})).text.splitlines()
         self.assertEqual(lines[:2], ["T0", "T2"])
 
+    def test_a_renumbered_file_says_which_tool_prints_each_filament(self):
+        text = g.transform("T0\nT1\n" + config_block(), g.Plan(tools={0: 4, 1: 2})).text
+        self.assertIn("\n; AFC filament tools = 4,2,2\n; CONFIG_BLOCK_START\n", text)
+        self.assertEqual(g.printed_tools(text), {0: 4, 1: 2, 2: 2})
+
+    def test_renumbered_again_for_other_tools(self):
+        # A file already on the printer, printing filaments 0 and 1 as T4 and T2, goes to T0 and T4.
+        body = "PRINT_START TOOL=4\nT4\nG1 X1 E1\nT2\nG1 X2 E1\n"
+        stored = body + "; AFC filament tools = 4,2,2\n" + config_block()
+        plan = g.Plan(tools={1: 4}, toolheads={0: 0, 1: 0})
+        text = g.transform(stored, plan).text
+        lines = text.splitlines()
+        self.assertEqual(lines[:2], ["PRINT_START TOOL=0", "T0"])
+        # Still the file's filament 0 -> 1 purge.
+        self.assertEqual(lines[3], "T4 PURGE_LENGTH=%s" % g._format(100 / area(1.75), 1))
+        self.assertEqual(g.printed_tools(text), {0: 0, 1: 4, 2: 2})
+        self.assertEqual(text.count("; AFC filament tools"), 1)
+
+    def test_back_on_its_own_numbers_the_file_drops_the_line(self):
+        stored = "T4\n; AFC filament tools = 4,1,2\n" + config_block()
+        text = g.transform(stored, g.Plan()).text
+        self.assertEqual(text.splitlines()[0], "T0")
+        self.assertNotIn("AFC filament tools", text)
+
 
 class PressureAdvanceTest(unittest.TestCase):
     def test_spool_k_after_its_tool_change(self):
