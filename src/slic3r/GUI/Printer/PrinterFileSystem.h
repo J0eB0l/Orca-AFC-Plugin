@@ -49,6 +49,7 @@ class PrinterFileSystem : public wxEvtHandler, public boost::enable_shared_from_
         FILE_UPLOAD           = 0x0005,
         REQUEST_MEDIA_ABILITY = 0x0007,
         FILE_PRINT            = 0x0010, // a Moonraker printer starts a G-code file (MoonrakerFileTunnel)
+        FILE_INFO             = 0x0011, // a Moonraker printer's G-code file: what the print dialog shows of it
         NOTIFY_FIRST          = 0x0100,
         LIST_CHANGE_NOTIFY    = 0x0100,
         LIST_RESYNC_NOTIFY    = 0x0101,
@@ -218,6 +219,10 @@ public:
 
     // Starts a Moonraker printer's G-code file; the callback has the printer's reason when it refuses.
     void PrintFile(size_t index, Callback<std::string> const &callback);
+
+    // A Moonraker printer's G-code file as MoonrakerFileTunnel's FILE_INFO JSON: its filaments, print
+    // time and weight. FetchModelCancel() cancels it.
+    void FetchFileInfo(size_t index, Callback<std::string> const &callback);
 
     size_t GetCount() const;
 

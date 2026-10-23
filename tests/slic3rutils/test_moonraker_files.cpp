@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <cmath>
 #include <map>
 #include <string>
 #include <utility>
@@ -253,4 +254,78 @@ TEST_CASE("Print starts a G-code file, and a refusal carries Moonraker's reason"
     REQUIRE(refused.size() == 1);
     CHECK(refused[0].root["result"] != 0);
     CHECK(refused[0].root["reply"]["message"] == "Printer is busy");
+}
+
+TEST_CASE("A G-code file's info has the filaments its end says it prints", "[MoonrakerFiles]")
+{
+    // The end of a Klipper file OrcaSlicer wrote: its settings block, then what each filament used.
+    std::string const end = "; CONFIG_BLOCK_START\n"
+                            "; filament_colour = #FF0000;\"#00FF00\";#0000FF\n"
+                            "; filament_type = PLA;PETG;PLA\n"
+                            "; filament_vendor = \"Generic\";\"Bambu Lab\";Generic\n"
+                            "; filament_ids = GFL99;GFG99;GFL99\n"
+                            "; nozzle_diameter = 0.4,0.6\n"
+                            "; CONFIG_BLOCK_END\n\n"
+                            "; filament used [mm] = 1520.25, 0.00, 300.50\r\n"
+                            "; filament used [g] = 4.53, 0, 0.90\n"
+                            "; total filament used [g] = 5.43\n";
+    // A setting before the block is not one of the file's.
+    std::string body = "; filament_type = ABS\n";
+    while (body.size() < (2 << 20))
+        body += "G1 X10 Y10 E0.5\n";
+    std::string const file = body + end;
+
+    FakeMoonraker moonraker;
+    moonraker.files["/server/files/gcodes/parts/clip.gcode"]                = file;
+    moonraker.api["GET /server/files/list?root=gcodes"]                     = ok({{{"path", "parts/clip.gcode"}, {"size", file.size()}}});
+    moonraker.api["GET /server/files/metadata?filename=parts%2Fclip.gcode"] = ok({{"estimated_time", 3725.4}, {"filament_weight_total", 5.43}});
+    moonraker.ranges                                                        = GENERATE(true, false);
+    auto tunnel                                                             = moonraker.tunnel();
+    tunnel.send(request(MoonrakerFileTunnel::LIST_INFO, 1, {{"type", "model"}}));
+    answers(tunnel);
+
+    tunnel.send(request(MoonrakerFileTunnel::FILE_INFO, 2, {{"path", "parts/clip.gcode"}}));
+    auto all = answers(tunnel);
+
+    REQUIRE(all.size() == 1);
+    CHECK(all[0].root["result"] == 0);
+    CHECK(moonraker.requests[1] == "GET /server/files/gcodes/parts/clip.gcode " + std::to_string(file.size() - (1 << 20)) + "-" +
+                                       std::to_string(file.size() - 1));
+    json const info = all[0].root["reply"];
+    CHECK(info["filament_count"] == 3);
+    CHECK(info["nozzle_diameter"] == json::array({0.4, 0.6}));
+    CHECK(info["time"] == 3725.4);
+    CHECK(info["weight"] == 5.43);
+    json const filaments = info["filaments"];
+    REQUIRE(filaments.size() == 2);
+    CHECK(filaments[0]["id"] == 0);
+    CHECK(filaments[0]["type"] == "PLA");
+    CHECK(filaments[0]["color"] == "#FF0000");
+    CHECK(filaments[0]["vendor"] == "Generic");
+    CHECK(filaments[0]["filament_id"] == "GFL99");
+    CHECK(filaments[0]["used_g"] == 4.53);
+    CHECK(std::abs(filaments[0]["used_m"].get<double>() - 1.52025) < 1e-9);
+    CHECK(filaments[1]["id"] == 2);
+    CHECK(filaments[1]["color"] == "#0000FF");
+    CHECK(filaments[1]["used_g"] == 0.9);
+}
+
+TEST_CASE("A G-code file without OrcaSlicer's settings block has no filaments to map", "[MoonrakerFiles]")
+{
+    std::string const file = "G28\nG1 X10\n; filament used [mm] = 152.0\n";
+    FakeMoonraker moonraker;
+    moonraker.files["/server/files/gcodes/benchy.gcode"] = file;
+    moonraker.api["GET /server/files/list?root=gcodes"]  = ok({{{"path", "benchy.gcode"}, {"size", file.size()}}});
+    auto tunnel                                          = moonraker.tunnel();
+    tunnel.send(request(MoonrakerFileTunnel::LIST_INFO, 1, {{"type", "model"}}));
+    answers(tunnel);
+
+    tunnel.send(request(MoonrakerFileTunnel::FILE_INFO, 2, {{"path", "benchy.gcode"}}));
+    tunnel.send(request(MoonrakerFileTunnel::FILE_INFO, 3, {{"path", "unlisted.gcode"}}));
+    auto all = answers(tunnel);
+
+    REQUIRE(all.size() == 2);
+    CHECK(all[0].root["result"] == 0);
+    CHECK_FALSE(all[0].root["reply"].contains("filaments"));
+    CHECK(all[1].root["result"] == 10);
 }

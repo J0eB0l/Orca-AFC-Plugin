@@ -19,7 +19,8 @@ namespace Slic3r {
 // PrinterFileSystem speaks a Bambu printer's file protocol over a Bambu_Tunnel; this tunnel answers
 // the same requests from Moonraker's HTTP file API, so the page lists the printer's G-code files as
 // models and moonraker-timelapse's videos as timelapses, and keeps one implementation for both kinds
-// of printer. It also answers FILE_PRINT, which starts a G-code file as it is.
+// of printer. It also answers FILE_PRINT, which starts a G-code file as it is, and FILE_INFO, which
+// reads a G-code file's filaments for the print dialog, so the file can print on other trays.
 // Its URL is "moonraker:<Moonraker's base URL>", with "?api_key=<key>" when Moonraker wants a key.
 class MoonrakerFileTunnel
 {
@@ -32,6 +33,7 @@ public:
         FILE_DOWNLOAD         = 0x0004,
         REQUEST_MEDIA_ABILITY = 0x0007,
         FILE_PRINT            = 0x0010,
+        FILE_INFO             = 0x0011,
         TASK_CANCEL           = 0x1000,
     };
 
@@ -75,6 +77,7 @@ private:
     void start_download(int sequence, nlohmann::json const& req);
     void continue_download();
     void print(int sequence, nlohmann::json const& req);
+    void file_info(int sequence, nlohmann::json const& req);
     void cancel(int sequence, nlohmann::json const& req);
     void answer(int sequence, int result, nlohmann::json const& reply, std::string const& data = {});
 

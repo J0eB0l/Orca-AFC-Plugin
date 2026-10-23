@@ -57,6 +57,11 @@ private:
 
     void doAction(size_t index, int action);
 
+    // Print on a Moonraker printer's G-code file (FileLocal::FL_Moonraker).
+    void printMoonrakerFile(size_t index);
+
+    void startMoonrakerFile(size_t index);
+
 private:
     ScalableBitmap m_bmp_loading;
     ScalableBitmap m_bmp_failed;

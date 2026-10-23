@@ -595,6 +595,25 @@ void PrinterFileSystem::PrintFile(size_t index, Callback<std::string> const &cal
     });
 }
 
+void PrinterFileSystem::FetchFileInfo(size_t index, Callback<std::string> const &callback)
+{
+    if ((m_task_flags & FF_FETCH_MODEL) || index >= m_file_list.size())
+        return;
+    json req;
+    req["path"] = m_file_list[index].path;
+    m_task_flags |= FF_FETCH_MODEL;
+    m_fetch_model_seq = SendRequest<std::string>(
+        FILE_INFO, req,
+        [](json const &resp, std::string &info, unsigned char const *) -> int {
+            info = resp.dump();
+            return 0;
+        },
+        [this, callback](int result, std::string const &info) {
+            m_task_flags &= ~FF_FETCH_MODEL;
+            callback(result, info);
+        });
+}
+
 size_t PrinterFileSystem::GetCount() const
 {
     if (m_group_mode == G_NONE)

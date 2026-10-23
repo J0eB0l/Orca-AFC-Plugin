@@ -24,6 +24,8 @@
 #include <functional>
 #include <libslic3r/Model.hpp>
 #include <libslic3r/Format/bbs_3mf.hpp>
+#include <libslic3r/PresetBundle.hpp>
+#include <libslic3r/ProjectTask.hpp>
 #include <wx/panel.h>
 #include <wx/event.h>
 #include "slic3r/GUI/wxExtensions.hpp"
@@ -31,6 +33,7 @@
 #include <utility>
 #include <wx/colour.h>
 #include <vector>
+#include <wx/mstream.h>
 #include <wx/progdlg.h>
 #include "libslic3r/Semver.hpp"
 #include <sstream>
@@ -572,6 +575,99 @@ struct MediaProgressDialog : ProgressDialog
     std::function<void()> m_cancel;
 };
 
+namespace {
+
+// The print dialog's data for a Moonraker printer's G-code file, from MoonrakerFileTunnel's FILE_INFO
+// answer: one plate with the filaments it prints, all on the one nozzle a printer agent shows. False
+// when the file names no filaments.
+bool moonraker_print_data(json const &info, PrinterFileSystem::File const &file, DynamicPrintConfig &config, PlateDataPtrs &plates)
+{
+    json const filaments = info.is_object() ? info.value("filaments", json::array()) : json::array();
+    int const  count     = info.is_object() ? info.value("filament_count", 0) : 0;
+    if (filaments.empty() || count <= 0)
+        return false;
+    json const nozzles   = info.value("nozzle_diameter", json::array());
+    double const nozzle  = !nozzles.empty() && nozzles[0].is_number() ? nozzles[0].get<double>() : 0.4;
+    PresetBundle *bundle = wxGetApp().preset_bundle;
+
+    auto plate              = new PlateData;
+    plate->plate_index      = 0;
+    plate->gcode_file       = file.path;
+    plate->printer_model_id = bundle->printers.get_edited_preset().get_printer_type(bundle);
+    double weight           = 0;
+    for (auto const &f : filaments) {
+        FilamentInfo filament;
+        filament.id              = f.value("id", 0);
+        filament.type            = f.value("type", "");
+        filament.color           = f.value("color", "");
+        filament.brand           = f.value("vendor", "");
+        filament.filament_id     = f.value("filament_id", "");
+        filament.used_g          = f.value("used_g", 0.f);
+        filament.used_m          = f.value("used_m", 0.f);
+        filament.used_for_object = true;
+        filament.nozzle_diameter = nozzle;
+        weight += filament.used_g;
+        plate->slice_filaments_info.push_back(filament);
+    }
+    plate->gcode_prediction = std::to_string(int(info.value("time", 0.0)));
+    plate->gcode_weight     = std::to_string(info.value("weight", weight));
+    plate->config.set_key_value("filament_map", new ConfigOptionInts(count, 1));
+    if (file.thumbnail.IsOk()) {
+        wxMemoryOutputStream png;
+        if (file.thumbnail.ConvertToImage().SaveFile(png, wxBITMAP_TYPE_PNG)) {
+            plate->plate_thumbnail.pixels.resize(png.GetSize());
+            png.CopyTo(plate->plate_thumbnail.pixels.data(), png.GetSize());
+        }
+    }
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({nozzle}));
+    plates.push_back(plate);
+    return true;
+}
+
+} // namespace
+
+void MediaFilePanel::printMoonrakerFile(size_t index)
+{
+    // A G-code file OrcaSlicer sliced opens in the print dialog, which can print its filaments on
+    // other trays; one sliced elsewhere starts as it is, as Mainsail and Fluidd start it.
+    auto fs  = m_image_grid->GetFileSystem();
+    auto dlg = new MediaProgressDialog(_L_CONTEXT("Print", "Verb"), this, [fs] { fs->FetchModelCancel(); });
+    dlg->Update(0, _L("Fetching model information..."));
+    fs->FetchFileInfo(index, [this, fs, dlg, index](int result, std::string const &reply) {
+        dlg->Destroy();
+        if (result == PrinterFileSystem::ERROR_CANCEL)
+            return;
+        if (result != 0) {
+            MessageDialog(this, _L("Failed to fetch model information from printer."), _L_CONTEXT("Print", "Verb"), wxOK).ShowModal();
+            return;
+        }
+        auto              &file = fs->GetFile(index);
+        DynamicPrintConfig config;
+        PlateDataPtrs      plates;
+        if (!moonraker_print_data(json::parse(reply, nullptr, false), file, config, plates)) {
+            startMoonrakerFile(index);
+            return;
+        }
+        if (wxGetApp().plater()->update_print_required_data(config, Model(), plates, file.name, file.path) > 0)
+            wxPostEvent(wxGetApp().plater(), SimpleEvent(EVT_PRINT_FROM_SDCARD_VIEW));
+    });
+}
+
+void MediaFilePanel::startMoonrakerFile(size_t index)
+{
+    auto fs = m_image_grid->GetFileSystem();
+    MessageDialog dlg(this, wxString::Format(_L("Do you want to print the file '%s' on the printer now?"), from_u8(fs->GetFile(index).name)),
+                      _L_CONTEXT("Print", "Verb"), wxYES_NO | wxICON_QUESTION);
+    if (dlg.ShowModal() != wxID_YES)
+        return;
+    fs->PrintFile(index, [this](int result, std::string const &reason) {
+        if (result == 0)
+            return;
+        wxString msg = reason.empty() ? _L("Failed to start print job") : from_u8(reason);
+        CallAfter([this, msg] { MessageDialog(this, msg, _L_CONTEXT("Print", "Verb"), wxOK | wxICON_ERROR).ShowModal(); });
+    });
+}
+
 void MediaFilePanel::doAction(size_t index, int action)
 {
     auto fs = m_image_grid->GetFileSystem();
@@ -595,18 +691,7 @@ void MediaFilePanel::doAction(size_t index, int action)
     } else if (action == 1) {
         if (fs->GetFileType() == PrinterFileSystem::F_MODEL) {
             if (index != -1 && m_local_proto == FileLocal::FL_Moonraker) {
-                // A Moonraker printer's G-code file starts as it is, as Mainsail and Fluidd start it.
-                MessageDialog dlg(this,
-                    wxString::Format(_L("Do you want to print the file '%s' on the printer now?"), from_u8(fs->GetFile(index).name)),
-                    _L_CONTEXT("Print", "Verb"), wxYES_NO | wxICON_QUESTION);
-                if (dlg.ShowModal() != wxID_YES)
-                    return;
-                fs->PrintFile(index, [this](int result, std::string const &reason) {
-                    if (result == 0)
-                        return;
-                    wxString msg = reason.empty() ? _L("Failed to start print job") : from_u8(reason);
-                    CallAfter([this, msg] { MessageDialog(this, msg, _L_CONTEXT("Print", "Verb"), wxOK | wxICON_ERROR).ShowModal(); });
-                });
+                printMoonrakerFile(index);
                 return;
             }
             if (index != -1) {

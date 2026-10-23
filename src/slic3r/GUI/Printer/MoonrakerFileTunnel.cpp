@@ -5,11 +5,14 @@
 #include <algorithm>
 #include <cstdlib>
 #include <initializer_list>
+#include <locale>
+#include <sstream>
 #include <utility>
 #include <vector>
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <openssl/evp.h>
 
 #include "nlohmann/json.hpp"
@@ -37,6 +40,10 @@ char const* const TIMELAPSE = "timelapse";
 
 // A download's part per answer.
 constexpr uint64_t CHUNK = 4 << 20;
+
+// How much of a G-code file's end FILE_INFO reads: OrcaSlicer writes a Klipper file's settings
+// block there, then how much of each filament it uses.
+constexpr uint64_t TAIL = 1 << 20;
 
 bool has_extension(std::string const& path, std::initializer_list<char const*> extensions)
 {
@@ -83,6 +90,98 @@ uint64_t range_total(std::string const& headers)
     size_t n          = lower.rfind("content-range:");
     n                 = n == std::string::npos ? n : lower.find('/', n);
     return n == std::string::npos ? 0 : std::strtoull(lower.c_str() + n + 1, nullptr, 10);
+}
+
+// The values of an "a;b" or "1.2, 0" setting, without the quotes OrcaSlicer puts around a value
+// that has a space or a separator in it.
+std::vector<std::string> split_values(std::string const& text, char separator)
+{
+    std::vector<std::string> values(1);
+    bool quoted = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char const c = text[i];
+        if (c == '\\' && quoted && i + 1 < text.size())
+            values.back() += text[++i];
+        else if (c == '"')
+            quoted = !quoted;
+        else if (c == separator && !quoted)
+            values.emplace_back();
+        else
+            values.back() += c;
+    }
+    for (auto& value : values)
+        boost::algorithm::trim(value);
+    return text.empty() ? std::vector<std::string>() : values;
+}
+
+// A number as OrcaSlicer writes it, whatever the user's locale.
+double to_number(std::string const& text)
+{
+    std::istringstream in(text);
+    in.imbue(std::locale::classic());
+    double value = 0;
+    return in >> value ? value : 0.;
+}
+
+// A G-code file's filaments from its end: {"filament_count", "nozzle_diameter", "filaments": [{"id",
+// "type", "color", "vendor", "filament_id", "used_g", "used_m"}]} with the filaments it prints. An
+// end without OrcaSlicer's settings block gives an empty object.
+json gcode_filaments(std::string const& tail)
+{
+    std::map<std::string, std::string> values;
+    bool in_config  = false;
+    bool has_config = false;
+    std::istringstream lines(tail);
+    for (std::string line; std::getline(lines, line);) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (boost::starts_with(line, "; CONFIG_BLOCK_START")) {
+            in_config = has_config = true;
+            continue;
+        }
+        if (boost::starts_with(line, "; CONFIG_BLOCK_END")) {
+            in_config = false;
+            continue;
+        }
+        size_t const n = line.find(" = ");
+        if (!boost::starts_with(line, "; ") || n == std::string::npos)
+            continue;
+        std::string key = line.substr(2, n - 2);
+        if (in_config || boost::starts_with(key, "filament used ["))
+            values[key] = line.substr(n + 3);
+    }
+    if (!has_config)
+        return json::object();
+
+    auto list = [&values](char const* key, char separator) {
+        auto value = values.find(key);
+        return value == values.end() ? std::vector<std::string>() : split_values(value->second, separator);
+    };
+    auto text   = [](std::vector<std::string> const& items, size_t i) { return i < items.size() ? items[i] : std::string(); };
+    auto number = [](std::vector<std::string> const& items, size_t i) { return i < items.size() ? to_number(items[i]) : 0.; };
+    std::vector<std::string> const colors  = list("filament_colour", ';');
+    std::vector<std::string> const types   = list("filament_type", ';');
+    std::vector<std::string> const vendors = list("filament_vendor", ';');
+    std::vector<std::string> const ids     = list("filament_ids", ';');
+    std::vector<std::string> const used_g  = list("filament used [g]", ',');
+    std::vector<std::string> const used_mm = list("filament used [mm]", ',');
+    size_t const count                     = std::max(colors.size(), types.size());
+    json filaments                         = json::array();
+    for (size_t i = 0; i < count; ++i) {
+        if (number(used_mm, i) <= 0 && number(used_g, i) <= 0)
+            continue;
+        filaments.push_back({{"id", i},
+                             {"type", text(types, i)},
+                             {"color", text(colors, i)},
+                             {"vendor", text(vendors, i)},
+                             {"filament_id", text(ids, i)},
+                             {"used_g", number(used_g, i)},
+                             {"used_m", number(used_mm, i) / 1000}});
+    }
+    json nozzles = json::array();
+    for (auto const& diameter : list("nozzle_diameter", ','))
+        nozzles.push_back(to_number(diameter));
+    return {{"filament_count", count}, {"nozzle_diameter", nozzles}, {"filaments", filaments}};
 }
 
 struct TunnelHandle
@@ -219,6 +318,7 @@ void MoonrakerFileTunnel::handle(std::string const& message)
         case FILE_DOWNLOAD: start_download(sequence, req); break;
         case REQUEST_MEDIA_ABILITY: answer(sequence, SUCCESS, {{"storage", json::array()}}); break;
         case FILE_PRINT: print(sequence, req); break;
+        case FILE_INFO: file_info(sequence, req); break;
         case TASK_CANCEL: cancel(sequence, req); break;
         default: answer(sequence, FILE_TYPE_ERR, json::object());
         }
@@ -420,6 +520,31 @@ void MoonrakerFileTunnel::print(int sequence, json const& req)
     if (body.is_object() && body.contains("error") && body["error"].is_object())
         message = body["error"].value("message", "");
     answer(sequence, reply.status == 0 ? ERROR_PIPE : reply.status == 404 ? FILE_NO_EXIST : ERROR_RES_BUSY, {{"message", message}});
+}
+
+void MoonrakerFileTunnel::file_info(int sequence, json const& req)
+{
+    std::string const path = req.value("path", "");
+    auto const size        = m_sizes.find(path);
+    if (size == m_sizes.end()) {
+        answer(sequence, FILE_NO_EXIST, json::object());
+        return;
+    }
+    uint64_t const first = size->second > TAIL ? size->second - TAIL : 0;
+    std::string range    = size->second > 0 ? std::to_string(first) + "-" + std::to_string(size->second - 1) : std::string();
+    Reply reply          = m_fetch("GET", file_target(GCODES, path), range);
+    if (reply.status != 200 && reply.status != 206) {
+        answer(sequence, failure(reply), json::object());
+        return;
+    }
+    if (reply.body.size() > TAIL) // all of it, from a server that ignores the range
+        reply.body.erase(0, reply.body.size() - TAIL);
+    json info       = gcode_filaments(reply.body);
+    json const meta = metadata(path);
+    for (char const* key : {"time", "weight"})
+        if (meta.contains(key))
+            info[key] = meta[key];
+    answer(sequence, SUCCESS, info);
 }
 
 void MoonrakerFileTunnel::cancel(int sequence, json const& req)
