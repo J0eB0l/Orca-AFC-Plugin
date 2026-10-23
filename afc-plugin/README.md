@@ -186,6 +186,17 @@ Then:
   `; AFC filament tools = 4,0` line saying which T number prints each filament,
   so it can be renumbered again. Any other G-code file starts as it is, after
   asking.
+- In the AFC build, the Device tab's **Assistant** page shows `AFC.log`: the
+  errors and warnings AFC logged since the last **Clear**, newest first, with a
+  count for one that repeats, and the log's last lines, colored by level (debug
+  lines behind a switch). **Clear** empties AFC's message queue and hides the
+  errors and warnings logged so far; the mark is kept in Moonraker's database
+  (namespace `orca_afc`), so it holds on every computer. **Download AFC.log**
+  saves the whole log from the printer. A new error or warning tags the page.
+- In the AFC build, the Device tab's **Update** page shows the printer preset's
+  picture, the AFC version installed, the newest on Armored Turtle's `main` and
+  `DEV` branches on GitHub (read every 6 hours), with the new version dot when
+  one is newer, and a **View on GitHub** button.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds
@@ -195,8 +206,8 @@ Then:
   Moonraker component and its `TIMELAPSE_TAKE_FRAME` macro), the dialog's
   **Timelapse** switch turns moonraker-timelapse on or off for the print, and a
   file whose printer preset has no Time lapse G-code takes a frame before each
-  `;LAYER_CHANGE`. **Upload** leaves moonraker-timelapse as it is. In the AFC build the dialog warns when a spool
-  (with its runout lanes) has less filament left than the print uses, when the
+  `;LAYER_CHANGE`. **Upload** leaves moonraker-timelapse as it is. In the AFC
+  build the dialog warns when a spool (with its runout lanes) has less filament left than the print uses, when the
   file prints with more toolheads than Klipper's config has, and when a
   toolhead's `nozzle_diameter` differs from the preset's; **Check spools before
   printing** and **Check toolheads before printing** turn these off. In the AFC build of OrcaSlicer the dialog also has

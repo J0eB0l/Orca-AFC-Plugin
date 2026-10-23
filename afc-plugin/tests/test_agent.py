@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 import zipfile
+from unittest import mock
 
 import fake_orca
 from fake_moonraker import FakeMoonraker
@@ -118,6 +119,10 @@ class Case(unittest.TestCase):
         self.folder = folder.name
         orca.bundle = profiles(self.folder)
         self.addCleanup(setattr, orca, "bundle", PresetBundle())
+        # AFC's newest versions, as GitHub has them.
+        latest = mock.patch.object(afc_agent.upstream, "read", return_value={"main": "1.2.0", "DEV": "1.2.8"})
+        latest.start()
+        self.addCleanup(latest.stop)
         self.agent = AFCAgent(poll=self.poll)
         self.addCleanup(self.agent.on_unload)
         self.calls = calls = Calls()
@@ -588,6 +593,62 @@ class DeviceTabTest(Case):
         self.assertEqual(self.send({"print": {"command": "clear_agent_message", "sequence_id": "7"}}), 0)
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["AFC_CLEAR_MESSAGE"])
+
+    LOG = ("09:59:59 99.000 - INFO: AFC ready\n"
+           "10:00:05 105.000 [AFC_lane.py:load():120] - ERROR:lane2 failed to load\n"
+           "10:00:06 106.000 [AFC.py:check():80] - WARN:  lane3 spool low\n")
+
+    def test_afc_log_on_the_assistant_page(self):
+        self.fake.logs["AFC.log"] = self.LOG
+        self.connect()
+        log = self.push()["agent_log"]
+        self.assertEqual(log["file"], "logs/AFC.log")
+        self.assertEqual(log["lines"][-1], ["w", "10:00:06 WARN  lane3 spool low"])
+        self.assertEqual([(p["type"], p["text"]) for p in log["problems"]],
+                         [("warning", "lane3 spool low"), ("error", "lane2 failed to load")])
+
+    def test_clear_empties_afcs_queue_and_hides_the_errors_so_far(self):
+        queue = [{"message": "lane2 failed to load", "type": "error"}, {"message": "lane3 spool low", "type": "warning"}]
+        self.fake.objects["AFC"]["message"] = queue[0]
+
+        def clear_message():
+            queue.pop(0)
+            self.fake.objects["AFC"]["message"] = queue[0] if queue else {"message": "", "type": ""}
+
+        self.fake.effects["AFC_CLEAR_MESSAGE"] = clear_message
+        self.fake.logs["AFC.log"] = self.LOG
+        self.connect()
+        self.assertEqual(len(self.push()["agent_log"]["problems"]), 2)
+        self.assertEqual(self.send({"print": {"command": "clear_agent_log", "sequence_id": "8"}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_CLEAR_MESSAGE", "AFC_CLEAR_MESSAGE"])
+        self.assertEqual(self.fake.database["orca_afc"]["log_cleared"], self.LOG.splitlines()[-1])
+        push = self.push(3)  # after the one Clear sends
+        self.assertEqual((push["agent_log"]["problems"], push["agent_message"]), ([], {}))
+        # An error logged after the clear is listed.
+        self.fake.logs["AFC.log"] += "10:01:00 160.000 - ERROR:lane1 jammed\n"
+        self.agent._printer.log_due = 0.0
+        self.assertEqual([p["text"] for p in self.push(4)["agent_log"]["problems"]], ["lane1 jammed"])
+
+    def test_a_clear_made_elsewhere_holds(self):
+        # Another OrcaSlicer cleared the page: the mark is in the printer's Moonraker.
+        self.fake.database["orca_afc"] = {"log_cleared": self.LOG.splitlines()[1]}
+        self.fake.logs["AFC.log"] = self.LOG
+        self.connect()
+        self.assertEqual([p["text"] for p in self.push()["agent_log"]["problems"]], ["lane3 spool low"])
+
+    def test_no_afc_log(self):
+        self.connect()
+        self.assertEqual(self.push()["agent_log"], {})  # the Assistant page shows no AFC section
+
+    def test_afc_version_beside_the_newest_on_github(self):
+        self.fake.webhook["status:"]["AFC"]["system"]["version"] = "1.2.7"
+        self.connect()
+        self.push()
+        self.agent._web.call(lambda: None, 5)  # GitHub read
+        self.assertEqual(self.push(2)["afc_version"],
+                         {"installed": "1.2.7", "latest": {"main": "1.2.0", "DEV": "1.2.8"}, "newer": True,
+                          "url": "https://github.com/ArmoredTurtle/AFC-Klipper-Add-On"})
 
     def test_lamp(self):
         self.fake.objects["led main_led"] = {"color_data": [[0.0, 0.0, 0.0, 1.0]]}

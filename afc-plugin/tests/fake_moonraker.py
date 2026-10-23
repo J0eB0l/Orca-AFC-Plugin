@@ -16,11 +16,13 @@ class FakeMoonraker:
     objects   Klipper objects by name, for /printer/objects/query and /list
     lane_data the lane_data namespace's value, or None for a 404
     afc_stats the afc_stats namespace's value, or None for a 404
+    database  other namespaces' items: {namespace: {key: value}}, which POSTs set
     logs      files in Moonraker's logs folder by name, served with Range: bytes=-N
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     spool_fields  Spoolman's extra spool fields (/v1/field/spool)
     webcams   the /server/webcams/list webcams
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
+    effects   G-code script -> function the fake runs when that script is sent
     gcode_delay  seconds a G-code call takes before Moonraker answers, as a lane load does
     gcode_gateway_timeout  True to answer G-code calls 504, as nginx in front of Moonraker does past 60 s
     info      the /printer/info result
@@ -38,6 +40,8 @@ class FakeMoonraker:
         self.objects = {}
         self.lane_data = None
         self.afc_stats = None
+        self.database = {}
+        self.effects = {}
         self.logs = {}       # Moonraker's logs folder: name -> text
         self.spools = {}
         self.spool_fields = []
@@ -94,6 +98,15 @@ class FakeMoonraker:
                 else:
                     status[name] = {f: obj.get(f) for f in fields} if fields else dict(obj)
             return 200, {"result": {"eventtime": 1.0, "status": status}}
+        if method == "GET" and path == "/server/database/item" and query.get("namespace") in self.database:
+            items = self.database[query["namespace"]]
+            if query.get("key") not in items:
+                return 404, {"error": {"code": 404, "message": "Key '%s' not found" % query.get("key")}}
+            return 200, {"result": {"namespace": query["namespace"], "key": query["key"],
+                                    "value": items[query["key"]]}}
+        if method == "POST" and path == "/server/database/item":
+            self.database.setdefault(body["namespace"], {})[body["key"]] = body["value"]
+            return 200, {"result": {"namespace": body["namespace"], "key": body["key"], "value": body["value"]}}
         if method == "GET" and path == "/server/database/item":
             value = {"lane_data": self.lane_data, "afc_stats": self.afc_stats}.get(query.get("namespace"))
             if value is None:
@@ -108,6 +121,8 @@ class FakeMoonraker:
             return (206, raw[-int(tail.group(1)):]) if tail else (200, raw)
         if method == "POST" and path == "/printer/gcode/script":
             self.scripts.append(body.get("script"))
+            if body.get("script") in self.effects:
+                self.effects[body["script"]]()
             if self.gcode_delay:
                 time.sleep(self.gcode_delay)
             if self.gcode_gateway_timeout:

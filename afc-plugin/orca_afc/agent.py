@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import controls, gcode, presets, protocol, swaptimes, trays
+from . import afclog, controls, gcode, presets, protocol, swaptimes, trays, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -51,6 +51,9 @@ LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printe
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
 TIMELAPSE_MACRO = "gcode_macro " + gcode.TIMELAPSE_FRAME  # moonraker-timelapse's macro in Klipper
+LOG_EVERY = 10.0     # seconds between reads of AFC.log for the Assistant page
+CLEAR_MAX = 50       # AFC_CLEAR_MESSAGE sent at most per Clear
+DB_NAMESPACE = "orca_afc"  # the agent's own items in Moonraker's database
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
 NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
@@ -268,7 +271,8 @@ def _layers(state: str, stats: dict, position, job: dict):
 
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
-                nozzles=(), files_url: str = "", timelapse: bool = False) -> dict:
+                nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
+                latest=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -278,7 +282,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     `swap_times` AFC's measured change times (swaptimes.Tracker.times()),
     `nozzles` each toolhead's nozzle size (toolhead_nozzles()), `files_url`
     the printer's Moonraker, whose files the Device tab's Storage page lists,
-    and `timelapse` whether the printer runs moonraker-timelapse."""
+    `timelapse` whether the printer runs moonraker-timelapse, `afc_log`
+    AFC.log for the Assistant page (afclog.view()) and `latest` AFC's newest
+    versions on GitHub (upstream.read())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -379,6 +385,12 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # The AFC build of OrcaSlicer shows AFC's oldest error or warning on the Device tab, where Clear
         # sends clear_agent_message. Always sent, so a cleared message leaves the Device tab too.
         out["agent_message"] = {"text": snapshot.message, "type": snapshot.message_type} if snapshot.message else {}
+        # Its Assistant page shows AFC.log's last lines and errors, where Clear sends clear_agent_log,
+        # and its Update page AFC's version beside the newest on GitHub.
+        out["agent_log"] = afc_log or {}
+        latest = dict(latest or {})
+        out["afc_version"] = {"installed": snapshot.version, "latest": latest,
+                              "newer": upstream.newer(snapshot.version, latest), "url": upstream.REPO}
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -540,6 +552,9 @@ class _Printer:
     nozzles_due: float = 0.0                          # when to read them again
     timelapse: bool = False                           # moonraker-timelapse runs here (_timelapse())
     timelapse_due: float = 0.0                        # when to look again
+    afc_log: dict = None                              # afclog.view() of AFC.log
+    log_due: float = 0.0                              # when to read it again
+    log_cleared: str = None                           # its clear mark, None until read from Moonraker
 
 
 def spool_key(lane) -> tuple:
@@ -587,6 +602,9 @@ else:
             self._manager = AFCManager()
             self._worker = Worker("AFC printer agent", tick=self._poll, every=poll)
             self._gcode = Worker("AFC printer agent G-code")  # long commands, so pushes keep coming
+            self._web = Worker("AFC printer agent GitHub")  # so a slow GitHub never holds up pushes
+            self._latest = {}         # upstream.read(): AFC's newest versions on GitHub
+            self._latest_due = 0.0
 
         def get_name(self):
             return "AFC printer agent"
@@ -605,6 +623,7 @@ else:
                 self._printer = None
             self._worker.stop()
             self._gcode.stop()
+            self._web.stop()
 
         # -------------------------------------------------------- OrcaSlicer's callbacks
 
@@ -692,8 +711,9 @@ else:
                 # Read again on the first poll: OrcaSlicer may connect before it has
                 # marked which presets fit a printer it is switching to.
                 self._presets_due = 0.0
-            # OrcaSlicer lets a plugin start threads on its UI thread only, so both start here.
+            # OrcaSlicer lets a plugin start threads on its UI thread only, so they all start here.
             self._gcode.submit(lambda: None)
+            self._web.submit(lambda: None)
             self._worker.submit(lambda: self._connect(printer))
             return SUCCESS
 
@@ -807,9 +827,13 @@ else:
             self._timelapse(printer)
             self._swap_times(printer)
             self._nozzles(printer)
+            if snapshot is not None:
+                self._afc_log(printer)
+                self._upstream()
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
-                                  printer.nozzles, printer.client.url, printer.timelapse)
+                                  printer.nozzles, printer.client.url, printer.timelapse, printer.afc_log,
+                                  self._latest)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -867,6 +891,72 @@ else:
             except (KeyError, TypeError):  # Klipper has no such macro
                 macro = None
             printer.timelapse = isinstance(macro, dict) and macro.get("enable") is not None
+
+        def _afc_log(self, printer: _Printer) -> None:
+            """AFC.log for the Assistant page, read every LOG_EVERY s with its
+            clear mark (once); a failed read keeps the last."""
+            if time.monotonic() < printer.log_due:
+                return
+            printer.log_due = time.monotonic() + LOG_EVERY
+            try:
+                if printer.log_cleared is None:
+                    printer.log_cleared = self._log_mark(printer)
+                text = printer.client.log_tail(afclog.LOG_NAME, afclog.TAIL)
+            except MoonrakerError:
+                return
+            printer.afc_log = afclog.view(text, printer.log_cleared)
+
+        @staticmethod
+        def _log_mark(printer: _Printer) -> str:
+            """The clear mark kept in Moonraker's database, "" for none."""
+            try:
+                item = printer.client.get("/server/database/item", {"namespace": DB_NAMESPACE, "key": "log_cleared"})
+            except PrinterUnreachable:
+                raise
+            except MoonrakerError:  # no such item yet
+                return ""
+            value = item.get("value") if isinstance(item, dict) else None
+            return value if isinstance(value, str) else ""
+
+        def _clear_log(self, printer: _Printer) -> None:
+            """The Assistant page's Clear: AFC's message queue emptied, and the
+            errors and warnings AFC.log has so far left off the page, here and
+            in every OrcaSlicer that shows this printer."""
+            def clear():
+                for _ in range(CLEAR_MAX):
+                    answer = printer.client.objects_query({"AFC": ["message"]})
+                    message = (((answer or {}).get("status") or {}).get("AFC") or {}).get("message")
+                    if not (isinstance(message, dict) and message.get("message")):
+                        break
+                    printer.client.gcode("AFC_CLEAR_MESSAGE")
+                mark = afclog.last_line(printer.client.log_tail(afclog.LOG_NAME, afclog.TAIL))
+                printer.client.post("/server/database/item",
+                                    {"namespace": DB_NAMESPACE, "key": "log_cleared", "value": mark})
+
+                def show():
+                    printer.log_cleared = mark
+                    printer.log_due = 0.0
+                    self._push(printer)
+
+                self._worker.submit(show)
+
+            self._gcode.submit(lambda: self._quietly(clear))
+
+        def _upstream(self) -> None:
+            """AFC's newest versions on GitHub, read every upstream.EVERY s on a
+            worker of their own; a read that finds none is tried again sooner."""
+            if time.monotonic() < self._latest_due:
+                return
+            self._latest_due = time.monotonic() + upstream.EVERY
+
+            def read():
+                latest = upstream.read()
+                if latest:
+                    self._latest = latest
+                else:
+                    self._latest_due = time.monotonic() + upstream.RETRY
+
+            self._web.submit(read)
 
         def _swap_times(self, printer: _Printer) -> None:
             """AFC's change times (swaptimes.py): AFC.log once a connection, its
@@ -1015,6 +1105,8 @@ else:
                 self._run(printer, "G28")
             elif command == "clear_agent_message":
                 self._run(printer, "AFC_CLEAR_MESSAGE", push=True)
+            elif command == "clear_agent_log":
+                self._clear_log(printer)
             elif command == "ams_filament_setting":
                 return self._filament_setting(printer, job)
             elif command == "extrusion_cali_set":
