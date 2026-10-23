@@ -5,7 +5,9 @@
 #include "GUI.hpp"
 #include "DeviceManager.hpp"
 #include "libslic3r_version.h"
+#include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
+#include "slic3r/Utils/PrinterNetworkTypes.hpp"
 #include "Plater.hpp"
 #include "Widgets/Button.hpp"
 #include "Widgets/Label.hpp"
@@ -254,6 +256,7 @@ void MediaFilePanel::UpdateByObj(MachineObject* obj)
         m_local_proto  = obj->file_local;
         m_remote_proto = obj->get_file_remote();
         m_model_download_support = obj->file_model_download;
+        m_file_url     = obj->file_url;
 
         if (m_sdcard_exist != (obj->GetStorage()->get_sdcard_state() == DevStorage::HAS_SDCARD_NORMAL)) {
             m_sdcard_exist = obj->GetStorage()->get_sdcard_state() == DevStorage::HAS_SDCARD_NORMAL;
@@ -268,6 +271,7 @@ void MediaFilePanel::UpdateByObj(MachineObject* obj)
         m_local_proto = 0;
         m_remote_proto = 0;
         m_model_download_support = false;
+        m_file_url.clear();
 
         if (m_sdcard_exist) {
             m_sdcard_exist = false; // reset sdcard state when no object
@@ -491,6 +495,14 @@ void MediaFilePanel::fetchUrl(boost::weak_ptr<PrinterFileSystem> wfs)
     }
     BOOST_LOG_TRIVIAL(info) << "MediaFilePanel::fetchUrl: " << m_local_proto << m_remote_proto;
     m_waiting_support = false;
+    if (m_local_proto == FileLocal::FL_Moonraker && !m_file_url.empty()) {
+        std::string url = "moonraker:" + m_file_url;
+        // The access code is the printer preset's API key, 88888888 for none (GUI_App::select_machine).
+        if (!m_lan_passwd.empty() && m_lan_passwd != "88888888")
+            url += "?api_key=" + Http::url_encode(m_lan_passwd);
+        fs->SetUrl(url);
+        return;
+    }
     NetworkAgent *agent = wxGetApp().getAgent();
     std::string  agent_version = agent ? agent->get_version() : "";
     if ((m_lan_mode || !m_remote_proto) && m_local_proto && !m_lan_ip.empty()) {
@@ -582,6 +594,21 @@ void MediaFilePanel::doAction(size_t index, int action)
         fs->DeleteFiles(index);
     } else if (action == 1) {
         if (fs->GetFileType() == PrinterFileSystem::F_MODEL) {
+            if (index != -1 && m_local_proto == FileLocal::FL_Moonraker) {
+                // A Moonraker printer's G-code file starts as it is, as Mainsail and Fluidd start it.
+                MessageDialog dlg(this,
+                    wxString::Format(_L("Do you want to print the file '%s' on the printer now?"), from_u8(fs->GetFile(index).name)),
+                    _L_CONTEXT("Print", "Verb"), wxYES_NO | wxICON_QUESTION);
+                if (dlg.ShowModal() != wxID_YES)
+                    return;
+                fs->PrintFile(index, [this](int result, std::string const &reason) {
+                    if (result == 0)
+                        return;
+                    wxString msg = reason.empty() ? _L("Failed to start print job") : from_u8(reason);
+                    CallAfter([this, msg] { MessageDialog(this, msg, _L_CONTEXT("Print", "Verb"), wxOK | wxICON_ERROR).ShowModal(); });
+                });
+                return;
+            }
             if (index != -1) {
                 auto dlg = new MediaProgressDialog(_L_CONTEXT("Print", "Verb"), this, [fs] { fs->FetchModelCancel(); });
                 dlg->Update(0, _L("Fetching model information..."));

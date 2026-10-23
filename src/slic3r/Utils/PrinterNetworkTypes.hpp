@@ -21,7 +21,8 @@ enum LiveviewRemote {
 
 enum FileLocal {
     FL_None,
-    FL_Local
+    FL_Local,
+    FL_Moonraker // a printer agent's printer whose files Moonraker serves (MoonrakerFileTunnel)
 };
 
 enum FileRemote {

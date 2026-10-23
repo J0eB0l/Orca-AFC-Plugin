@@ -4022,8 +4022,9 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                                     liveview_remote = enum_index_of(ipcam["liveview"].value<std::string>("remote", "none").c_str(), remote_protos, 4, LiveviewRemote::LVR_None);
                                 }
                                 if (ipcam.contains("file")) {
-                                    char const *local_protos[] = {"none", "local"};
-                                    file_local  = enum_index_of(ipcam["file"].value<std::string>("local", "none").c_str(), local_protos, 2, FileLocal::FL_None);
+                                    char const *local_protos[] = {"none", "local", "moonraker"};
+                                    file_local  = enum_index_of(ipcam["file"].value<std::string>("local", "none").c_str(), local_protos, 3, FileLocal::FL_None);
+                                    file_url    = ipcam["file"].value<std::string>("url", "");
                                     char const *remote_protos[] = {"none", "tutk", "agora", "tutk_agaro"};
                                     file_remote = enum_index_of(ipcam["file"].value<std::string>("remote", "none").c_str(), remote_protos, 4, FileRemote::FR_None);
                                     file_model_download = ipcam["file"].value<std::string>("model_download", "disabled") == "enabled";

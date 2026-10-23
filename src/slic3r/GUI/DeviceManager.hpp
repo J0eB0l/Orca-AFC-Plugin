@@ -586,6 +586,7 @@ public:
     };
 
     bool        file_model_download{false};
+    std::string file_url; // Moonraker's address for FL_Moonraker
     bool        virtual_camera{false};
     bool        m_has_timelapse_kit{false};
 

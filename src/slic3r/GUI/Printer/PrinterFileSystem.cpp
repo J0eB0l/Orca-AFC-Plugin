@@ -1,4 +1,5 @@
 #include "PrinterFileSystem.h"
+#include "MoonrakerFileTunnel.h"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Model.hpp"
@@ -583,6 +584,17 @@ void PrinterFileSystem::FetchModelCancel()
     CancelRequests2({m_fetch_model_seq});
 }
 
+void PrinterFileSystem::PrintFile(size_t index, Callback<std::string> const &callback)
+{
+    if (index >= m_file_list.size()) return;
+    json req;
+    req["path"] = m_file_list[index].path;
+    SendRequest(FILE_PRINT, req, [this, callback](int result, json const &resp, unsigned char const *) -> int {
+        PostCallback<std::string>(callback, result, resp.is_object() ? resp.value("message", "") : "");
+        return result;
+    });
+}
+
 size_t PrinterFileSystem::GetCount() const
 {
     if (m_group_mode == G_NONE)
@@ -1084,6 +1096,17 @@ void PrinterFileSystem::UpdateFocusThumbnail2(std::shared_ptr<std::vector<File>>
             std::string     path      = resp.value("path", "");
             boost::uint32_t size      = resp.value("size", 0);
             bool            cont      = resp.value("continue", false);
+            if (type == ModelMetadata && resp.contains("metadata")) {
+                // A Moonraker printer's G-code file has its metadata as it is (MoonrakerFileTunnel), not a 3MF.
+                json const &meta = resp["metadata"];
+                if (meta.contains("time"))
+                    file.metadata.emplace("Time", durationString(std::lround(meta["time"].get<double>())));
+                if (meta.contains("weight"))
+                    file.metadata.emplace("Weight", std::to_string(int(std::round(meta["weight"].get<double>()))) + 'g');
+                file.metadata.emplace("Thumbnail", meta.value("thumbnail", ""));
+                file.path = path;
+                return 0;
+            }
             if (size == 0) {
                 file.name = thumbnail;
                 file.path = path;
@@ -1607,7 +1630,7 @@ void PrinterFileSystem::RecvMessageThread()
             // OutputDebugStringA("\n");
             wxLogInfo("PrinterFileSystem::SendRequest >>>: \n%s\n", wxString::FromUTF8(msg));
             l.unlock();
-            int n = Bambu_SendMessage(m_session.tunnel, CTRL_TYPE, msg.c_str(), msg.length());
+            int n = m_session.lib->Bambu_SendMessage(m_session.tunnel, CTRL_TYPE, msg.c_str(), msg.length());
             l.lock();
             if (n == 0)
                 m_messages.pop_front();
@@ -1617,7 +1640,7 @@ void PrinterFileSystem::RecvMessageThread()
             }
         }
         l.unlock();
-        int n = Bambu_ReadSample(m_session.tunnel, &sample);
+        int n = m_session.lib->Bambu_ReadSample(m_session.tunnel, &sample);
         l.lock();
         if (n == 0) {
             HandleResponse(l, sample);
@@ -1710,11 +1733,12 @@ void PrinterFileSystem::Reconnect(boost::unique_lock<boost::mutex> &l, int resul
 {
     if (m_session.tunnel) {
         auto tunnel = m_session.tunnel;
+        auto lib    = m_session.lib;
         m_session.tunnel = nullptr;
         wxLogMessage("PrinterFileSystem::Reconnect close %d", result);
         l.unlock();
-        Bambu_Close(tunnel);
-        Bambu_Destroy(tunnel);
+        lib->Bambu_Close(tunnel);
+        lib->Bambu_Destroy(tunnel);
         l.lock();
     }
     if (m_session.owner == nullptr)
@@ -1760,12 +1784,15 @@ void PrinterFileSystem::Reconnect(boost::unique_lock<boost::mutex> &l, int resul
             m_status = Status::Connecting;
             wxLogMessage("PrinterFileSystem::Reconnect Connecting");
             SendChangedEvent(EVT_STATUS_CHANGED, m_status);
+            // A Moonraker printer's files come over Moonraker's HTTP API, not the Bambu library.
+            BambuLib const &lib = boost::algorithm::starts_with(url, "moonraker:") ? Slic3r::MoonrakerFileTunnel::lib()
+                                                                                   : static_cast<BambuLib const &>(*this);
             Bambu_Tunnel tunnel = nullptr;
-            int ret = Bambu_Create(&tunnel, url.c_str());
+            int ret = lib.Bambu_Create(&tunnel, url.c_str());
             if (ret == 0) {
 
-                Bambu_SetLogger(tunnel, DumpLog, this);
-                ret = Bambu_Open(tunnel);
+                lib.Bambu_SetLogger(tunnel, DumpLog, this);
+                ret = lib.Bambu_Open(tunnel);
             }
 
             if (ret == 0)
@@ -1773,7 +1800,7 @@ void PrinterFileSystem::Reconnect(boost::unique_lock<boost::mutex> &l, int resul
                 auto                             start_time = boost::posix_time::microsec_clock::universal_time();
                 boost::posix_time::time_duration timeout    = boost::posix_time::seconds(3);
                 do{
-                    ret = Bambu_StartStreamEx ? Bambu_StartStreamEx(tunnel, CTRL_TYPE) : Bambu_StartStream(tunnel, false);
+                    ret = lib.Bambu_StartStreamEx ? lib.Bambu_StartStreamEx(tunnel, CTRL_TYPE) : lib.Bambu_StartStream(tunnel, false);
                     if (ret == Bambu_would_block)
                         boost::this_thread::sleep(boost::posix_time::milliseconds(100));
 
@@ -1788,6 +1815,7 @@ void PrinterFileSystem::Reconnect(boost::unique_lock<boost::mutex> &l, int resul
             l.lock();
             if (ret == 0) {
                 m_session.tunnel = tunnel;
+                m_session.lib    = &lib;
                 wxLogMessage("PrinterFileSystem::Reconnect Connected");
                 break;
             } else if (ret == 1) {
@@ -1795,8 +1823,8 @@ void PrinterFileSystem::Reconnect(boost::unique_lock<boost::mutex> &l, int resul
                 ret = ERROR_RES_BUSY;
             }
             if (tunnel) {
-                Bambu_Close(tunnel);
-                Bambu_Destroy(tunnel);
+                lib.Bambu_Close(tunnel);
+                lib.Bambu_Destroy(tunnel);
             }
             m_last_error = ret;
         }

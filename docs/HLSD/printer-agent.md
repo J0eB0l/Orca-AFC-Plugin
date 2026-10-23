@@ -132,6 +132,7 @@ printer settings' AFC group (Multimaterial page, shown with the AFC box ticked):
 | `toolhead_nozzles` (mm, by extruder) | The print dialog warns when a plate uses a toolhead the printer lacks, and asks to confirm a nozzle size that differs from the preset's. | `afc_toolhead_check` |
 | `filam_bak`, `support_filament_backup` | Bambu's auto refill groups (an AFC lane and its runout lanes). The print dialog's spool check counts a group's spools together. | `afc_spool_check` |
 | `agent_message` (`text`, `type`) | The Device tab shows it in the task panel's error line while no device error does. Clear sends `clear_agent_message`. | none |
+| `ipcam.file` with `local` `moonraker` and `url` | The Device tab's Storage page lists the printer's files from Moonraker at `url`: G-code files as models, with their thumbnails, print time and weight, and moonraker-timelapse videos as timelapses. Print starts a G-code file as it is. | none |
 
 The spool check compares each filament's weight in the sliced plate with what its tray's spool, and its
 refill group, has left. With `afc_settings_check`, a preset whose settings differ from what AFC needs
@@ -140,6 +141,11 @@ refill group, has left. With `afc_settings_check`, a preset whose settings diffe
 ooze prevention is offered preheating. Neither changes a setting without a click, so a printer whose
 macros handle these keeps its own. The `afc_*` options are written into the G-code config block only
 when `afc_enabled` is ticked.
+
+The Storage page keeps one implementation for both kinds of printer: `PrinterFileSystem` speaks a Bambu
+printer's file protocol, and for a Moonraker printer `MoonrakerFileTunnel` answers that protocol from
+Moonraker's HTTP file API in place of the Bambu library's tunnel. The printer's access code is the API
+key it sends.
 
 The registry rejects conflicting agent IDs. This matters for Python plugins because an agent ID is the
 stable identity used by presets and device ownership; two enabled plugin capabilities must not claim

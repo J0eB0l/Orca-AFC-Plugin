@@ -48,6 +48,7 @@ class PrinterFileSystem : public wxEvtHandler, public boost::enable_shared_from_
         FILE_DOWNLOAD         = 0x0004,
         FILE_UPLOAD           = 0x0005,
         REQUEST_MEDIA_ABILITY = 0x0007,
+        FILE_PRINT            = 0x0010, // a Moonraker printer starts a G-code file (MoonrakerFileTunnel)
         NOTIFY_FIRST          = 0x0100,
         LIST_CHANGE_NOTIFY    = 0x0100,
         LIST_RESYNC_NOTIFY    = 0x0101,
@@ -214,6 +215,9 @@ public:
     void FetchModel(size_t index, std::function<void(int, std::string const &)> callback);
 
     void FetchModelCancel();
+
+    // Starts a Moonraker printer's G-code file; the callback has the printer's reason when it refuses.
+    void PrintFile(size_t index, Callback<std::string> const &callback);
 
     size_t GetCount() const;
 
@@ -393,6 +397,7 @@ private:
     struct Session
     {
         Bambu_Tunnel tunnel = nullptr;
+        BambuLib const * lib = nullptr; // the tunnel's functions
         PrinterFileSystem * owner;
     };
     Session m_session;
