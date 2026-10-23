@@ -48,7 +48,9 @@ rewrites the file for what AFC does with it:
   chamber with the top cover's mode above and waits for it with its own
   `WAIT_CHAMBER_TEMP`, which Snapmaker's U1 start G-code runs once the bed is hot.
 
-Only Klipper files are changed. Nothing here talks to the network or to
+Only Klipper files are changed. Apart from that rewrite, the agent adds
+moonraker-timelapse's frames to a file when the print dialog's Timelapse switch
+is on (add_timelapse_frames()). Nothing here talks to the network or to
 OrcaSlicer, so all of it is unit-tested.
 """
 
@@ -78,6 +80,9 @@ _PA_VALUE = re.compile(r"(?<=[ \t])ADVANCE=[^ \t;\r\n]*", re.I)
 PA_NOTE = "; AFC spool flow K"
 TOOLS_NOTE = "; AFC filament tools = "
 _TOOLS_LINE = re.compile(r"^; AFC filament tools = ([0-9, ]*)\r?$", re.M)
+TIMELAPSE_FRAME = "TIMELAPSE_TAKE_FRAME"
+_TAKES_FRAMES = re.compile(r"^[ \t]*TIMELAPSE_TAKE_FRAME(?=[ \t;\r\n]|$)", re.I | re.M)
+_LAYER_CHANGE = re.compile(r"^;LAYER_CHANGE(\r?\n)", re.M)
 _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | re.M)
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
@@ -489,6 +494,15 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     if cover:  # no PRINT_START: before the file's first command
         result.text = insert_after_header(result.text, ("\r\n" if "\r\n" in text else "\n").join(cover))
     return result
+
+
+def add_timelapse_frames(text: str) -> str:
+    """moonraker-timelapse's TIMELAPSE_TAKE_FRAME before each `;LAYER_CHANGE`,
+    for a file that takes no frames itself (the printer preset's Time lapse
+    G-code). A file that does is left as it is."""
+    if _TAKES_FRAMES.search(text):
+        return text
+    return _LAYER_CHANGE.sub(lambda m: TIMELAPSE_FRAME + m.group(1) + m.group(0), text)
 
 
 def insert_after_header(text: str, line: str) -> str:

@@ -29,6 +29,7 @@ class FakeMoonraker:
     files     paths under the gcodes root that a GET serves (thumbnails)
     stored    G-code files in the gcodes root by path, served as their bytes
     started   files /printer/print/start was asked to print
+    timelapse moonraker-timelapse's settings, or None for a 404 (no component)
     offline   True to answer everything 503, as Moonraker does while Klipper restarts
     """
 
@@ -52,6 +53,7 @@ class FakeMoonraker:
         self.files = set()
         self.stored = {}
         self.started = []
+        self.timelapse = None
         self.offline = False
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
@@ -129,6 +131,12 @@ class FakeMoonraker:
             if name in self.stored:
                 return 200, self.stored[name]
             return (200, {"path": name}) if name in self.files else (404, {"error": {"code": 404, "message": "No file"}})
+        if path == "/machine/timelapse/settings":
+            if self.timelapse is None:
+                return 404, {"error": {"code": 404, "message": "Not Found"}}
+            if method == "POST":
+                self.timelapse.update(body)
+            return 200, {"result": self.timelapse}
         if method == "POST" and path == "/printer/print/start":
             self.started.append(body.get("filename"))
             return 200, {"result": "ok"}

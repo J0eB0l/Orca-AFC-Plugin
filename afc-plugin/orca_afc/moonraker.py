@@ -124,6 +124,16 @@ class Moonraker:
         cams = answer.get("webcams") if isinstance(answer, dict) else None
         return cams if isinstance(cams, list) else []
 
+    def timelapse_settings(self) -> dict:
+        """moonraker-timelapse's settings; MoonrakerError when Moonraker runs no
+        timelapse component."""
+        answer = self.get("/machine/timelapse/settings")
+        return answer if isinstance(answer, dict) else {}
+
+    def set_timelapse(self, enabled: bool):
+        """Turn moonraker-timelapse on or off, which it keeps until the next change."""
+        return self.post("/machine/timelapse/settings", {"enabled": bool(enabled)})
+
     def print_state(self) -> str:
         """print_stats.state: "standby", "printing", "paused", ... Empty when unknown."""
         status = self.objects_query({"print_stats": ["state"]})

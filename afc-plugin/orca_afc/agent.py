@@ -40,7 +40,7 @@ import orca
 
 from . import controls, gcode, presets, protocol, swaptimes, trays
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
-from .moonraker import Moonraker, MoonrakerError, base_url, opens_without_key
+from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
 from .worker import Worker
 
@@ -50,6 +50,7 @@ PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
+TIMELAPSE_MACRO = "gcode_macro " + gcode.TIMELAPSE_FRAME  # moonraker-timelapse's macro in Klipper
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
 NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
@@ -267,7 +268,7 @@ def _layers(state: str, stats: dict, position, job: dict):
 
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
-                nozzles=(), files_url: str = "") -> dict:
+                nozzles=(), files_url: str = "", timelapse: bool = False) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -275,8 +276,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     shows, `job` the print file's job_info(), `chamber` the Klipper object
     that reads the chamber's temperature (controls.find_chamber()),
     `swap_times` AFC's measured change times (swaptimes.Tracker.times()),
-    `nozzles` each toolhead's nozzle size (toolhead_nozzles()) and `files_url`
-    the printer's Moonraker, whose files the Device tab's Storage page lists."""
+    `nozzles` each toolhead's nozzle size (toolhead_nozzles()), `files_url`
+    the printer's Moonraker, whose files the Device tab's Storage page lists,
+    and `timelapse` whether the printer runs moonraker-timelapse."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -307,8 +309,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_remote_dry": True,
         # AFC's runout lanes, as Bambu's auto refill groups below.
         "support_filament_backup": True,
-        # The print dialog's switches, which only a U1 has a use for (its print_task_config).
-        "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1,
+        # The print dialog's switches: a U1 takes them all (its print_task_config), and
+        # moonraker-timelapse takes Timelapse.
+        "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1 or timelapse,
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
         # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
         "support_chamber": bool(chamber),
@@ -460,11 +463,12 @@ class PrintJob:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
-def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
+def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
     filaments (laid out by AFC unit when `by_unit`), AFC's purges and spool
-    flow K, and on a U1 its print switches. A printer without AFC gets the
-    file as it was sliced, apart from the U1's switches."""
+    flow K, on a U1 its print switches, and with the Timelapse switch on and
+    moonraker-timelapse running (`timelapse`) the frames it takes. A printer
+    without AFC gets the file as it was sliced, apart from those switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
     if settings.klipper and snapshot is not None and snapshot.present:
         shown = trays.layout(snapshot, by_unit)
@@ -477,6 +481,8 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False) -> str:
         text, found = _U1_OPTIONS_LINE.subn(line, text, count=1)
         if not found:
             text = gcode.insert_after_header(text, line)
+    elif timelapse and job.time_lapse:
+        text = gcode.add_timelapse_frames(text)
     return text
 
 
@@ -532,6 +538,8 @@ class _Printer:
     stats_due: float = 0.0                            # when to read them again
     nozzles: list = field(default_factory=list)       # toolhead_nozzles() of Klipper's config
     nozzles_due: float = 0.0                          # when to read them again
+    timelapse: bool = False                           # moonraker-timelapse runs here (_timelapse())
+    timelapse_due: float = 0.0                        # when to look again
 
 
 def spool_key(lane) -> tuple:
@@ -796,11 +804,12 @@ else:
                 dry_filaments = dict(printer.dry_filaments)
             job = self._job(printer, (status.get("print_stats") or {}).get("filename"))
             self._camera(printer)
+            self._timelapse(printer)
             self._swap_times(printer)
             self._nozzles(printer)
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
-                                  printer.nozzles, printer.client.url)
+                                  printer.nozzles, printer.client.url, printer.timelapse)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -835,6 +844,29 @@ else:
                 return
             with self._lock:
                 printer.camera = camera
+
+        def _timelapse(self, printer: _Printer) -> None:
+            """Whether moonraker-timelapse runs on the printer, its component in
+            Moonraker and its macro in Klipper, read every CAMERA_EVERY s; a read
+            that fails for another reason keeps the last."""
+            if time.monotonic() < printer.timelapse_due:
+                return
+            printer.timelapse_due = time.monotonic() + CAMERA_EVERY
+            try:
+                printer.client.timelapse_settings()
+            except PrinterUnreachable:
+                return
+            except MoonrakerError:  # Moonraker has no such endpoint
+                printer.timelapse = False
+                return
+            try:
+                answer = printer.client.objects_query({TIMELAPSE_MACRO: ["enable"]})
+                macro = answer["status"][TIMELAPSE_MACRO]
+            except MoonrakerError:
+                return
+            except (KeyError, TypeError):  # Klipper has no such macro
+                macro = None
+            printer.timelapse = isinstance(macro, dict) and macro.get("enable") is not None
 
         def _swap_times(self, printer: _Printer) -> None:
             """AFC's change times (swaptimes.py): AFC.log once a connection, its
@@ -1218,7 +1250,7 @@ else:
             if snapshot is not None:
                 self._kept_k(printer, snapshot)
             original = data.decode("utf-8", "surrogateescape")
-            text = prepare(original, job, snapshot, printer.by_unit)
+            text = prepare(original, job, snapshot, printer.by_unit, printer.timelapse)
             name = job.stored or upload_name(job.project, job.plate)
             if canceled.is_set():
                 return ERR_CANCELED
@@ -1244,6 +1276,11 @@ else:
                 return SUCCESS
             if canceled.is_set():
                 return ERR_CANCELED
+            if printer.timelapse and not (snapshot is not None and snapshot.u1_print.present):
+                try:
+                    printer.client.set_timelapse(job.time_lapse)
+                except MoonrakerError:
+                    pass  # the print goes on, with moonraker-timelapse as it was
             progress.set(STAGE_SENDING, 0, "Starting print...")
             try:
                 printer.client.post("/printer/print/start", {"filename": name}, timeout=30)

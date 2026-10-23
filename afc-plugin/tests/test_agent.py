@@ -703,10 +703,12 @@ class PrintTest(Case):
         return path
 
     def print_params(self, **values):
-        defaults = dict(dev_id=self.dev_id, project_name="Cube box", filename=self.project(), plate_index=1,
+        defaults = dict(dev_id=self.dev_id, project_name="Cube box", plate_index=1,
                         ams_mapping="[4,0]",
                         ams_mapping2='[{"ams_id":1,"slot_id":0},{"ams_id":0,"slot_id":0}]')
         defaults.update(values)
+        if "filename" not in defaults:  # a default project would overwrite the one passed in
+            defaults["filename"] = self.project()
         return PrintParams(**defaults)
 
     def start(self, params, cancel=lambda: False):
@@ -806,6 +808,50 @@ class PrintTest(Case):
 
     def tools(self, text):
         return [line.split(" ")[0] for line in text.splitlines() if line[:1] == "T"]
+
+    def timelapse(self):
+        # moonraker-timelapse: its Moonraker component and its macro in Klipper.
+        self.fake.timelapse = {"enabled": False, "mode": "layermacro"}
+        self.fake.objects["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": False}
+
+    def test_the_timelapse_switch_runs_moonraker_timelapse(self):
+        self.timelapse()
+        self.connect()
+        self.assertTrue(self.push()["support_timelapse"])
+        layers = HEADER + "PRINT_START TOOL=0\n;LAYER_CHANGE\nT0\nG1 X1 E1\n;LAYER_CHANGE\nT1\nG1 X2 E1\n" + CONFIG
+        code, _ = self.start(self.print_params(filename=self.project(layers), task_record_timelapse=True))
+        self.assertEqual(code, 0)
+        text = self.fake.uploads["Cube_box_plate_1.gcode"].decode()
+        self.assertEqual(text.count("TIMELAPSE_TAKE_FRAME\n;LAYER_CHANGE\n"), 2)
+        self.assertTrue(self.fake.timelapse["enabled"])
+        # Switched off, the next print takes no frames.
+        code, _ = self.start(self.print_params(filename=self.project(layers), task_record_timelapse=False))
+        self.assertEqual(code, 0)
+        self.assertNotIn("TIMELAPSE_TAKE_FRAME", self.fake.uploads["Cube_box_plate_1.gcode"].decode())
+        self.assertFalse(self.fake.timelapse["enabled"])
+
+    def test_upload_leaves_moonraker_timelapse_as_it_is(self):
+        self.timelapse()
+        self.connect()
+        self.push()
+        code = self.agent.start_send_gcode_to_sdcard(self.print_params(task_record_timelapse=True), None, None, None)
+        self.assertEqual(code, 0)
+        self.assertFalse(self.fake.timelapse["enabled"])
+
+    def test_no_timelapse_without_moonraker_timelapse(self):
+        self.fake.objects["gcode_macro TIMELAPSE_TAKE_FRAME"] = {"enable": False}  # the macro alone
+        self.connect()
+        self.assertFalse(self.push()["support_timelapse"])
+        layers = HEADER + "PRINT_START TOOL=0\n;LAYER_CHANGE\nT0\nG1 X1 E1\n" + CONFIG
+        code, _ = self.start(self.print_params(filename=self.project(layers), task_record_timelapse=True))
+        self.assertEqual(code, 0)
+        self.assertNotIn("TIMELAPSE_TAKE_FRAME", self.fake.uploads["Cube_box_plate_1.gcode"].decode())
+        self.assertNotIn("/machine/timelapse/settings", [p for m, p, _ in self.fake.requests if m == "POST"])
+
+    def test_the_component_without_its_macro_is_no_timelapse(self):
+        self.fake.timelapse = {"enabled": False}
+        self.connect()
+        self.assertFalse(self.push()["support_timelapse"])
 
     def test_a_stored_file_prints_on_the_dialogs_trays(self):
         self.connect()

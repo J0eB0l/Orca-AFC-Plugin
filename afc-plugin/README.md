@@ -191,7 +191,11 @@ Then:
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds
   (and drops a U1's chamber lines), uploads the file to Moonraker and starts it.
   On a Snapmaker U1, the dialog's bed leveling, flow calibration and timelapse
-  switches go into the file. In the AFC build the dialog warns when a spool
+  switches go into the file. On a printer running moonraker-timelapse (its
+  Moonraker component and its `TIMELAPSE_TAKE_FRAME` macro), the dialog's
+  **Timelapse** switch turns moonraker-timelapse on or off for the print, and a
+  file whose printer preset has no Time lapse G-code takes a frame before each
+  `;LAYER_CHANGE`. **Upload** leaves moonraker-timelapse as it is. In the AFC build the dialog warns when a spool
   (with its runout lanes) has less filament left than the print uses, when the
   file prints with more toolheads than Klipper's config has, and when a
   toolhead's `nozzle_diameter` differs from the preset's; **Check spools before

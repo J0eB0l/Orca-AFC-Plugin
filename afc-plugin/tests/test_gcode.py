@@ -159,6 +159,22 @@ class PurgeTest(unittest.TestCase):
         self.assertTrue(out.splitlines(keepends=True)[1].endswith("\r\n"))
 
 
+class TimelapseTest(unittest.TestCase):
+    def test_a_frame_before_each_layer_change(self):
+        text = "PRINT_START\n;LAYER_CHANGE\n;Z:0.2\nG1 X1\n;LAYER_CHANGE\n;Z:0.4\nG1 X2\n"
+        self.assertEqual(g.add_timelapse_frames(text),
+                         "PRINT_START\nTIMELAPSE_TAKE_FRAME\n;LAYER_CHANGE\n;Z:0.2\nG1 X1\n"
+                         "TIMELAPSE_TAKE_FRAME\n;LAYER_CHANGE\n;Z:0.4\nG1 X2\n")
+
+    def test_a_file_that_takes_its_own_frames(self):
+        text = ";LAYER_CHANGE\n;Z:0.2\ntimelapse_take_frame\nG1 X1\n"
+        self.assertEqual(g.add_timelapse_frames(text), text)
+
+    def test_keeps_windows_line_ends(self):
+        self.assertEqual(g.add_timelapse_frames("G1 X1\r\n;LAYER_CHANGE\r\n"),
+                         "G1 X1\r\nTIMELAPSE_TAKE_FRAME\r\n;LAYER_CHANGE\r\n")
+
+
 class RenumberTest(unittest.TestCase):
     def test_tool_numbers_follow_the_mapping(self):
         body = ("M104 T0 S210\nM109 S220 T1 ; wait\nM104 A1 T1 S200\n"
@@ -196,6 +212,12 @@ class RenumberTest(unittest.TestCase):
         self.assertEqual(lines[3], "T4 PURGE_LENGTH=%s" % g._format(100 / area(1.75), 1))
         self.assertEqual(g.printed_tools(text), {0: 0, 1: 4, 2: 2})
         self.assertEqual(text.count("; AFC filament tools"), 1)
+
+    def test_remapped_onto_two_toolheads_the_old_purge_goes(self):
+        # Printed before with both filaments on toolhead 0's lanes, now on two toolheads: a tool change.
+        stored = "T4\nT2 PURGE_LENGTH=41.6\nT4 PURGE_LENGTH=45.7\n; AFC filament tools = 4,2,2\n" + config_block()
+        text = g.transform(stored, g.Plan(tools={0: 4, 1: 6}, toolheads={0: 0, 1: 1})).text
+        self.assertEqual(text.splitlines()[:3], ["T4", "T6", "T4"])
 
     def test_back_on_its_own_numbers_the_file_drops_the_line(self):
         stored = "T4\n; AFC filament tools = 4,1,2\n" + config_block()
