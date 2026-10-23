@@ -640,6 +640,34 @@ public:
     // Orca: a printer agent's own error or warning, shown on the Device tab until cleared (clear_agent_message)
     std::string agent_message;
     bool        agent_message_is_error {false};
+    // Orca: a printer agent's log on the Assistant page (agent_log): its last lines, each with its level
+    // ('e' error, 'w' warning, 'i' info, 'd' debug, 'r' raw), and the errors and warnings since the page's
+    // Clear (clear_agent_log). file is the log's path in Moonraker's files, from which the page downloads it.
+    struct AgentLogProblem
+    {
+        bool        error {false};
+        std::string time;
+        std::string text;
+        int         count {1};
+    };
+    struct AgentLog
+    {
+        std::string                               name;
+        std::string                               file;
+        std::vector<std::pair<char, std::string>> lines;
+        std::vector<AgentLogProblem>              problems;
+    };
+    AgentLog agent_log;
+    // Orca: the version of the printer agent's filament system (AFC) on the Update page (afc_version): the one
+    // installed, the newest on each branch of its repository, whether one is newer, and the repository's page.
+    struct AgentVersion
+    {
+        std::string                        installed;
+        std::map<std::string, std::string> latest;
+        bool                               newer {false};
+        std::string                        url;
+    };
+    AgentVersion agent_version;
 
     bool is_support_filament_backup{false};
     bool is_support_timelapse{false};
@@ -771,6 +799,7 @@ public:
     int command_clean_print_error(std::string task_id, int print_error);
     int command_clean_print_error_uiop(int print_error);
     int command_clear_agent_message();
+    int command_clear_agent_log();
     int command_set_printer_nozzle(std::string nozzle_type, float diameter);
     int command_set_printer_nozzle2(int id, std::string nozzle_type, float diameter);
     int command_get_access_code();

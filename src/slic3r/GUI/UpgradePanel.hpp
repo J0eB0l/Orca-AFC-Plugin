@@ -177,6 +177,19 @@ protected:
     wxStaticText*   m_nozzle_rack_text = nullptr;
     Button*         m_nozzle_rack_update_btn = nullptr;
 
+    /* Orca: a printer agent's filament system (AFC): its version, the newest on GitHub, and its page there */
+    wxStaticLine*   m_afc_line_above = nullptr;
+    wxBoxSizer*     m_afc_sizer = nullptr;
+    wxStaticBitmap* m_afc_img = nullptr;
+    wxStaticBitmap* m_afc_new_version_img = nullptr;
+    wxStaticText*   m_afc_ver_val = nullptr;
+    wxStaticText*   m_afc_latest_val = nullptr;
+    Button*         m_afc_github = nullptr;
+    ScalableBitmap  m_img_afc;
+    std::string     m_afc_url;
+    // Orca: the printer image is its printer preset's (a printer agent's printer has no Bambu model image)
+    bool            m_preset_thumbnail = false;
+
     /* upgrade widgets */
     wxBoxSizer*     m_upgrading_sizer;
     wxStaticText *  m_staticText_upgrading_info;
@@ -262,6 +275,7 @@ private:
     void createExhaustFan(wxBoxSizer* main_left_sizer);         // Orca: accessory firmware version display
     void createAmshubWidgets(wxBoxSizer* main_left_sizer);      // Orca: accessory firmware version display
     void createNozzleRackWidgets(wxBoxSizer* main_left_sizer);
+    void createAfcWidgets(wxBoxSizer* main_left_sizer);         // Orca: a printer agent's AFC version
 
     void update_air_pump(MachineObject* obj);
     void update_cut(MachineObject* obj);
@@ -272,6 +286,7 @@ private:
     void update_exhaustfan(MachineObject* obj);                 // Orca: accessory firmware version display
     void update_amshub(MachineObject* obj);                     // Orca: accessory firmware version display
     void update_nozzle_rack(MachineObject* obj);
+    void update_afc(MachineObject* obj);                        // Orca: a printer agent's AFC version
 
     void show_air_pump(bool show = true);
     void show_cut(bool show = true);
@@ -282,6 +297,7 @@ private:
     void show_exhaustfan(bool show = true);                     // Orca: accessory firmware version display
     void show_amshub(bool show = true);                         // Orca: accessory firmware version display
     void show_nozzle_rack(bool show = true);
+    void show_afc(bool show = true);                            // Orca: a printer agent's AFC version
 
     void on_nozzle_rack_update(wxCommandEvent& event);
 };

@@ -1513,6 +1513,15 @@ int MachineObject::command_clear_agent_message()
     return this->publish_json(j);
 }
 
+// Orca: drops the errors and warnings the Assistant page lists from the printer agent's log (agent_log).
+int MachineObject::command_clear_agent_log()
+{
+    json j;
+    j["print"]["command"]     = "clear_agent_log";
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 int MachineObject::command_upgrade_confirm()
 {
     BOOST_LOG_TRIVIAL(info) << "command_upgrade_confirm";
@@ -3302,6 +3311,33 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     const json& message    = jj["agent_message"];
                     agent_message          = message.contains("text") && message["text"].is_string() ? message["text"].get<std::string>() : std::string();
                     agent_message_is_error = message.contains("type") && message["type"] == "error";
+                }
+                if (jj.contains("agent_log") && jj["agent_log"].is_object()) {
+                    const json& log = jj["agent_log"];
+                    agent_log       = AgentLog();
+                    agent_log.name  = log.value("name", std::string());
+                    agent_log.file  = log.value("file", std::string());
+                    for (const json& line : log.value("lines", json::array()))
+                        if (line.is_array() && line.size() == 2 && line[0].is_string() && line[1].is_string()) {
+                            const std::string level = line[0].get<std::string>();
+                            agent_log.lines.emplace_back(level.empty() ? 'i' : level[0], line[1].get<std::string>());
+                        }
+                    for (const json& problem : log.value("problems", json::array()))
+                        if (problem.is_object())
+                            agent_log.problems.push_back({problem.value("type", std::string()) == "error",
+                                                          problem.value("time", std::string()),
+                                                          problem.value("text", std::string()), problem.value("count", 1)});
+                }
+                if (jj.contains("afc_version") && jj["afc_version"].is_object()) {
+                    const json& version     = jj["afc_version"];
+                    agent_version           = AgentVersion();
+                    agent_version.installed = version.value("installed", std::string());
+                    agent_version.newer     = version.value("newer", false);
+                    agent_version.url       = version.value("url", std::string());
+                    const json latest       = version.value("latest", json::object());
+                    for (const auto& [branch, newest] : latest.items())
+                        if (newest.is_string())
+                            agent_version.latest[branch] = newest.get<std::string>();
                 }
 
               m_fan->ParseV2_0(jj);

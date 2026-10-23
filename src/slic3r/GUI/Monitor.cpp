@@ -430,7 +430,9 @@ void MonitorPanel::update_all()
         m_media_file_panel->UpdateByObj(obj);
     }
 
-    if (current_page == m_hms_panel || (obj->GetHMS()->GetHMSItems().size() != m_hms_panel->temp_hms_list.size())) {
+    // Orca: a printer agent's log too, so its new errors tag the page
+    if (current_page == m_hms_panel || !obj->agent_log.name.empty() ||
+        (obj->GetHMS()->GetHMSItems().size() != m_hms_panel->temp_hms_list.size())) {
         m_hms_panel->update(obj);
     }
 
@@ -439,6 +441,11 @@ void MonitorPanel::update_all()
 
 void MonitorPanel::update_hms_tag()
 {
+    // Orca: a printer agent's log error or warning not yet seen
+    if (m_hms_panel->has_unread_agent_log()) {
+        m_tabpanel->GetBtnsListCtrl()->showNewTag(3, true);
+        return;
+    }
     for (auto hmsitem : m_hms_panel->temp_hms_list) {
 
         if (!obj) { break;}

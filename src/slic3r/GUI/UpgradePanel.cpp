@@ -28,6 +28,10 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "Plater.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
+#include <wx/statline.h>
+#include <wx/utils.h>
 #include "libslic3r/Thread.hpp"
 
 #include "DeviceCore/DevFilaSystem.h"
@@ -243,6 +247,7 @@ MachineInfoPanel::MachineInfoPanel(wxWindow* parent, wxWindowID id, const wxPoin
     createRotaryWidgets(m_main_left_sizer);   // Orca: accessory firmware version display
     createExhaustFan(m_main_left_sizer);      // Orca: accessory firmware version display
     createAmshubWidgets(m_main_left_sizer);   // Orca: accessory firmware version display
+    createAfcWidgets(m_main_left_sizer);      // Orca: a printer agent's AFC version
 
     // nozzle rack widgets (H2C induction hotend rack; hidden unless GetNozzleRack()->IsSupported())
     createNozzleRackWidgets(m_main_left_sizer);
@@ -547,6 +552,7 @@ void MachineInfoPanel::init_bitmaps()
         m_img_extinguish     = ScalableBitmap(this, "extinguish", 160);
         m_img_filatrack      = ScalableBitmap(this, "filament_track_switch", 160);
         m_img_nozzle_rack    = ScalableBitmap(this, "nozzle_rack", 160);
+        m_img_afc            = ScalableBitmap(this, "afc_update", 160);
 
         upgrade_green_icon   = ScalableBitmap(this, "monitor_upgrade_online", 5);
         upgrade_gray_icon    = ScalableBitmap(this, "monitor_upgrade_offline", 5);
@@ -564,7 +570,10 @@ void MachineInfoPanel::init_bitmaps()
 void MachineInfoPanel::rescale_bitmaps()
 {
     m_img_printer.msw_rescale();
-    m_printer_img->SetBitmap(m_img_printer.bmp());
+    m_printer_img->SetBitmap(m_preset_thumbnail ? Sidebar::get_printer_thumbnail(this, 160) : m_img_printer.bmp());
+    m_img_afc.msw_rescale();
+    m_afc_img->SetBitmap(m_img_afc.bmp());
+    m_afc_new_version_img->SetBitmap(upgrade_green_icon.bmp());
     m_img_monitor_ams.msw_rescale();
     m_ams_img->SetBitmap(m_img_monitor_ams.bmp());
     m_img_ext.msw_rescale();
@@ -589,12 +598,15 @@ void MachineInfoPanel::update_printer_imgs(MachineObject* obj)
     if (!obj) {return;}
     auto img = obj->get_printer_thumbnail_img_str();
     img += "_png";
+    // Orca: a printer agent's printer has no Bambu model image; it shows its printer preset's, as the sidebar does.
+    m_preset_thumbnail = img == "printer_thumbnail_png" && !obj->printer_agent_id.empty() &&
+                         obj->printer_agent_id != BBL_PRINTER_AGENT_ID;
 
     try
     {
         m_img_extra_ams = ScalableBitmap(this, "extra_icon_png", 160);
         m_img_printer   = ScalableBitmap(this, img, 160);
-        m_printer_img->SetBitmap(m_img_printer.bmp());
+        m_printer_img->SetBitmap(m_preset_thumbnail ? Sidebar::get_printer_thumbnail(this, 160) : m_img_printer.bmp());
         m_printer_img->Refresh();
         m_extra_ams_img->SetBitmap(m_img_extra_ams.bmp());
         m_extra_ams_img->Refresh();
@@ -660,6 +672,7 @@ void MachineInfoPanel::update(MachineObject* obj)
         update_exhaustfan(obj);   // Orca: accessory firmware version display
         update_amshub(obj);       // Orca: accessory firmware version display
         update_nozzle_rack(obj);
+        update_afc(obj);          // Orca: a printer agent's AFC version
 
         //update progress
         int upgrade_percent = obj->get_upgrade_percent();
@@ -1537,6 +1550,90 @@ void MachineInfoPanel::show_nozzle_rack(bool show)
         m_nozzle_rack_update_btn->Show(show);
         m_nozzle_rack_img->Show(show);
         m_nozzle_rack_text->Show(show);
+    }
+}
+
+void MachineInfoPanel::createAfcWidgets(wxBoxSizer* main_left_sizer)
+{
+    m_afc_line_above = new wxStaticLine(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL);
+    m_afc_line_above->SetBackgroundColour(wxColour(206, 206, 206));
+    main_left_sizer->Add(m_afc_line_above, 0, wxEXPAND | wxLEFT, FromDIP(40));
+
+    m_afc_img = new wxStaticBitmap(this, wxID_ANY, wxNullBitmap, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(200)));
+    m_afc_img->SetBitmap(m_img_afc.bmp());
+
+    auto info = new wxFlexGridSizer(0, 2, 0, 0);
+    info->AddGrowableCol(1);
+    info->SetFlexibleDirection(wxHORIZONTAL);
+    info->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
+    auto name_label = [this](const wxString& text) {
+        auto label = new wxStaticText(this, wxID_ANY, text);
+        label->SetFont(Label::Head_14);
+        return label;
+    };
+
+    info->Add(name_label(_L("Model:")), 0, wxALIGN_RIGHT | wxALL, FromDIP(5));
+    info->Add(new wxStaticText(this, wxID_ANY, "AFC"), 0, wxALL | wxEXPAND, FromDIP(5));
+
+    auto version_name = new wxBoxSizer(wxHORIZONTAL);
+    version_name->Add(0, 0, 1, wxEXPAND, 0);
+    m_afc_new_version_img = new wxStaticBitmap(this, wxID_ANY, upgrade_green_icon.bmp(), wxDefaultPosition, wxSize(FromDIP(5), FromDIP(5)));
+    m_afc_new_version_img->Hide();
+    version_name->Add(m_afc_new_version_img, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    version_name->Add(name_label(_L("Version:")), 0, wxALL, FromDIP(5));
+    info->Add(version_name, 0, wxEXPAND, 0);
+    m_afc_ver_val = new wxStaticText(this, wxID_ANY, "-");
+    info->Add(m_afc_ver_val, 0, wxALL | wxEXPAND, FromDIP(5));
+
+    // TRN The newest versions of AFC on GitHub, such as "1.2.8 (DEV), 1.2.0 (main)"
+    info->Add(name_label(_L("Latest:")), 0, wxALIGN_RIGHT | wxALL, FromDIP(5));
+    m_afc_latest_val = new wxStaticText(this, wxID_ANY, "-");
+    info->Add(m_afc_latest_val, 0, wxALL | wxEXPAND, FromDIP(5));
+
+    m_afc_github = new Button(this, _L("View on GitHub"));
+    m_afc_github->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+    m_afc_github->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!m_afc_url.empty())
+            wxLaunchDefaultBrowser(from_u8(m_afc_url));
+    });
+
+    auto content = new wxBoxSizer(wxVERTICAL);
+    content->Add(0, 0, 1, wxEXPAND, 0);
+    content->Add(info, 0, wxEXPAND, 0);
+    content->Add(m_afc_github, 0, wxLEFT | wxTOP, FromDIP(10));
+    content->Add(0, 0, 1, wxEXPAND, 0);
+
+    m_afc_sizer = new wxBoxSizer(wxHORIZONTAL);
+    m_afc_sizer->Add(m_afc_img, 0, wxALIGN_TOP | wxALL, FromDIP(5));
+    m_afc_sizer->Add(content, 1, wxEXPAND, 0);
+    main_left_sizer->Add(m_afc_sizer, 0, wxEXPAND, 0);
+    main_left_sizer->Hide(m_afc_sizer);
+    m_afc_line_above->Hide();
+}
+
+void MachineInfoPanel::update_afc(MachineObject* obj)
+{
+    const MachineObject::AgentVersion& afc = obj->agent_version;
+    show_afc(!afc.installed.empty());
+    if (afc.installed.empty())
+        return;
+    m_afc_ver_val->SetLabelText(from_u8(afc.installed));
+    wxString latest;
+    for (const auto& [branch, version] : afc.latest)
+        latest += wxString(latest.empty() ? "" : ", ") + from_u8(version) + " (" + from_u8(branch) + ")";
+    m_afc_latest_val->SetLabelText(latest.empty() ? wxString("-") : latest);
+    m_afc_new_version_img->Show(afc.newer);
+    m_afc_url = afc.url;
+    m_afc_github->Enable(!m_afc_url.empty());
+}
+
+void MachineInfoPanel::show_afc(bool show)
+{
+    if (m_afc_line_above->IsShown() != show) {
+        m_afc_line_above->Show(show);
+        m_afc_sizer->ShowItems(show);
+        if (show)
+            m_afc_new_version_img->Hide(); // update_afc() shows it when a newer version is out
     }
 }
 

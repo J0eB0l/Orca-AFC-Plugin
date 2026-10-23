@@ -10,10 +10,16 @@
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
 #include <slic3r/GUI/Widgets/Button.hpp>
+#include <slic3r/GUI/Widgets/CheckBox.hpp>
+#include <slic3r/GUI/Widgets/Label.hpp>
 #include <slic3r/GUI/DeviceManager.hpp>
 #include <slic3r/GUI/Widgets/ScrolledWindow.hpp>
 #include <slic3r/GUI/StatusPanel.hpp>
 #include <wx/html/htmlwin.h>
+#include <atomic>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "DeviceCore/DevHMS.h"
 
@@ -49,11 +55,50 @@ public:
 };
 
 
+// Orca: a printer agent's log on the Assistant page (MachineObject::agent_log): the errors and warnings
+// since the last Clear, the log's last lines, and a download of the whole log from the printer's Moonraker.
+class AgentLogPanel : public wxPanel
+{
+public:
+    explicit AgentLogPanel(wxWindow* parent);
+    ~AgentLogPanel() override;
+
+    void update(MachineObject* obj);
+    // Whether it lists an error or warning newer than the ones shown while the page was on screen.
+    bool has_unread() const;
+
+private:
+    void show_problems(const std::vector<MachineObject::AgentLogProblem>& problems);
+    void show_lines();
+    void download();
+
+    std::string m_dev_id;
+    std::string m_name;
+    std::string m_url; // the log's address in the printer's Moonraker
+    std::string m_api_key;
+    std::vector<std::pair<char, std::string>>     m_lines;
+    std::vector<MachineObject::AgentLogProblem>   m_problems;
+    std::string                                   m_newest; // the newest problem listed
+    std::string                                   m_read;   // the newest problem seen on screen
+
+    Label*            m_problems_title;
+    Button*           m_clear;
+    Button*           m_download;
+    wxScrolledWindow* m_problems_list;
+    wxBoxSizer*       m_problems_sizer;
+    Label*            m_log_title;
+    ::CheckBox*       m_debug;
+    wxTextCtrl*       m_log;
+
+    std::shared_ptr<std::atomic<bool>> m_alive;
+};
+
 class HMSPanel : public wxPanel
 {
 protected:
     wxScrolledWindow *m_scrolledWindow;
     wxBoxSizer *      m_top_sizer;
+    AgentLogPanel *   m_agent_log;
 
     int last_status;
 
@@ -74,6 +119,9 @@ public:
     void show_status(int status);
 
     void clear_hms_tag();
+
+    // Orca: an agent log error or warning not yet seen, for the page's new tag.
+    bool has_unread_agent_log() const { return m_agent_log->IsShown() && m_agent_log->has_unread(); }
 
     MachineObject *obj { nullptr };
     std::map<std::string, DevHMSItem>    temp_hms_list;
