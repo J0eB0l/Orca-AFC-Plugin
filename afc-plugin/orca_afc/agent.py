@@ -267,15 +267,16 @@ def _layers(state: str, stats: dict, position, job: dict):
 
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
-                nozzles=()) -> dict:
+                nozzles=(), files_url: str = "") -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
     (trays.ams_json()), `lights` are the printer's lights, which the lamp
     shows, `job` the print file's job_info(), `chamber` the Klipper object
     that reads the chamber's temperature (controls.find_chamber()),
-    `swap_times` AFC's measured change times (swaptimes.Tracker.times()) and
-    `nozzles` each toolhead's nozzle size (toolhead_nozzles())."""
+    `swap_times` AFC's measured change times (swaptimes.Tracker.times()),
+    `nozzles` each toolhead's nozzle size (toolhead_nozzles()) and `files_url`
+    the printer's Moonraker, whose files the Device tab's Storage page lists."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -318,6 +319,10 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     if nozzles:
         # ... and its print dialog checks the file's toolheads and nozzle sizes against them.
         out["toolhead_nozzles"] = list(nozzles)
+    if files_url:
+        # ... and its Storage page lists the G-code files and moonraker-timelapse videos there,
+        # with the printer's access code as the API key.
+        out["ipcam"] = {"file": {"local": "moonraker", "url": files_url, "model_download": "enabled"}}
     nozzle = obj(str(toolhead.get("extruder") or "extruder"))
     bed = obj("heater_bed")
     for key, source, name in (("nozzle_temper", nozzle, "temperature"), ("nozzle_target_temper", nozzle, "target"),
@@ -787,7 +792,7 @@ else:
             self._nozzles(printer)
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
-                                  printer.nozzles)
+                                  printer.nozzles, printer.client.url)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 

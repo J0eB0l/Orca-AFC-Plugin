@@ -176,6 +176,10 @@ Then:
   without Moonraker's port 7125. A webcam named for the nozzle or tool alignment
   (nozzle, tool, align, calib, ktamv or offset in its name) plays only when no
   other is set up.
+- In the AFC build, the Device tab's **Storage** page lists the printer's G-code
+  files under **Model**, with their thumbnails, print time and weight, and the
+  moonraker-timelapse videos under **Timelapse**. Files download and delete there,
+  and **Print** on a G-code file starts it as it is, after asking.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

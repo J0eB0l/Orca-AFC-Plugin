@@ -604,6 +604,11 @@ class DeviceTabTest(Case):
         push = self.push()
         self.assertEqual((push["support_chamber"], push["chamber_temper"], "ctt" in push), (True, 38.6, False))
 
+    def test_storage_page_files(self):
+        self.connect()
+        self.assertEqual(self.push()["ipcam"]["file"],
+                         {"local": "moonraker", "url": self.fake.url, "model_download": "enabled"})
+
     def test_no_chamber(self):
         self.connect()
         push = self.push()
