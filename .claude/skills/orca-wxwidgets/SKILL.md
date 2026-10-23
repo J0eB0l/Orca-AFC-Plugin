@@ -15,8 +15,8 @@ wrong → right pairs with the commit that fixed each one.
 
 ## Ground truth: the wx tree in deps/
 
-Orca pins **wxWidgets 3.3.2** from the fork `github.com/SoftFever/Orca-deps-wxWidgets` (tag `v3.3.2`,
-`deps/wxWidgets/wxWidgets.cmake`), built static (Flatpak: shared). Facts about this build that change
+Orca pins **wxWidgets 3.3.2** from the fork `github.com/SoftFever/Orca-deps-wxWidgets` (a commit of
+its `v3.3.2` branch, `deps/wxWidgets/wxWidgets.cmake`), built static (Flatpak: shared). Facts about this build that change
 how you read the wx docs:
 
 - **Linux builds against GTK3** (`DEP_WX_GTK3` defaults ON in `deps/CMakeLists.txt`). Target GTK3 on

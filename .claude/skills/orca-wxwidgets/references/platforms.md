@@ -60,8 +60,8 @@ Contents: [Rules](#rules) · [The wx build Orca uses](#the-wx-build-orca-uses) �
 
 ### Source, pin and local patch
 
-- `deps/wxWidgets/wxWidgets.cmake` builds `https://github.com/SoftFever/Orca-deps-wxWidgets` at tag
-  **`v3.3.2`** (`GIT_SHALLOW ON`, submodules `3rdparty/catch`, `3rdparty/pcre` and `3rdparty/libwebp`
+- `deps/wxWidgets/wxWidgets.cmake` builds `https://github.com/SoftFever/Orca-deps-wxWidgets` at a
+  commit of its **`v3.3.2`** branch (`GIT_SHALLOW ON`, submodules `3rdparty/catch`, `3rdparty/pcre` and `3rdparty/libwebp`
   only). The fork carries Orca's build fixes, the clang-cl fix among them; do not duplicate
   a fork fix as a local patch under `deps/wxWidgets/` (cc390f11ee removed the local
   `0001-Clang-CL-fix.patch` once the fork carried the fix). The fork's clang-cl fix is the MSVC lib-dir
@@ -69,9 +69,9 @@ Contents: [Rules](#rules) · [The wx build Orca uses](#the-wx-build-orca-uses) �
   under the consuming compiler's prefix first and then the sibling one (`clang` ↔ `vc`), because cl
   and clang-cl share an ABI and either can consume either build
   (`build/cmake/wxWidgetsConfig.cmake.in:53-73`).
-- **The one local patch** is `deps/wxWidgets/0001-macos-use-srgb-colour-components.patch`, applied
-  only `if (APPLE)`. The `PATCH_COMMAND` first runs `git checkout -f -- src/osx/cocoa/colour.mm` and
-  then `git apply`, so the step can run again safely (a7775296b0). The patch makes the wxOSX
+- **No local patch.** The macOS sRGB colour fix was a local patch
+  (`0001-macos-use-srgb-colour-components.patch`, a7775296b0) until the fork's `v3.3.2` branch took
+  it and the patch stopped applying; it now comes from the fork. It makes the wxOSX
   `wxColour` component getters (`wxNSColorRefData::Red/Green/Blue/Alpha` and `IsSolid`) convert the
   `NSColor` with `[NSColorSpace sRGBColorSpace]` instead of `NSCalibratedRGBColorSpace`, so colours
   read back on macOS match their sRGB values (custom-colour accuracy). Colour usage:
@@ -80,8 +80,7 @@ Contents: [Rules](#rules) · [The wx build Orca uses](#the-wx-build-orca-uses) �
   `deps/build/<arch>/dep_wxWidgets-prefix/src/dep_wxWidgets` on macOS and
   `deps/<tree>/dep_wxWidgets-prefix/src/dep_wxWidgets` on Linux and Windows (`deps/build` for a
   release build; `build_win.bat` names the others). Locate it with the bash or PowerShell lookup in
-  `SKILL.md` §Ground truth. On macOS its
-  `src/osx/cocoa/colour.mm` already has the patch applied.
+  `SKILL.md` §Ground truth.
 - **Flatpak builds wx separately.** `deps/CMakeLists.txt` leaves `dep_wxWidgets` out of the deps
   target when `FLATPAK` is set. Instead, `scripts/flatpak/com.orcaslicer.OrcaSlicer.yml` has its own
   `wxWidgets` module whose config-opts "mirror deps/wxWidgets/wxWidgets.cmake with FLATPAK=ON,

@@ -70,7 +70,7 @@ Contents: [The stack](#the-stack-orcas-gui-is-built-on) ·
 ## The stack Orca's GUI is built on
 
 - **wxWidgets 3.3.2, SoftFever fork.** `deps/wxWidgets/wxWidgets.cmake` fetches
-  `https://github.com/SoftFever/Orca-deps-wxWidgets` at tag `v3.3.2` and builds it static
+  `https://github.com/SoftFever/Orca-deps-wxWidgets` at a commit of its `v3.3.2` branch and builds it static
   (`-DwxBUILD_SHARED=OFF`); Flatpak builds build it shared. Linux builds against **GTK3** by default
   (`option(DEP_WX_GTK3 "Build wxWidgets against GTK3" ON)` in `deps/CMakeLists.txt`, `SLIC3R_GTK`
   default `"3"`, Flatpak uses gtk3). GTK2 exists only as an opt-out (`-DDEP_WX_GTK3=OFF`) and loses
