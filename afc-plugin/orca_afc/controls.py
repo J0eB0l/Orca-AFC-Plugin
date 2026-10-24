@@ -146,7 +146,7 @@ def rfid_scan_gcode(lane: Lane, readers: dict) -> str:
         return "AFC_BAMBU_CAPSCAN LANE=" + name
     # A V1 ACE's firmware reads the tag; an ACE 2 needs AFC's reader on the lane.
     if unit_ok and kind.startswith("ACE") and (not kind.startswith("ACE2") or name in readers.get("AFC_ACE2_rfid", {})):
-        return "ACE_RFID_RESCAN UNIT=%s LANE=%s" % (unit, name)
+        return "AFC_ACE_RFID_RESCAN UNIT=%s LANE=%s" % (unit, name)
     return ""
 
 

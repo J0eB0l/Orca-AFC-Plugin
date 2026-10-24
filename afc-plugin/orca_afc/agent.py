@@ -1265,7 +1265,7 @@ else:
             if job.get("mode") == 0:
                 request = {"action": "stop"}
             elif not unit.dryer.online:
-                return ERR_CAP_NOT_AVAILABLE  # ACE_DRY would only answer "ACE not connected"
+                return ERR_CAP_NOT_AVAILABLE  # AFC_ACE_DRY would only answer "ACE not connected"
             else:
                 temp, hours = _number(job.get("temp")), _number(job.get("duration"))
                 if temp is None or hours is None:

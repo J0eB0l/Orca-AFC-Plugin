@@ -386,8 +386,8 @@ class DryerTest(unittest.TestCase):
                               "AFC_BambuAMS Bambu_AMS_1": {"has_heater": True, "dry_max_temp": 65}}, s)
         self.assertEqual(p.build_dry_gcode(s, "Ace2_1", {"action": "start", "temp": 55, "minutes": 240,
                                                          "rotate": True}),
-                         "ACE_DRY UNIT=Ace2_1 TEMP=55 DURATION=240 ROTATE=1")
-        self.assertEqual(p.build_dry_gcode(s, "Ace2_1", {"action": "stop"}), "ACE_DRY_STOP UNIT=Ace2_1")
+                         "AFC_ACE_DRY UNIT=Ace2_1 TEMP=55 DURATION=240 ROTATE=1")
+        self.assertEqual(p.build_dry_gcode(s, "Ace2_1", {"action": "stop"}), "AFC_ACE_DRY_STOP UNIT=Ace2_1")
         self.assertEqual(p.build_dry_gcode(s, "Bambu_AMS_1", {"action": "start", "temp": 65, "minutes": 480}),
                          "AFC_BAMBU_HEATER_START UNIT=Bambu_AMS_1 TEMP=65 TIME=480 ROTATE=0")
         self.assertEqual(p.build_dry_gcode(s, "Bambu_AMS_1", {"action": "stop"}),

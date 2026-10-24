@@ -52,11 +52,11 @@ class RfidTest(unittest.TestCase):
 
     def test_each_units_own_command(self):
         self.assertEqual(self.scan(lane("lane5", 4, "Bambu_AMS_1", "BambuAMS")), "AFC_BAMBU_CAPSCAN LANE=lane5")
-        self.assertEqual(self.scan(lane("lane1", 0, "Ace_1", "ACE")), "ACE_RFID_RESCAN UNIT=Ace_1 LANE=lane1")
+        self.assertEqual(self.scan(lane("lane1", 0, "Ace_1", "ACE")), "AFC_ACE_RFID_RESCAN UNIT=Ace_1 LANE=lane1")
         readers = {"AFC_ACE2_rfid": {"lane2": 1}, "AFC_OpenAMS_rfid": {"lane9": 0},
                    "AFC_BoxTurtle_rfid": {"lane8": "reader0"}, "AFC_Vivid_rfid": {"lane3": 2},
                    "AFC_U1_rfid": {"e0": 0}}
-        self.assertEqual(self.scan(lane("lane2", 1, "Ace2_1", "ACE2"), readers), "ACE_RFID_RESCAN UNIT=Ace2_1 LANE=lane2")
+        self.assertEqual(self.scan(lane("lane2", 1, "Ace2_1", "ACE2"), readers), "AFC_ACE_RFID_RESCAN UNIT=Ace2_1 LANE=lane2")
         self.assertEqual(self.scan(lane("lane9", 8, "OpenAMS_1", "OpenAMS"), readers),
                          "AFC_OAMS_RFID_SCAN UNIT=OpenAMS_1 LANE=lane9")
         self.assertEqual(self.scan(lane("lane8", 7), readers), "AFC_BT_RFID_STAGE LANE=lane8")

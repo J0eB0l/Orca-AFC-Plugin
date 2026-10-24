@@ -119,7 +119,7 @@ Then:
   filaments onto lanes that way) is still one tray, under its own T number. A Bambu AMS Lite
   (`ams_model: lite`) of four lanes is drawn as an AMS Lite. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
   humidity and temperature; clicking the humidity opens OrcaSlicer's drying
-  popup, which starts and stops the unit's dryer (ACE_DRY or
+  popup, which starts and stops the unit's dryer (AFC_ACE_DRY or
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
   dries cooler (an ACE's 55 °C) dries at its most. A unit that is not
   connected cannot start; in the AFC build the popup says so. AFC units that would need
@@ -163,7 +163,7 @@ Then:
   also has the spool's Factor K, saved as its Spoolman `flow_k`. A lane
   without a Spoolman spool keeps its K in the plugin until OrcaSlicer closes,
   and sync and prints use it as they would a spool's. A tray's refresh button reads the spool's
-  tag again with the command of the lane's unit (AFC_BAMBU_CAPSCAN, ACE_RFID_RESCAN,
+  tag again with the command of the lane's unit (AFC_BAMBU_CAPSCAN, AFC_ACE_RFID_RESCAN,
   AFC_OAMS_RFID_SCAN, AFC_BT_RFID_STAGE, VIVID_RFID_READ or the U1's
   FILAMENT_DT_UPDATE); a lane with no reader says so. A Bambu AMS pulls the
   spool in, reads its tag and measures it, as on an insert, and refuses while

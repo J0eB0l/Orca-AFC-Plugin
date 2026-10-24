@@ -679,7 +679,7 @@ def build_dry_gcode(snapshot: Snapshot, unit_name: str, request: dict) -> str:
     d = unit.dryer
     action = request.get("action") if isinstance(request, dict) else None
     if action == "stop":
-        return ("ACE_DRY_STOP UNIT=" if d.kind == "ace" else "AFC_BAMBU_HEATER_STOP UNIT=") + unit_name
+        return ("AFC_ACE_DRY_STOP UNIT=" if d.kind == "ace" else "AFC_BAMBU_HEATER_STOP UNIT=") + unit_name
     if action != "start":
         raise AFCError("Unknown dryer action")
     temp_v, minutes_v = request.get("temp"), request.get("minutes")
@@ -694,7 +694,7 @@ def build_dry_gcode(snapshot: Snapshot, unit_name: str, request: dict) -> str:
     rotate_v = request.get("rotate", False)
     rotate = rotate_v if isinstance(rotate_v, bool) else (_is_number(rotate_v) and rotate_v != 0)
     if d.kind == "ace":
-        return "ACE_DRY UNIT=%s TEMP=%d DURATION=%d ROTATE=%d" % (unit_name, temp, minutes, 1 if rotate else 0)
+        return "AFC_ACE_DRY UNIT=%s TEMP=%d DURATION=%d ROTATE=%d" % (unit_name, temp, minutes, 1 if rotate else 0)
     return "AFC_BAMBU_HEATER_START UNIT=%s TEMP=%d TIME=%d ROTATE=%d" % (unit_name, temp, minutes, 1 if rotate else 0)
 
 
