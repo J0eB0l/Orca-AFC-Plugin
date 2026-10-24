@@ -1514,27 +1514,36 @@ indexed_triangle_set TriangleSelector::get_facets(EnforcerBlockerType state) con
 // BBS
 void TriangleSelector::get_facets(std::vector<indexed_triangle_set>& facets_per_type) const
 {
-    facets_per_type.clear();
+    facets_per_type.assign(size_t(EnforcerBlockerType::ExtruderMax) + 1, indexed_triangle_set());
 
-    for (int type = (int)EnforcerBlockerType::NONE; type <= (int)EnforcerBlockerType::ExtruderMax; type++) {
-        facets_per_type.emplace_back();
-        indexed_triangle_set& its = facets_per_type.back();
-        std::vector<int> vertex_map(m_vertices.size(), -1);
+    // Group the leaf triangles by state first, so the triangles are walked once whatever ExtruderMax
+    // is, then build each state's mesh with one shared vertex map.
+    std::vector<std::vector<int>> triangles_per_type(facets_per_type.size());
+    for (int tr_idx = 0; tr_idx < int(m_triangles.size()); ++tr_idx) {
+        const Triangle& tr = m_triangles[tr_idx];
+        if (tr.valid() && !tr.is_split() && size_t(tr.get_state()) < triangles_per_type.size())
+            triangles_per_type[size_t(tr.get_state())].emplace_back(tr_idx);
+    }
 
-        for (const Triangle& tr : m_triangles) {
-            if (tr.valid() && !tr.is_split() && tr.get_state() == (EnforcerBlockerType)type) {
-                stl_triangle_vertex_indices indices;
-                for (int i = 0; i < 3; ++i) {
-                    int j = tr.verts_idxs[i];
-                    if (vertex_map[j] == -1) {
-                        vertex_map[j] = int(its.vertices.size());
-                        its.vertices.emplace_back(m_vertices[j].v);
-                    }
-                    indices[i] = vertex_map[j];
+    std::vector<int> vertex_map(m_vertices.size(), -1);
+    for (size_t type = 0; type < triangles_per_type.size(); ++type) {
+        indexed_triangle_set& its = facets_per_type[type];
+        for (const int tr_idx : triangles_per_type[type]) {
+            stl_triangle_vertex_indices indices;
+            for (int i = 0; i < 3; ++i) {
+                int j = m_triangles[tr_idx].verts_idxs[i];
+                if (vertex_map[j] == -1) {
+                    vertex_map[j] = int(its.vertices.size());
+                    its.vertices.emplace_back(m_vertices[j].v);
                 }
-                its.indices.emplace_back(indices);
+                indices[i] = vertex_map[j];
             }
+            its.indices.emplace_back(indices);
         }
+        // Clear just the entries this state set, ready for the next state.
+        for (const int tr_idx : triangles_per_type[type])
+            for (const int j : m_triangles[tr_idx].verts_idxs)
+                vertex_map[j] = -1;
     }
 }
 

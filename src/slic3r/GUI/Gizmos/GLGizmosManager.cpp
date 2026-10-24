@@ -1075,40 +1075,36 @@ bool GLGizmosManager::on_key(wxKeyEvent& evt)
                     keyCode = keyCode- WXK_NUMPAD0+'0';
                 }
                 if (keyCode >= '0' && keyCode <= '9') {
-                    // The paint palette reaches EXTRUDERS_LIMIT slots (mixed-color filaments take
-                    // ordinary slots too), so any leading digit that can start a valid two-digit
-                    // number waits briefly for a second one.
+                    // The paint palette can hold up to EXTRUDERS_LIMIT slots (mixed-color filaments
+                    // take ordinary slots too), so a number that one more digit could still turn
+                    // into a palette entry waits briefly for that digit.
                     const int digit        = keyCode - '0';
-                    const int shortcut_max = int(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT);
-                    auto can_start_two_digit = [](int d) { return d > 0 && d * 10 <= shortcut_max; };
+                    const int shortcut_max = int(mmu_seg->get_extruders_count());
                     auto select = [mmu_seg](int number) { return number > 0 && mmu_seg->on_number_key_down(number); };
+                    auto enter  = [this, shortcut_max, &select](int number) {
+                        if (number > 0 && number * 10 <= shortcut_max) {
+                            m_pending_color_shortcut = number;
+                            m_timer_set_color.StartOnce(500);
+                            return true;
+                        }
+                        return select(number);
+                    };
 
-                    if (m_timer_set_color.IsRunning() && m_pending_color_shortcut_tens > 0) {
-                        const int two_digit = m_pending_color_shortcut_tens * 10 + digit;
-                        const int pending   = m_pending_color_shortcut_tens;
-                        m_pending_color_shortcut_tens = 0;
+                    if (m_timer_set_color.IsRunning() && m_pending_color_shortcut > 0) {
+                        const int pending  = m_pending_color_shortcut;
+                        const int extended = pending * 10 + digit;
+                        m_pending_color_shortcut = 0;
                         m_timer_set_color.Stop();
-                        if (two_digit <= shortcut_max) {
-                            processed = select(two_digit);
+                        if (extended <= shortcut_max) {
+                            processed = enter(extended);
                         } else {
-                            // Out of range: commit the pending digit, then treat this one as new input.
+                            // Out of range: commit the pending number, then treat this digit as new input.
                             processed = select(pending);
-                            if (can_start_two_digit(digit)) {
-                                m_pending_color_shortcut_tens = digit;
-                                m_timer_set_color.StartOnce(500);
-                                processed = true;
-                            } else {
-                                processed = select(digit) || processed;
-                            }
+                            processed = enter(digit) || processed;
                         }
                     }
-                    else if (can_start_two_digit(digit)) {
-                        m_pending_color_shortcut_tens = digit;
-                        m_timer_set_color.StartOnce(500);
-                        processed = true;
-                    }
                     else {
-                        processed = select(digit);
+                        processed = enter(digit);
                     }
                 }
             }
@@ -1139,15 +1135,15 @@ bool GLGizmosManager::on_key(wxKeyEvent& evt)
 
 void GLGizmosManager::on_set_color_timer(wxTimerEvent& evt)
 {
-    // No second digit arrived in time: commit the pending leading digit on its own.
-    if (m_current == MmSegmentation && m_pending_color_shortcut_tens > 0) {
+    // No further digit arrived in time: commit the number typed so far.
+    if (m_current == MmSegmentation && m_pending_color_shortcut > 0) {
         GLGizmoMmuSegmentation* mmu_seg = dynamic_cast<GLGizmoMmuSegmentation*>(get_current());
         if (mmu_seg != nullptr) {
-            mmu_seg->on_number_key_down(m_pending_color_shortcut_tens);
+            mmu_seg->on_number_key_down(m_pending_color_shortcut);
             m_parent.set_as_dirty();
         }
     }
-    m_pending_color_shortcut_tens = 0;
+    m_pending_color_shortcut = 0;
 }
 
 void GLGizmosManager::update_after_undo_redo(const UndoRedo::Snapshot& snapshot)

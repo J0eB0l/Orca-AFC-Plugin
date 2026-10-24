@@ -228,6 +228,55 @@ TEST_CASE("By-object G-code lists a mixed slot's components in the filament head
     CHECK(gc.find("; filament: 3") == std::string::npos);
 }
 
+TEST_CASE("By-object G-code reaches a mixed slot past the 64th", "[MixedFilament][Regression]")
+{
+    // Two physical filaments and 64 mixed slots of them, every region on the last slot, 66. A by-object
+    // print hands the G-code writer the slots its objects name, mixed ones included, so the extruder
+    // variables custom G-code reads by filament id have to reach slot 66 as well.
+    constexpr unsigned int slots = 66;
+    const char            *hex   = "0123456789ABCDEF";
+    std::string colors, is_mixed, components, ratios, zeros, empties;
+    for (unsigned int i = 0; i < slots; ++i) {
+        const bool        mixed = i >= 2;
+        const std::string sep   = i ? ";" : "";
+        colors     += sep + "#" + hex[i >> 4] + hex[i & 15] + "8040"; // distinct, see multifilament_config()
+        components += sep + (mixed ? "1,2" : "");
+        ratios     += sep + (mixed ? "0.5,0.5" : "");
+        empties    += sep;
+        is_mixed   += std::string(i ? "," : "") + (mixed ? "1" : "0");
+        zeros      += std::string(i ? "," : "") + "0";
+    }
+    DynamicPrintConfig config = multifilament_config(slots);
+    config.set_deserialize_strict({
+        {"filament_colour",                  colors},
+        {"filament_is_mixed",                is_mixed},
+        {"filament_mixed_components",        components},
+        {"filament_mixed_sublayer_ratios",   ratios},
+        {"filament_mixed_gradient",          zeros},
+        {"filament_mixed_gradient_range",    empties},
+        {"filament_mixed_gradient_curve",    empties},
+        {"filament_mixed_gradient_per_part", zeros},
+        {"enable_mixed_color_sublayer",      "0"},
+        {"print_sequence",                   "by object"},
+        {"outer_wall_filament_id",           "66"},
+        {"inner_wall_filament_id",           "66"},
+        {"sparse_infill_filament_id",        "66"},
+        {"internal_solid_filament_id",       "66"},
+        {"top_surface_filament_id",          "66"},
+        {"bottom_surface_filament_id",       "66"},
+        {"machine_start_gcode",              "; e_retracted entries: {size(e_retracted)}\n"},
+    });
+
+    Print print;
+    Model model;
+    init_print({cube(20), cube(20)}, print, model, config);
+    const std::string gc = Slic3r::Test::gcode(print);
+
+    REQUIRE(!gc.empty());
+    CHECK(gc.find("; filament: 1,2\n") != std::string::npos);
+    CHECK(gc.find("; e_retracted entries: 66\n") != std::string::npos);
+}
+
 TEST_CASE("Print::validate rejects a mixed filament as the wipe tower filament", "[MixedFilament]")
 {
     // The validate backstop refuses a mixed (virtual) slot as the wipe tower filament; the GUI hides

@@ -21,7 +21,7 @@
 
 namespace Slic3r {
 
-enum class EnforcerBlockerType : int8_t {
+enum class EnforcerBlockerType : uint8_t {
     // Maximum is 3. The value is serialized in TriangleSelector into 2 bits.
     NONE      = 0,
     ENFORCER  = 1,
@@ -29,8 +29,8 @@ enum class EnforcerBlockerType : int8_t {
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
     // States 3..17 are serialized into 6 bits using a 2 bit prefix code; each further 15 states
-    // take one more nibble (see TriangleSelector::serialize). ExtruderMax matches the last entry
-    // of CONST_FILAMENTS in Model.cpp, which encodes the same range for colored mesh imports.
+    // take one more nibble (see TriangleSelector::serialize). CONST_FILAMENTS in Model.cpp spells
+    // the same codes for colored mesh imports.
     Extruder1 = ENFORCER,
     Extruder2 = BLOCKER,
     Extruder3,
@@ -95,7 +95,10 @@ enum class EnforcerBlockerType : int8_t {
     Extruder62,
     Extruder63,
     Extruder64,
-    ExtruderMax = Extruder64
+    // The states past 64 go unnamed. ExtruderMax stops one short of what the byte holds, because
+    // the color painting gizmo returns EnforcerBlockerType(-1), which is 255, for a mouse button
+    // that paints nothing.
+    ExtruderMax = 254
 };
 
 // Type alias for the state mapping array to improve code readability

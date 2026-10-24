@@ -6671,10 +6671,10 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
             // Physical filament capacity of the receiver's printer: a non-SEMM tool-changer
             // feeds filament N from nozzle N, so the nozzle count is the hard limit; a SEMM
             // printer (single_extruder_multi_material) sizes its slot list by hand, so only
-            // the global slot limit applies (same condition as GUI_App::load_current_presets).
+            // the global filament limit applies (same condition as GUI_App::load_current_presets).
             // Published entries that would need a NEW physical slot past this capacity are
             // appended as empty mixed-filament placeholders instead of growing the list.
-            size_t physical_capacity = size_t(EnforcerBlockerType::ExtruderMax);
+            size_t physical_capacity = MAXIMUM_EXTRUDER_NUMBER;
             {
                 const Preset& receiver_printer = this->printers.get_edited_preset();
                 if (receiver_printer.printer_technology() == ptFFF &&

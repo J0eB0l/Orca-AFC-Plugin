@@ -6827,11 +6827,12 @@ void GCodeProcessor::process_T(const std::string_view command, int nozzle_id)
 
 void GCodeProcessor::init_filament_maps_and_nozzle_type_when_import_only_gcode()
 {
+    // A G-code's tool numbers name physical filaments only.
     if (m_filament_maps.empty()) {
-        m_filament_maps.assign((int) EnforcerBlockerType::ExtruderMax, 1);
+        m_filament_maps.assign(MAXIMUM_EXTRUDER_NUMBER, 1);
     }
     if (m_result.nozzle_type.empty()) {
-        m_result.nozzle_type.assign((int) EnforcerBlockerType::ExtruderMax, NozzleType::ntUndefine);
+        m_result.nozzle_type.assign(MAXIMUM_EXTRUDER_NUMBER, NozzleType::ntUndefine);
     }
 }
 

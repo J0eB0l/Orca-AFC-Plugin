@@ -322,6 +322,13 @@ void GLGizmoMmuSegmentation::render_tooltip_button(float x, float y)
     GLGizmoUtils::render_tooltip_button(m_imgui, m_parent, get_shortcuts(), x, y);
 }
 
+// Color buttons in a row of the palette: eight up to 64 filaments, then up to 16, so a long palette
+// grows wider before it grows taller.
+static int color_buttons_per_line(size_t count)
+{
+    return std::clamp(int((count + 7) / 8), 8, 16);
+}
+
 // ORCA
 bool GLGizmoMmuSegmentation::draw_color_button(int idx, const char* id_str, const ColorRGBA& color, ColorRGBA& map_color, bool active, float scale)
 {
@@ -429,7 +436,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
                                          std::max(cursor_slider_left, std::max(edge_detect_slider_left, std::max(gap_area_slider_left, height_range_slider_left)))) + space_size;
     const float slider_icon_width = m_imgui->get_slider_icon_size().x;
     float window_width = minimal_slider_width + sliders_left_width + slider_icon_width;
-    const int max_filament_items_per_line = 8;
+    const int max_filament_items_per_line = color_buttons_per_line(std::min(m_extruders_colors.size(), EXTRUDERS_LIMIT));
     const float empty_button_width = m_imgui->calc_button_size("").x;
     const float filament_item_width = empty_button_width + m_imgui->scaled(1.5f);
 
@@ -1008,7 +1015,7 @@ void GLGizmoMmuSegmentation::render_filament_remap_ui(float window_width, float 
     size_t n_extr = std::min((size_t)EnforcerBlockerType::ExtruderMax, m_extruders_colors.size());
 
     int displayed_count = 0;
-    const int max_per_line = 8;
+    const int max_per_line = color_buttons_per_line(n_extr);
 
     // ORCA: Use m_used_filaments to show only relevant source filaments
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(7.f * scale, 7.f * scale));

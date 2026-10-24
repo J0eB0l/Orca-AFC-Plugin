@@ -317,8 +317,8 @@ TriangleSelector::TriangleSplittingData remap_texture_paint_spatial(
 // entry to fill.
 constexpr int PALETTE_LUT_EDGE = 24;
 
-// The shaded preview shader's palette arrays. The palette itself stays within the paint mask's
-// EnforcerBlockerType::ExtruderMax states, since every entry has to become a filament.
+// The shaded preview shader's palette arrays. A bake's palette, filaments and mixes together, stays
+// within them, so the preview shows every color the bake prints (the paint mask could name more).
 constexpr int PALETTE_MAX_ENTRIES = 64;
 
 // A mix is an interleave that only reads as its colour from a distance; up close it is stripes. So it
@@ -5530,7 +5530,7 @@ const std::vector<GLGizmoTextureDisplacement::PaletteEntry> &GLGizmoTextureDispl
     }
     if (mixing && !m_mix_ranking)
         m_mix_ranking = rank_mixes(m_palette_filaments, mix_targets(mv->texture_displacement_layers),
-                                   int(EnforcerBlockerType::ExtruderMax) - int(m_palette_filaments.size()));
+                                   PALETTE_MAX_ENTRIES - int(m_palette_filaments.size()));
 
     // Which mixes the project can still print: those it has a fixed slot for, plus as many new ones as
     // there are free slots.
@@ -7628,9 +7628,9 @@ void GLGizmoTextureDisplacement::on_render_input_window(float x, float y, float 
                                   { { "mix_off.png", _L("Off") }, { "mix_on.png", _L("On") } });
                         if (opts.color_mix_enabled) {
                             cached_palette(); // brings m_palette_filaments up to date
-                            // Every mix can become a filament slot, and there are only so many beside the
-                            // physical filaments.
-                            const int max_mixes = std::max(1, int(EnforcerBlockerType::ExtruderMax) - int(m_palette_filaments.size()));
+                            // Every mix takes a palette entry beside the physical filaments, and the preview
+                            // shows only so many.
+                            const int max_mixes = std::max(1, PALETTE_MAX_ENTRIES - int(m_palette_filaments.size()));
                             if (int_row("##color_mix_count", _L("Mixed colors"), &opts.color_mix_count, 1, max_mixes, "%d", card_pad,
                                         _L("The most mixed filaments a bake may add. They are picked from the "
                                            "texture's colors, and only the ones the bake actually uses are created."),

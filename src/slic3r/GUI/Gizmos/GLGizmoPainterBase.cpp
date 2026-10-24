@@ -1432,10 +1432,16 @@ void TriangleSelectorPatch::update_triangles_per_type()
 {
     //BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", enter");
     m_triangle_patches.resize((int)EnforcerBlockerType::ExtruderMax + 1);
+    // Count each state's triangles before reserving: a share of all triangles for every state
+    // would reserve memory for each of the ExtruderMax states, painted or not.
+    std::vector<size_t> triangles_per_type(m_triangle_patches.size(), 0);
+    for (const auto& triangle : m_triangles)
+        if (triangle.valid() && !triangle.is_split())
+            ++triangles_per_type[(int)triangle.get_state()];
     for (int i = 0; i < m_triangle_patches.size(); i++) {
         auto& patch = m_triangle_patches[i];
         patch.type = (EnforcerBlockerType)i;
-        patch.triangle_indices.reserve(m_triangles.size() / 3);
+        patch.triangle_indices.reserve(3 * triangles_per_type[i]);
     }
 
     bool using_wireframe = (m_need_wireframe && wxGetApp().plater()->is_wireframe_enabled() && wxGetApp().plater()->is_show_wireframe()) ? true : false;

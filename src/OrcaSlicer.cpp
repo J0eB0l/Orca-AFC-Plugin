@@ -744,7 +744,7 @@ bool convert_obj_cluster_colors(std::vector<Slic3r::RGBA>& input_colors, std::ve
         std::vector<int>          cluster_labels;
         char                      cluster_number = -1;
 
-        obj_color_deal_algo(input_colors, cluster_colors, cluster_labels, cluster_number, (int)EnforcerBlockerType::ExtruderMax);
+        obj_color_deal_algo(input_colors, cluster_colors, cluster_labels, cluster_number, max_filament_count);
         std::vector<int> cluster_color_maps;
 
         BOOST_LOG_TRIVIAL(info) << boost::format("%1%:%2%, after obj_color_deal_algo, cluster_colors size %3%, all_colours size %4%, max_filament_count=%5%")%__FUNCTION__ %__LINE__%cluster_colors.size() %all_colours.size() %max_filament_count;
@@ -801,7 +801,8 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
     int plate_count = assemble_plate_info_list.size();
     ConfigSubstitutionContext config_substitutions(ForwardCompatibilitySubstitutionRule::Enable);
     Model temp_model;
-    const int max_filament_count = size_t(EnforcerBlockerType::ExtruderMax);
+    // Each cluster color of a colored OBJ becomes a physical filament.
+    const int max_filament_count = int(MAXIMUM_EXTRUDER_NUMBER);
 
     plate_list.resize(plate_count);
     for (int index = 0; index < plate_count; index++)

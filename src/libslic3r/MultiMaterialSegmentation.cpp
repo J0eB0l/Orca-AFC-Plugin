@@ -45,7 +45,7 @@
 #include <queue>
 #include "SurfaceCollection.hpp"
 
-namespace Slic3r { enum class EnforcerBlockerType : int8_t; }
+namespace Slic3r { enum class EnforcerBlockerType : uint8_t; }
 
 //#define MM_SEGMENTATION_DEBUG_GRAPH
 //#define MM_SEGMENTATION_DEBUG_REGIONS
@@ -1236,6 +1236,14 @@ double resolve_outer_wall_line_width(const PrintRegionConfig &region_config, con
     return width.get_abs_value(nozzle_diameter);
 }
 
+// Whether a state needs a pass over the volume's mesh: the states its paint data records, so a project
+// with many filament slots pays only for those painted, and the unpainted state 0 always.
+static bool facets_state_used(const FacetsAnnotation &facets_annotation, const size_t state)
+{
+    const std::vector<bool> &used_states = facets_annotation.get_data().used_states;
+    return state == 0 || state >= used_states.size() || used_states[state];
+}
+
 // Returns segmentation of top and bottom layers based on painting in segmentation gizmos.
 static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_layers(const PrintObject                                               &print_object,
                                                                                       const std::vector<ExPolygons>                                   &input_expolygons,
@@ -1270,6 +1278,8 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
             if (mv->is_model_part()) {
                 const Transform3d volume_trafo = object_trafo * mv->get_matrix();
                 for (size_t extruder_idx = 0; extruder_idx < num_facets_states; ++extruder_idx) {
+                    if (!facets_state_used(extract_facets_info(*mv).facets_annotation, extruder_idx))
+                        continue;
                     const indexed_triangle_set painted = extract_facets_info(*mv).facets_annotation.get_facets_strict(*mv, EnforcerBlockerType(extruder_idx));
 #ifdef MM_SEGMENTATION_DEBUG_TOP_BOTTOM
                     {
@@ -2100,6 +2110,8 @@ std::vector<std::vector<ExPolygons>> segmentation_by_painting(const PrintObject 
         tbb::parallel_for(tbb::blocked_range<size_t>(1, num_facets_states), [&mv, &object_trafo, &facets_info, &layers, &edge_grids, &painted_lines, &painted_lines_mutex, &input_expolygons, &throw_on_cancel_callback](const tbb::blocked_range<size_t> &range) {
             for (size_t extruder_idx = range.begin(); extruder_idx < range.end(); ++extruder_idx) {
                 throw_on_cancel_callback();
+                if (!facets_state_used(facets_info.facets_annotation, extruder_idx))
+                    continue;
                 const indexed_triangle_set custom_facets = facets_info.facets_annotation.get_facets(*mv, EnforcerBlockerType(extruder_idx));
                 if (!mv->is_model_part() || custom_facets.indices.empty())
                     continue;

@@ -95,12 +95,19 @@
 #define _L(s) Slic3r::I18N::translate(s)
 
 namespace Slic3r {
-const std::vector<std::string> CONST_FILAMENTS = {
-    "",   "4",  "8",  "0C", "1C",  "2C",  "3C",  "4C",  "5C",  "6C",  "7C",  "8C",  "9C",  "AC",  "BC",  "CC","DC",//16
-         "EC", "0FC", "1FC", "2FC", "3FC", "4FC", "5FC", "6FC", "7FC", "8FC", "9FC", "AFC", "BFC", "CFC", "DFC", "EFC",//32
-         "0FFC", "1FFC", "2FFC", "3FFC", "4FFC", "5FFC", "6FFC", "7FFC", "8FFC", "9FFC", "AFFC", "BFFC", "CFFC", "DFFC", "EFFC", "0FFFC",//48
-         "1FFFC", "2FFFC", "3FFFC", "4FFFC", "5FFFC", "6FFFC", "7FFFC", "8FFFC", "9FFFC", "AFFFC", "BFFFC", "CFFFC", "DFFFC", "EFFFC", "0FFFFC", "1FFFFC",//64
-}; //      1                         5                                 10                                 15    16
+// The paint code of a leaf triangle in each extruder state, spelled as FacetsAnnotation writes it
+// (most significant nibble first): "4" and "8" for states 1 and 2, then from state 3 the hex digit of
+// what is left of (state - 3), one "F" per 15 states, and the "C" prefix (see TriangleSelector::serialize).
+static std::vector<std::string> make_filament_codes()
+{
+    std::vector<std::string> codes = {"", "4", "8"};
+    for (int state = 3; state <= int(EnforcerBlockerType::ExtruderMax); ++state) {
+        const int rest = state - 3;
+        codes.emplace_back("0123456789ABCDE"[rest % 15] + std::string(rest / 15, 'F') + "C");
+    }
+    return codes;
+}
+const std::vector<std::string> CONST_FILAMENTS = make_filament_codes();
     // BBS initialization of static variables
     std::map<size_t, ExtruderParams> Model::extruderParamsMap = { {0,{"",0,0}}};
     GlobalSpeedMap Model::printSpeedMap{};

@@ -3,6 +3,7 @@
 
 #include "GLGizmoPainterBase.hpp"
 #include "slic3r/GUI/I18N.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <cassert>
 #include <vector>
@@ -94,6 +95,8 @@ public:
 
     // BBS
     bool on_number_key_down(int number);
+    // Filaments the palette offers, which is as far as the number keys reach.
+    size_t get_extruders_count() const { return std::min(m_extruders_colors.size(), EXTRUDERS_LIMIT); }
     bool on_tool_shortcut(Shortcut shortcut) override;
 
 protected:

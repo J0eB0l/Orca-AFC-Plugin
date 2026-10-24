@@ -21,6 +21,7 @@
 #include "libslic3r/ColorDecomposeRecipe.hpp"
 #include "libslic3r/MeshRepair.hpp"
 #include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/libslic3r.h"
 
 #include <utility>
 #include <string>
@@ -2817,7 +2818,10 @@ int TextureImportDialog::add_virtual_filament(const std::array<float, 4>& rgba, 
         m_filament_entries.size() != m_filament_colors_rgba.size()) {
         return -1;
     }
-    if (!can_add_virtual_filament()) {
+    // A physical filament also takes an extruder, and the extruder limit is below the slot limit.
+    const size_t physical_count = size_t(std::count_if(m_filament_entries.begin(), m_filament_entries.end(),
+                                                       [](const TextureFilamentEntry& e) { return texture_entry_is_physical(e.kind); }));
+    if (!can_add_virtual_filament() || physical_count >= MAXIMUM_EXTRUDER_NUMBER) {
         // Mark that this do_auto_match() run hit the filament cap and had to
         // drop at least one cluster. The mapping itself still falls back via
         // find_closest_filament_index() below; this flag only drives the

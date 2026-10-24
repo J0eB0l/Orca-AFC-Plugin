@@ -604,10 +604,10 @@ bool apply_painted_mesh_to_volume(
         auto it = color_to_filament.find(painted.face_colors[fi]);
         if (it != color_to_filament.end()) {
             int extruder_idx = it->second;
-            auto state = static_cast<EnforcerBlockerType>(
-                static_cast<int>(EnforcerBlockerType::Extruder1) + extruder_idx);
-            if (state <= EnforcerBlockerType::ExtruderMax)
-                selector.set_facet(static_cast<int>(fi), state);
+            // Range check before the cast: the one-byte state would wrap a filament past the limit.
+            const int state = static_cast<int>(EnforcerBlockerType::Extruder1) + extruder_idx;
+            if (state <= static_cast<int>(EnforcerBlockerType::ExtruderMax))
+                selector.set_facet(static_cast<int>(fi), static_cast<EnforcerBlockerType>(state));
         }
     }
 
