@@ -2216,6 +2216,11 @@ void PreferencesDialog::create_items()
                                                       "offer_mixed_filaments_after_sync");
     g_sizer->Add(item_offer_mixed);
 
+    auto item_remove_mixed     = create_item_checkbox(_L("Remove broken mixed filaments after a sync"),
+                                                      _L("After syncing filaments from the printer, remove each mixed filament made of a filament the sync removed or changed to another material."),
+                                                      "remove_broken_mixed_filaments_after_sync");
+    g_sizer->Add(item_remove_mixed);
+
     auto item_system_sync      = create_item_checkbox(_L("Update built-in presets automatically."), "", "sync_system_preset");
     g_sizer->Add(item_system_sync);
 

@@ -285,6 +285,8 @@ void AppConfig::set_defaults()
         set("sync_ams_filament_mode", "0"); // 0: filament+color, 1: color only
     if (get("offer_mixed_filaments_after_sync").empty())
         set_bool("offer_mixed_filaments_after_sync", true);
+    if (get("remove_broken_mixed_filaments_after_sync").empty())
+        set_bool("remove_broken_mixed_filaments_after_sync", true);
 
     if (get("camera_orbit_mult").empty())
         set("camera_orbit_mult", "1.0");

@@ -5148,6 +5148,43 @@ int Sidebar::ensure_mixed_filament(const std::vector<unsigned int> &components, 
     return int(created_at);
 }
 
+void Sidebar::remove_broken_mixed_filaments()
+{
+    if (!wxGetApp().app_config->get_bool("remove_broken_mixed_filaments_after_sync"))
+        return;
+
+    const DynamicPrintConfig &project_config = wxGetApp().preset_bundle->project_config;
+    const auto               *is_mixed_opt   = project_config.option<ConfigOptionBools>("filament_is_mixed");
+    const auto               *components_opt = project_config.option<ConfigOptionStrings>("filament_mixed_components");
+    if (is_mixed_opt == nullptr || components_opt == nullptr)
+        return;
+
+    std::vector<std::string> colors, names, types;
+    collect_physical_filament_info(colors, names, types);
+    std::vector<size_t>       broken     = check_mixed_filament_integrity(is_mixed_opt->values, components_opt->values, types.size());
+    const std::vector<size_t> mismatched = check_mixed_filament_type_consistency(is_mixed_opt->values, components_opt->values, types);
+    broken.insert(broken.end(), mismatched.begin(), mismatched.end());
+    std::sort(broken.begin(), broken.end());
+    broken.erase(std::unique(broken.begin(), broken.end()), broken.end());
+    if (broken.empty())
+        return;
+
+    // Back to front, so the slots still to go keep their indices.
+    const size_t slots_before = wxGetApp().preset_bundle->filament_presets.size();
+    for (auto slot = broken.rbegin(); slot != broken.rend(); ++slot)
+        delete_filament(*slot, -1);
+    const size_t removed = slots_before - wxGetApp().preset_bundle->filament_presets.size();
+    if (removed == 0)
+        return;
+
+    // TRN %1% is the number of mixed filaments a filament sync removed.
+    const std::string message = format(_L_PLURAL("Removed %1% mixed filament made of a filament the sync removed or changed to another material.",
+                                                 "Removed %1% mixed filaments made of filaments the sync removed or changed to another material.", removed),
+                                       removed);
+    p->plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                             NotificationManager::NotificationLevel::RegularNotificationLevel, message);
+}
+
 void Sidebar::offer_mixed_filaments()
 {
     AppConfig &app_config = *wxGetApp().app_config;
@@ -5904,7 +5941,7 @@ void Sidebar::add_filament() {
 
 void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
     if (is_new_project_in_gcode3mf()) { return; }
-    if (p->combos_filament.size() <= 1) return;
+    if (p->combos_filament.empty()) return;
 
     size_t filament_count = p->combos_filament.size() - 1;
     if (filament_id == size_t(-2)) {
@@ -5921,6 +5958,10 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id) {
         return;
 
     bool is_mixed = (filament_id >= p->combos_filament.size());
+    // Orca: the last physical filament stays, but a mixed one can still go: a sync that leaves a single
+    // filament leaves the mixes made of the others broken.
+    if (!is_mixed && p->combos_filament.size() <= 1)
+        return;
 
     if (!is_mixed) {
         if (wxGetApp().preset_bundle->is_the_only_edited_filament(filament_id) || (filament_id == 0)) {
@@ -6667,6 +6708,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     }
     // Orca: an AFC printer's measured change times come with its filaments.
     wxGetApp().apply_measured_swap_times(*obj);
+    remove_broken_mixed_filaments();
     offer_mixed_filaments();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "begin pop_finsish_sync_ams_dialog";
     pop_finsish_sync_ams_dialog();

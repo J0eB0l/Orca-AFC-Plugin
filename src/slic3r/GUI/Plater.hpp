@@ -331,6 +331,9 @@ public:
 
 private:
     void  auto_calc_flushing_volumes_internal(const int filament_id, const int extruder_id);
+    // Orca: after a sync, removes the mixed filaments made of a filament the sync dropped or turned into
+    // another material, unless switched off in the preferences.
+    void  remove_broken_mixed_filaments();
     // Orca: after a sync, offers a fixed 50:50 mixed filament for each pair of physical filaments that
     // makes a new color (missing_even_mix_pairs()), unless switched off in the preferences.
     void  offer_mixed_filaments();
