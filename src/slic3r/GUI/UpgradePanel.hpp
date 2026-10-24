@@ -184,6 +184,8 @@ protected:
     wxStaticBitmap* m_afc_new_version_img = nullptr;
     wxStaticText*   m_afc_ver_val = nullptr;
     wxStaticText*   m_afc_latest_val = nullptr;
+    wxStaticText*   m_afc_units_val = nullptr;
+    wxStaticText*   m_afc_lanes_val = nullptr;
     Button*         m_afc_github = nullptr;
     ScalableBitmap  m_img_afc;
     std::string     m_afc_url;

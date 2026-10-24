@@ -29,6 +29,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include <wx/statline.h>
 #include <wx/utils.h>
@@ -686,6 +687,9 @@ void MachineInfoPanel::update(MachineObject* obj)
         }
 
         wxString model_id_text = obj->get_printer_type_display_str();
+        // Orca: a printer agent's printer of no known model shows its printer preset's name, as it shows its picture.
+        if (m_preset_thumbnail && obj->get_printer_type_display_name().empty())
+            model_id_text = from_u8(wxGetApp().preset_bundle->printers.get_edited_preset().name);
         m_staticText_model_id_val->SetLabelText(model_id_text);
         wxString sn_text = obj->get_dev_id();
         m_staticText_sn_val->SetLabelText(sn_text.MakeUpper());
@@ -880,8 +884,12 @@ void MachineInfoPanel::update_ams_ext(MachineObject *obj)
         m_ahb_panel->m_staticText_ams_ver_val->SetLabelText(hub_ver);
     }
 
+    // Orca: a printer agent's units report no AMS firmware, so they get no empty AMS rows (the AFC rows count them).
+    const bool agent_units = !obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID &&
+                             obj->get_ams_version().empty();
+
     //ams
-    if (obj->ams_exist_bits != 0)
+    if (obj->ams_exist_bits != 0 && !agent_units)
     {
         std::string extra_ams_str = (boost::format("ams_f1/%1%") % 0).str();
         auto extra_ams_it = obj->module_vers.find(extra_ams_str);
@@ -1590,6 +1598,16 @@ void MachineInfoPanel::createAfcWidgets(wxBoxSizer* main_left_sizer)
     m_afc_latest_val = new wxStaticText(this, wxID_ANY, "-");
     info->Add(m_afc_latest_val, 0, wxALL | wxEXPAND, FromDIP(5));
 
+    // TRN How many filament units (Box Turtle, ACE, AMS...) AFC runs
+    info->Add(name_label(_L("Units:")), 0, wxALIGN_RIGHT | wxALL, FromDIP(5));
+    m_afc_units_val = new wxStaticText(this, wxID_ANY, "-");
+    info->Add(m_afc_units_val, 0, wxALL | wxEXPAND, FromDIP(5));
+
+    // TRN How many filament lanes AFC's units have in all
+    info->Add(name_label(_L("Lanes:")), 0, wxALIGN_RIGHT | wxALL, FromDIP(5));
+    m_afc_lanes_val = new wxStaticText(this, wxID_ANY, "-");
+    info->Add(m_afc_lanes_val, 0, wxALL | wxEXPAND, FromDIP(5));
+
     m_afc_github = new Button(this, _L("View on GitHub"));
     m_afc_github->SetStyle(ButtonStyle::Regular, ButtonType::Window);
     m_afc_github->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
@@ -1622,6 +1640,8 @@ void MachineInfoPanel::update_afc(MachineObject* obj)
     for (const auto& [branch, version] : afc.latest)
         latest += wxString(latest.empty() ? "" : ", ") + from_u8(version) + " (" + from_u8(branch) + ")";
     m_afc_latest_val->SetLabelText(latest.empty() ? wxString("-") : latest);
+    m_afc_units_val->SetLabelText(wxString::Format("%d", afc.units));
+    m_afc_lanes_val->SetLabelText(wxString::Format("%d", afc.lanes));
     m_afc_new_version_img->Show(afc.newer);
     m_afc_url = afc.url;
     m_afc_github->Enable(!m_afc_url.empty());

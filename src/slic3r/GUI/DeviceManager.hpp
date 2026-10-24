@@ -659,13 +659,16 @@ public:
     };
     AgentLog agent_log;
     // Orca: the version of the printer agent's filament system (AFC) on the Update page (afc_version): the one
-    // installed, the newest on each branch of its repository, whether one is newer, and the repository's page.
+    // installed, the newest on each branch of its repository, whether one is newer, the repository's page, and
+    // how many units and lanes it runs.
     struct AgentVersion
     {
         std::string                        installed;
         std::map<std::string, std::string> latest;
         bool                               newer {false};
         std::string                        url;
+        int                                units {0};
+        int                                lanes {0};
     };
     AgentVersion agent_version;
 

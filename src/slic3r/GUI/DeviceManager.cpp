@@ -3334,6 +3334,8 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     agent_version.installed = version.value("installed", std::string());
                     agent_version.newer     = version.value("newer", false);
                     agent_version.url       = version.value("url", std::string());
+                    agent_version.units     = version.value("units", 0);
+                    agent_version.lanes     = version.value("lanes", 0);
                     const json latest       = version.value("latest", json::object());
                     for (const auto& [branch, newest] : latest.items())
                         if (newest.is_string())
