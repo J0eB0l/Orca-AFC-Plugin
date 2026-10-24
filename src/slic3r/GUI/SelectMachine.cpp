@@ -5096,10 +5096,11 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
     }
     // Gate against the printer's real max filament-color count, floored at 16 so printers that
     // report 0 (e.g. series X/O) keep that limit. The max is passed as a param so the %s message
-    // shows the actual count.
+    // shows the actual count. Only physical filaments count: a mixed filament is printed with
+    // its physical components and never reaches the printer as a material of its own.
     int max_color = obj_->get_max_filament_color_count();
     if (max_color < 16) max_color = 16;
-    if (wxGetApp().preset_bundle->filament_presets.size() > (size_t)max_color && m_print_type != PrintFromType::FROM_SDCARD_VIEW) {
+    if (wxGetApp().preset_bundle->num_physical_filaments() > (size_t)max_color && m_print_type != PrintFromType::FROM_SDCARD_VIEW) {
         if (!obj_->is_enable_ams_np && !obj_->is_enable_np)
         {
             show_status(PrintDialogStatus::PrintStatusColorQuantityExceed, {wxString::Format("%d", max_color)});
