@@ -53,12 +53,14 @@ TEST_CASE("Serialized data reports the extruder states it uses", "[TriangleSelec
     TriangleSelector   selector(mesh);
     selector.set_facet(0, EnforcerBlockerType::Extruder16);
     selector.set_facet(1, EnforcerBlockerType::Extruder32);
+    selector.set_facet(2, EnforcerBlockerType::Extruder64);
 
     const TriangleSelector::TriangleSplittingData data = selector.serialize();
 
     REQUIRE(data.used_states.size() == size_t(EnforcerBlockerType::ExtruderMax) + 1);
     REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder16)]);
     REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder32)]);
+    REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder64)]);
     REQUIRE_FALSE(data.used_states[size_t(EnforcerBlockerType::Extruder17)]);
 
     SECTION("used_states recomputed from the bitstream agrees") {
@@ -70,6 +72,7 @@ TEST_CASE("Serialized data reports the extruder states it uses", "[TriangleSelec
 
     SECTION("has_facets on the raw data agrees") {
         REQUIRE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder32));
+        REQUIRE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder64));
         REQUIRE_FALSE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder17));
     }
 }
@@ -107,6 +110,30 @@ TEST_CASE("Extruder states above 17 are encoded in a second nibble", "[TriangleS
     REQUIRE(nibble_at(bitstream, 2) == state - 18);
 }
 
+// Past 32 the chain goes on: every further 0b1111 nibble adds 15 and calls for one more, so states
+// up to 32 read the same as in builds that stop there.
+TEST_CASE("Extruder states above 32 add one 0b1111 nibble per 15 states", "[TriangleSelector]")
+{
+    struct Case { int state; std::vector<int> nibbles; };
+    const auto c = GENERATE(values<Case>({
+        {33, {0b1100, 0b1111, 0b1111, 0}},
+        {47, {0b1100, 0b1111, 0b1111, 14}},
+        {48, {0b1100, 0b1111, 0b1111, 0b1111, 0}},
+        {62, {0b1100, 0b1111, 0b1111, 0b1111, 14}},
+        {63, {0b1100, 0b1111, 0b1111, 0b1111, 0b1111, 0}},
+        {64, {0b1100, 0b1111, 0b1111, 0b1111, 0b1111, 1}},
+    }));
+
+    TriangleSelector selector(test_mesh());
+    selector.set_facet(0, EnforcerBlockerType(c.state));
+    const std::vector<bool> bitstream = selector.serialize().bitstream;
+
+    INFO("Extruder " << c.state);
+    REQUIRE(bitstream.size() == 4 * c.nibbles.size());
+    for (size_t i = 0; i < c.nibbles.size(); ++i)
+        REQUIRE(nibble_at(bitstream, i) == c.nibbles[i]);
+}
+
 // Model.cpp writes these hex strings into the 3MF for colored mesh imports; the selector must
 // decode exactly the states CONST_FILAMENTS assigns to them.
 TEST_CASE("Extruder states match the CONST_FILAMENTS hex encoding", "[TriangleSelector]")
@@ -114,6 +141,7 @@ TEST_CASE("Extruder states match the CONST_FILAMENTS hex encoding", "[TriangleSe
     struct Case { const char *hex; int state; };
     const auto c = GENERATE(values<Case>({
         {"8", 2}, {"0C", 3}, {"DC", 16}, {"EC", 17}, {"0FC", 18}, {"EFC", 32},
+        {"0FFC", 33}, {"EFFC", 47}, {"0FFFC", 48}, {"EFFFC", 62}, {"0FFFFC", 63}, {"1FFFFC", 64},
     }));
 
     // get_triangle_as_string emits the nibbles most significant first, so read the hex backwards.
@@ -178,6 +206,8 @@ TEST_CASE("A truncated or malformed paint stream drops only the damaged triangle
         {"three-side split missing two children", {0b0011, 0b1000, 0b1000}},
         {"leaf missing its state nibble",         {0b1100}},
         {"leaf missing its second state nibble",  {0b1100, 0b1111}},
+        {"leaf missing its third state nibble",   {0b1100, 0b1111, 0b1111}},
+        {"leaf state past ExtruderMax",           {0b1100, 0xF, 0xF, 0xF, 0xF, 0xF, 0}},
         {"splits nested past the end",            {0b0011, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF,
                                                     0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF}},
         {"one-side split of the nonexistent side 3", {0b1101, 0b1000, 0b1000}},

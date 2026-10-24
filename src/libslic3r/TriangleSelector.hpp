@@ -28,8 +28,8 @@ enum class EnforcerBlockerType : int8_t {
     BLOCKER   = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
-    // States 3..17 are serialized into 6 bits using a 2 bit prefix code; states 18 and above use
-    // one additional nibble (see TriangleSelector::serialize). ExtruderMax matches the last entry
+    // States 3..17 are serialized into 6 bits using a 2 bit prefix code; each further 15 states
+    // take one more nibble (see TriangleSelector::serialize). ExtruderMax matches the last entry
     // of CONST_FILAMENTS in Model.cpp, which encodes the same range for colored mesh imports.
     Extruder1 = ENFORCER,
     Extruder2 = BLOCKER,
@@ -63,7 +63,39 @@ enum class EnforcerBlockerType : int8_t {
     Extruder30,
     Extruder31,
     Extruder32,
-    ExtruderMax = Extruder32
+    Extruder33,
+    Extruder34,
+    Extruder35,
+    Extruder36,
+    Extruder37,
+    Extruder38,
+    Extruder39,
+    Extruder40,
+    Extruder41,
+    Extruder42,
+    Extruder43,
+    Extruder44,
+    Extruder45,
+    Extruder46,
+    Extruder47,
+    Extruder48,
+    Extruder49,
+    Extruder50,
+    Extruder51,
+    Extruder52,
+    Extruder53,
+    Extruder54,
+    Extruder55,
+    Extruder56,
+    Extruder57,
+    Extruder58,
+    Extruder59,
+    Extruder60,
+    Extruder61,
+    Extruder62,
+    Extruder63,
+    Extruder64,
+    ExtruderMax = Extruder64
 };
 
 // Type alias for the state mapping array to improve code readability

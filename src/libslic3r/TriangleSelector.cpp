@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <Eigen/Geometry>
 #include <Eigen/Core>
 #include <boost/container/small_vector.hpp>
@@ -1718,7 +1719,7 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
     // Each original triangle of the mesh is assigned a number encoding its state
     // or how it is split. Each triangle is encoded by 4 bits (xxyy) or 8 bits (zzzzxxyy):
     // leaf triangle: xx = EnforcerBlockerType (Only values 0, 1, and 2. Value 3 is used as an indicator for additional 4 bits.), yy = 0
-    // leaf triangle: xx = 0b11, yy = 0b00, zzzz = EnforcerBlockerType (subtracted by 3)
+    // leaf triangle: xx = 0b11, yy = 0b00, zzzz = EnforcerBlockerType (subtracted by 3), each zzzz = 0b1111 adding 15 and calling for one more
     // non-leaf:      xx = special side, yy = number of split sides
     // These are bitwise appended and formed into one 64-bit integer.
 
@@ -1762,22 +1763,20 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
 
                 if (n >= 3) {
                     assert(n <= int(EnforcerBlockerType::ExtruderMax));
-                    // Store "11" plus 4 bits of (n-3), which covers states 3..17. State 18 and
-                    // above set that nibble to 0b1111 and store (n-18) in a second nibble. This is
-                    // the encoding the CONST_FILAMENTS table in Model.cpp already writes for
-                    // colored mesh imports.
+                    // Store "11" plus 4 bits of (n-3), which covers states 3..17. Above that the
+                    // nibble is 0b1111, which adds 15 and calls for one more nibble: states 18..32
+                    // take two nibbles, 33..47 three, and so on. This is the encoding the
+                    // CONST_FILAMENTS table in Model.cpp already writes for colored mesh imports.
                     data.bitstream.insert(data.bitstream.end(), { true, true });
                     auto &bitstream = data.bitstream;
                     auto push_nibble = [&bitstream](int value) {
                         for (size_t bit_idx = 0; bit_idx < 4; ++bit_idx)
                             bitstream.push_back(value & (uint64_t(0b0001) << bit_idx));
                     };
-                    if (n <= 17) {
-                        push_nibble(n - 3);
-                    } else {
+                    int rest = n - 3;
+                    for (; rest >= 0b1111; rest -= 0b1111)
                         push_nibble(0b1111);
-                        push_nibble(n - 18);
-                    }
+                    push_nibble(rest);
                 } else {
                     // Simple case, compatible with PrusaSlicer 2.3.1 and older for storing paint on supports and seams.
                     // Store 2 bits of n.
@@ -1808,6 +1807,19 @@ TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
 static bool split_code_valid(int code)
 {
     return (code & 0b11) == 3 || (code >> 2) != 3;
+}
+
+// The state of a leaf stored behind the "11" prefix: 3 plus its nibbles, each 0b1111 adding 15 and
+// calling for one more (see serialize()). A state past ExtruderMax is malformed data, so reading
+// stops there; next_nibble() returns 0 once the stream runs out.
+template<class NextNibble> static int read_leaf_state(NextNibble &&next_nibble)
+{
+    int state = 3;
+    for (int nibble = 0b1111; nibble == 0b1111 && state <= int(EnforcerBlockerType::ExtruderMax);) {
+        nibble = next_nibble();
+        state += nibble;
+    }
+    return state;
 }
 
 void TriangleSelector::deserialize(const TriangleSplittingData &data,
@@ -1852,11 +1864,11 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
                 corrupt = true;
             return n;
         };
-        // Decode a leaf state stored behind the "11" prefix: one nibble of (state-3) for states
-        // 3..17, or 0b1111 followed by a nibble of (state-18) above that.
-        auto decode_leaf_state = [&next_nibble]() {
-            const int nibble = next_nibble();
-            return EnforcerBlockerType(nibble == 0b1111 ? next_nibble() + 18 : nibble + 3);
+        auto decode_leaf_state = [&next_nibble, &corrupt]() {
+            const int state = read_leaf_state(next_nibble);
+            if (state > int(EnforcerBlockerType::ExtruderMax))
+                corrupt = true;
+            return corrupt ? EnforcerBlockerType::NONE : EnforcerBlockerType(state);
         };
 
         parents.clear();
@@ -1952,8 +1964,8 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data,
 }
 
 bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bitstream_start_idx) {
-    int      ibit   = static_cast<int>(bitstream_start_idx);
-    uint64_t states = 0;
+    int ibit = static_cast<int>(bitstream_start_idx);
+    std::bitset<size_t(EnforcerBlockerType::ExtruderMax) + 1> states;
     do {
         // Walk one triangle's tree depth-first, counting the nodes still to be read; a split node adds its children.
         for (int pending_nodes = 1; pending_nodes > 0; --pending_nodes) {
@@ -1970,24 +1982,21 @@ bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bi
 
             int facet_state = code >> 2;
             if (facet_state == 0b11) {
-                // Leaf behind the "11" prefix: one nibble of (state-3), or 0b1111 + (state-18).
-                int nibble;
-                if (!this->read_nibble(ibit, nibble))
+                bool truncated = false;
+                facet_state    = read_leaf_state([this, &ibit, &truncated]() {
+                    int nibble = 0;
+                    truncated |= !this->read_nibble(ibit, nibble);
+                    return nibble;
+                });
+                if (truncated || facet_state > int(EnforcerBlockerType::ExtruderMax))
                     return false;
-                facet_state = nibble + 3;
-                if (nibble == 0b1111) {
-                    if (!this->read_nibble(ibit, nibble))
-                        return false;
-                    facet_state = nibble + 18;
-                }
             }
-            states |= uint64_t(1) << facet_state;
+            states.set(size_t(facet_state));
         }
     } while (static_cast<size_t>(ibit) < this->bitstream.size());
 
-    // The leaf encoding tops out at state 33, so every state fits the 64-bit mask.
-    for (size_t state_idx = 0; state_idx < std::min<size_t>(this->used_states.size(), 64); ++state_idx)
-        if (states & (uint64_t(1) << state_idx))
+    for (size_t state_idx = 0; state_idx < std::min(this->used_states.size(), states.size()); ++state_idx)
+        if (states.test(state_idx))
             this->used_states[state_idx] = true;
     return true;
 }
@@ -2001,7 +2010,7 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
 
     for (const TriangleBitStreamMapping &triangle_id_and_ibit : data.triangles_to_split) {
         int ibit = triangle_id_and_ibit.bitstream_start_idx;
-        // Stop reading a triangle whose stream is truncated.
+        // Stop reading a triangle whose stream is truncated or malformed.
         bool truncated = false;
         auto next_nibble = [&data, &ibit = ibit, &truncated]() {
             int n = 0;
@@ -2011,16 +2020,17 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
         };
         // < 0 -> negative of a number of children
         // >= 0 -> state
-        auto num_children_or_state = [&next_nibble]() -> int {
+        auto num_children_or_state = [&next_nibble, &truncated]() -> int {
             int code               = next_nibble();
             int num_of_split_sides = code & 0b11;
             if (num_of_split_sides != 0)
                 return - num_of_split_sides - 1;
             if ((code & 0b1100) != 0b1100)
                 return code >> 2;
-            // Leaf behind the "11" prefix: one nibble of (state-3), or 0b1111 + (state-18).
-            const int nibble = next_nibble();
-            return nibble == 0b1111 ? next_nibble() + 18 : nibble + 3;
+            const int state = read_leaf_state(next_nibble);
+            if (state > int(EnforcerBlockerType::ExtruderMax))
+                truncated = true;
+            return state;
         };
 
         int state = num_children_or_state();

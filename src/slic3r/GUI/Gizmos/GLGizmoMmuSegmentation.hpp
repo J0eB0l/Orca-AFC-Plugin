@@ -86,7 +86,7 @@ public:
     void data_changed(bool is_serializing) override;
 
     // The paint material limit follows EnforcerBlockerType::ExtruderMax: TriangleSelector
-    // serialization covers the extended (17..32) range through an escape nibble. Mixed-color
+    // serialization covers the states past 17 through escape nibbles. Mixed-color
     // filaments occupy ordinary slots, so they draw from the same budget as physical ones.
     static const constexpr size_t EXTRUDERS_LIMIT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
 

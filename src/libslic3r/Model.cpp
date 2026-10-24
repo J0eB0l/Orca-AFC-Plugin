@@ -98,6 +98,8 @@ namespace Slic3r {
 const std::vector<std::string> CONST_FILAMENTS = {
     "",   "4",  "8",  "0C", "1C",  "2C",  "3C",  "4C",  "5C",  "6C",  "7C",  "8C",  "9C",  "AC",  "BC",  "CC","DC",//16
          "EC", "0FC", "1FC", "2FC", "3FC", "4FC", "5FC", "6FC", "7FC", "8FC", "9FC", "AFC", "BFC", "CFC", "DFC", "EFC",//32
+         "0FFC", "1FFC", "2FFC", "3FFC", "4FFC", "5FFC", "6FFC", "7FFC", "8FFC", "9FFC", "AFFC", "BFFC", "CFFC", "DFFC", "EFFC", "0FFFC",//48
+         "1FFFC", "2FFFC", "3FFFC", "4FFFC", "5FFFC", "6FFFC", "7FFFC", "8FFFC", "9FFFC", "AFFFC", "BFFFC", "CFFFC", "DFFFC", "EFFFC", "0FFFFC", "1FFFFC",//64
 }; //      1                         5                                 10                                 15    16
     // BBS initialization of static variables
     std::map<size_t, ExtruderParams> Model::extruderParamsMap = { {0,{"",0,0}}};
