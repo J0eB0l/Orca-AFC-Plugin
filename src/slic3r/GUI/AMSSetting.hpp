@@ -98,6 +98,7 @@ protected:
     CheckBox* m_checkbox_switch_filament;
     wxStaticText* m_title_switch_filament;
     Label* m_tip_switch_filament_line1;
+    bool   m_tip_switch_filament_runout{false}; // Orca: the tip tells how a printer agent links matching spools
 
     CheckBox* m_checkbox_air_print;
     wxStaticText* m_title_air_print;

@@ -671,6 +671,32 @@ public:
         int                                lanes {0};
     };
     AgentVersion agent_version;
+    // Orca: a printer agent's lanes (afc_lanes), for the runout lane controls of the tray popup and the
+    // Auto Refill dialog (is_support_runout_lane). color is "RRGGBBAA" ("" unknown), family the material
+    // family the agent compares ("PLA" for "PLA+"), remain_g -1 when unknown, runout the lane it runs out
+    // onto ("" to pause), same the loaded lanes with the same filament, and ams_id/slot_id the tray that
+    // shows it (-1 none).
+    struct AgentLane
+    {
+        std::string              name;
+        std::string              unit;
+        std::string              color;
+        std::string              type;
+        std::string              family;
+        std::string              extruder;
+        std::string              runout;
+        std::vector<std::string> same;
+        int         remain_g {-1};
+        int         toolhead {-1};
+        bool        loaded {false};
+        bool        in_tool {false};
+        int         ams_id {-1};
+        int         slot_id {-1};
+    };
+    bool                   is_support_runout_lane {false};
+    std::vector<AgentLane> agent_lanes;
+    const AgentLane*       agent_lane(const std::string& name) const;
+    const AgentLane*       agent_lane_at(int ams_id, int slot_id) const;
 
     bool is_support_filament_backup{false};
     bool is_support_timelapse{false};
@@ -803,6 +829,10 @@ public:
     int command_clean_print_error_uiop(int print_error);
     int command_clear_agent_message();
     int command_clear_agent_log();
+    // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
+    // lanes with the same filament linked ("match") or none ("clear").
+    int command_set_runout_lane(const std::string& lane, const std::string& runout);
+    int command_runout_lanes(const std::string& action);
     int command_set_printer_nozzle(std::string nozzle_type, float diameter);
     int command_set_printer_nozzle2(int id, std::string nozzle_type, float diameter);
     int command_get_access_code();

@@ -1522,6 +1522,41 @@ int MachineObject::command_clear_agent_log()
     return this->publish_json(j);
 }
 
+const MachineObject::AgentLane* MachineObject::agent_lane(const std::string& name) const
+{
+    for (const AgentLane& lane : agent_lanes)
+        if (lane.name == name)
+            return &lane;
+    return nullptr;
+}
+
+const MachineObject::AgentLane* MachineObject::agent_lane_at(int ams_id, int slot_id) const
+{
+    for (const AgentLane& lane : agent_lanes)
+        if (lane.ams_id == ams_id && lane.slot_id == slot_id)
+            return &lane;
+    return nullptr;
+}
+
+int MachineObject::command_set_runout_lane(const std::string& lane, const std::string& runout)
+{
+    json j;
+    j["print"]["command"]     = "afc_runout";
+    j["print"]["lane"]        = lane;
+    j["print"]["runout"]      = runout;
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
+int MachineObject::command_runout_lanes(const std::string& action)
+{
+    json j;
+    j["print"]["command"]     = "afc_runout";
+    j["print"]["action"]      = action;
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 int MachineObject::command_upgrade_confirm()
 {
     BOOST_LOG_TRIVIAL(info) << "command_upgrade_confirm";
@@ -3327,6 +3362,34 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                             agent_log.problems.push_back({problem.value("type", std::string()) == "error",
                                                           problem.value("time", std::string()),
                                                           problem.value("text", std::string()), problem.value("count", 1)});
+                }
+                if (jj.contains("support_runout_lane") && jj["support_runout_lane"].is_boolean()) {
+                    is_support_runout_lane = jj["support_runout_lane"].get<bool>();
+                }
+                if (jj.contains("afc_lanes") && jj["afc_lanes"].is_array()) {
+                    agent_lanes.clear();
+                    for (const json& item : jj["afc_lanes"]) {
+                        if (!item.is_object() || !item.contains("name") || !item["name"].is_string())
+                            continue;
+                        AgentLane lane;
+                        lane.name     = item["name"].get<std::string>();
+                        lane.unit     = item.value("unit", std::string());
+                        lane.color    = item.value("color", std::string());
+                        lane.type     = item.value("type", std::string());
+                        lane.family   = item.value("family", std::string());
+                        lane.extruder = item.value("extruder", std::string());
+                        lane.runout   = item.value("runout", std::string());
+                        for (const json& name : item.value("same", json::array()))
+                            if (name.is_string())
+                                lane.same.push_back(name.get<std::string>());
+                        lane.remain_g = item.value("remain_g", -1);
+                        lane.toolhead = item.value("toolhead", -1);
+                        lane.loaded   = item.value("loaded", false);
+                        lane.in_tool  = item.value("in_tool", false);
+                        lane.ams_id   = item.value("ams_id", -1);
+                        lane.slot_id  = item.value("slot_id", -1);
+                        agent_lanes.push_back(std::move(lane));
+                    }
                 }
                 if (jj.contains("afc_version") && jj["afc_version"].is_object()) {
                     const json& version     = jj["afc_version"];

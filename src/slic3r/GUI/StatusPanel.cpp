@@ -12,6 +12,7 @@
 #include "MainFrame.hpp"
 
 #include "MsgDialog.hpp"
+#include "RunoutLanesDialog.hpp"
 #include "bambu_networking.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
@@ -4599,6 +4600,8 @@ void StatusPanel::on_ams_unload(SimpleEvent &event)
 
 void StatusPanel::on_ams_filament_backup(SimpleEvent& event)
 {
+    if (RunoutLanesDialog::show_for(this, obj)) // Orca: a printer agent's runout lanes
+        return;
     if (obj) {
         AmsReplaceMaterialDialog* m_replace_material_popup = new AmsReplaceMaterialDialog(this);
         m_replace_material_popup->update_machine_obj(obj);

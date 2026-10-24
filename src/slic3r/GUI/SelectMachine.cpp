@@ -9,6 +9,7 @@
 #include "GUI_App.hpp"
 #include "GUI_Preview.hpp"
 #include "MainFrame.hpp"
+#include "RunoutLanesDialog.hpp"
 #include "Widgets/ProgressDialog.hpp"
 #include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/StaticBox.hpp"
@@ -1036,6 +1037,8 @@ void SelectMachineDialog::popup_filament_backup()
 
     DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
     if (!dev) return;
+    if (RunoutLanesDialog::show_for(this, dev->get_selected_machine())) // Orca: a printer agent's runout lanes
+        return;
     if (dev->get_selected_machine()/* && dev->get_selected_machine()->filam_bak.size() > 0*/) {
         AmsReplaceMaterialDialog* m_replace_material_popup = new AmsReplaceMaterialDialog(this);
         m_replace_material_popup->update_machine_obj(dev->get_selected_machine());
@@ -4249,11 +4252,13 @@ void SelectMachineDialog::on_timer(wxTimerEvent &event)
         change_materialitem_tip(true);
     }
 
+    // Orca: a printer agent that takes runout lanes always offers them, to link or check before the print is sent.
+    const bool runout_lanes = obj_->is_support_runout_lane;
     if (!obj_->GetFilaSystem()->HasAms()
         || obj_->ams_exist_bits == 0
         || !obj_->is_support_filament_backup
-        || !obj_->GetExtderSystem()->HasFilamentBackup()
-        || !obj_->GetFilaSystem()->IsAutoRefillEnabled()
+        || (!runout_lanes && !obj_->GetExtderSystem()->HasFilamentBackup())
+        || (!runout_lanes && !obj_->GetFilaSystem()->IsAutoRefillEnabled())
         || !_HasAms(m_ams_mapping_result)) {
         if (m_ams_backup_tip->IsShown()) {
             m_ams_backup_tip->Hide();
@@ -4608,6 +4613,16 @@ void SelectMachineDialog::CheckWarningSpoolRemain(MachineObject* obj_)
         const DevAmsSlotId slot{mapped.get_ams_id(), mapped.get_slot_id()};
         std::vector<DevAmsSlotId> members = obj_->GetExtderSystem()->GetBackupAmsSlotInGroup(slot);
         members.push_back(slot);
+        // Orca: with AMS filament backup on, a printer agent links a lane with no runout lane to the spools with the
+        // same filament when the print is sent.
+        const MachineObject::AgentLane* lane = obj_->is_support_runout_lane && obj_->GetFilaSystem()->IsAutoRefillEnabled() &&
+                                                       m_print_type == PrintFromType::FROM_NORMAL ?
+                                                   obj_->agent_lane_at(slot.first, slot.second) :
+                                                   nullptr;
+        if (lane && lane->runout.empty())
+            for (const std::string& name : lane->same)
+                if (const MachineObject::AgentLane* spare = obj_->agent_lane(name); spare && spare->ams_id >= 0)
+                    members.emplace_back(spare->ams_id, spare->slot_id);
         std::sort(members.begin(), members.end());
         members.erase(std::unique(members.begin(), members.end()), members.end());
         auto [it, added] = groups.try_emplace(members);

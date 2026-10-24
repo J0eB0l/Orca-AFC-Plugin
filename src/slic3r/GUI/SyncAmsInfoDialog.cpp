@@ -10,6 +10,7 @@
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/AmsMappingPopup.hpp"
 #include "slic3r/GUI/SelectMachine.hpp"
+#include "slic3r/GUI/RunoutLanesDialog.hpp"
 #include "libslic3r/ProjectTask.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "libslic3r/Utils.hpp"
@@ -1190,6 +1191,8 @@ void SyncAmsInfoDialog::popup_filament_backup()
 {
     DeviceManager *dev = Slic3r::GUI::wxGetApp().getDeviceManager();
     if (!dev) return;
+    if (RunoutLanesDialog::show_for(this, dev->get_selected_machine())) // Orca: a printer agent's runout lanes
+        return;
     if (dev->get_selected_machine() /* && dev->get_selected_machine()->filam_bak.size() > 0*/) {
         AmsReplaceMaterialDialog *m_replace_material_popup = new AmsReplaceMaterialDialog(this);
         m_replace_material_popup->update_machine_obj(dev->get_selected_machine());

@@ -170,6 +170,10 @@ public:
 protected:
     void create_panel_normal(wxWindow* parent);
     void create_panel_kn(wxWindow* parent);
+    // Orca: a printer agent's runout lane for the tray (is_support_runout_lane), sent with Confirm.
+    void create_panel_runout(wxWindow* parent);
+    void update_runout();
+    void update_runout_text();
     void on_dpi_changed(const wxRect &suggested_rect) override;
     void on_select_filament(wxCommandEvent& evt);
     void on_toggle_favorite_filament(wxCommandEvent& evt);
@@ -231,6 +235,13 @@ protected:
 
     ComboBox *m_comboBox_filament;
     ComboBox * m_comboBox_cali_result;
+
+    wxPanel*    m_panel_runout{nullptr};
+    ComboBox*   m_combo_runout{nullptr};
+    Label*      m_runout_hint{nullptr};
+    Label*      m_runout_warning{nullptr};
+    std::string m_runout_lane; // the tray's lane, "" when the row is hidden
+    std::string m_runout_from; // the runout lane the printer has for it
     TextInput*       m_readonly_filament;
 
     struct FilamentInfos {

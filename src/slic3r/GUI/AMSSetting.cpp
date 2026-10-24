@@ -6,6 +6,7 @@
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h"
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"
 #include "slic3r/GUI/DeviceCore/DevManager.h"
+#include "slic3r/GUI/DeviceManager.hpp"
 
 #include "slic3r/GUI/MsgDialog.hpp"
 
@@ -477,6 +478,14 @@ void AMSSetting::update_remain_mode(bool selected)
 void AMSSetting::update_switch_filament(bool selected)
 {
     if (m_obj->is_support_filament_backup) {
+        // Orca: a printer agent that takes runout lanes links matching spools as each print is sent.
+        if (m_tip_switch_filament_runout != m_obj->is_support_runout_lane) {
+            m_tip_switch_filament_runout = m_obj->is_support_runout_lane;
+            m_tip_switch_filament_line1->SetLabel(m_tip_switch_filament_runout ?
+                _L("When OrcaSlicer sends a print, each lane it uses runs out onto the loaded spools with the same material and color. Runout lanes picked by hand stay.") :
+                _L("AMS will continue to another spool with matching filament properties automatically when current filament runs out."));
+            m_tip_switch_filament_line1->Wrap(AMS_SETTING_BODY_WIDTH);
+        }
         m_checkbox_switch_filament->Show();
         m_title_switch_filament->Show();
         m_tip_switch_filament_line1->Show();

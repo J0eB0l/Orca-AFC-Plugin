@@ -138,6 +138,7 @@ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, 
                     }
                 }
                 info.in_tool = it->second->in_tool;
+                info.runout  = it->second->runout;
 
 
             } else {
@@ -1112,6 +1113,24 @@ void AMSLib::render(wxDC &dc)
     else{
         render_generic_text(dc);
     }
+    if (!m_info.runout.empty())
+        render_runout_mark(dc);
+}
+
+// Orca: a printer agent's tray that runs out onto another lane (Auto Refill) carries an infinity mark in its
+// top corner, light on a dark filament color that reaches up to it.
+void AMSLib::render_runout_mark(wxDC& dc)
+{
+    const wxString mark = wxString::FromUTF8("\xE2\x88\x9E");
+    dc.SetFont(::Label::Body_13);
+    const wxSize text   = dc.GetTextExtent(mark);
+    const wxSize size   = GetSize();
+    const int    top    = FromDIP(3);
+    auto         colour = m_info.material_colour;
+    change_the_opacity(colour);
+    const bool on_fill = colour.Alpha() != 0 && m_info.material_remain * size.y >= (size.y - top - text.y / 2) * 100;
+    dc.SetTextForeground(on_fill && colour.GetLuminance() < 0.6 ? AMS_CONTROL_WHITE_COLOUR : AMS_CONTROL_GRAY800);
+    dc.DrawText(mark, size.x - text.x - FromDIP(6), top);
 }
 
 void AMSLib::render_lite_text(wxDC& dc)
@@ -1791,6 +1810,14 @@ void AMSLib::UpdateInfo(Caninfo info, std::string ams_idx, bool refresh)
     }
     if (info.material_colour.Alpha() != 0 && info.material_colour.Alpha() != 255 && info.material_colour.Alpha() != 254 && m_info.material_colour != info.material_colour) {
         transparent_changed = true;
+    }
+
+    // Orca: hovering a printer agent's tray names the lane it runs out onto.
+    if (info.runout != m_info.runout) {
+        if (info.runout.empty())
+            UnsetToolTip();
+        else
+            SetToolTip(format_wxstr(_L("Runs out onto %1%"), info.runout));
     }
 
     m_info = info;

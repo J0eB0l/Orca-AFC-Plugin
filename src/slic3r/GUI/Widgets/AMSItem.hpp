@@ -208,6 +208,7 @@ struct Caninfo
     float           n = 0.0f;
     std::vector<wxColour> material_cols;
     bool            in_tool = false; // Orca: loaded in its own toolhead, as a printer agent reports it
+    std::string     runout;          // Orca: the lane a printer agent's tray runs out onto, "" for none
 
 public:
     bool operator==(const Caninfo& other) const
@@ -223,7 +224,8 @@ public:
             k == other.k &&
             n == other.n &&
             material_cols == other.material_cols &&
-            in_tool == other.in_tool)
+            in_tool == other.in_tool &&
+            runout == other.runout)
         {
             return true;
         }
@@ -577,6 +579,7 @@ protected:
     void render(wxDC &dc);
     void render_lite_text(wxDC& dc);
     void render_generic_text(wxDC& dc);
+    void render_runout_mark(wxDC& dc);
     void doRender(wxDC& dc);
     void render_lite_lib(wxDC& dc);
     void render_generic_lib(wxDC& dc);

@@ -122,6 +122,8 @@ void DevAmsTray::reset()
     spool.reset();
     toolhead = -1;
     tool = -1;
+    in_tool = false;
+    runout.clear();
 }
 
 
@@ -847,6 +849,8 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             curr_tray->tool = tool_it != tray_it->end() && tool_it->is_number_integer() ? tool_it->get<int>() : -1;
                             auto in_tool_it = tray_it->find("in_tool");
                             curr_tray->in_tool = in_tool_it != tray_it->end() && in_tool_it->is_boolean() && in_tool_it->get<bool>();
+                            auto runout_it = tray_it->find("runout");
+                            curr_tray->runout = runout_it != tray_it->end() && runout_it->is_string() ? runout_it->get<std::string>() : std::string();
                             auto remain_g_it = tray_it->find("remain_g");
                             curr_tray->remain_g = remain_g_it != tray_it->end() && remain_g_it->is_number() ? int(remain_g_it->get<double>()) : -1;
                             int ams_id_int = 0;

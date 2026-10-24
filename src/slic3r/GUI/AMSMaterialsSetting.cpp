@@ -58,6 +58,8 @@
 #include "CalibUtils.hpp"
 #include "../Utils/ColorSpaceConvert.hpp"
 #include "EncodedFilament.hpp"
+#include "DeviceManager.hpp"
+#include "RunoutLanesDialog.hpp"
 
 
 #include "DeviceCore/DevConfig.h"
@@ -192,6 +194,9 @@ void AMSMaterialsSetting::create()
     create_panel_normal(m_panel_normal);
     m_panel_kn = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
     create_panel_kn(m_panel_kn);
+    m_panel_runout = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
+    create_panel_runout(m_panel_runout);
+    m_panel_runout->Hide();
 
     wxBoxSizer *m_sizer_button = new wxBoxSizer(wxHORIZONTAL);
 
@@ -225,6 +230,8 @@ void AMSMaterialsSetting::create()
     m_sizer_main->Add(m_panel_normal, 0, wxALL, FromDIP(2));
 
     m_sizer_main->Add(m_panel_kn, 0, wxALL, FromDIP(2));
+
+    m_sizer_main->Add(m_panel_runout, 0, wxALL, FromDIP(2));
 
     m_sizer_main->Add(0, 0, 0, wxTOP, FromDIP(24));
     m_sizer_main->Add(m_sizer_button, 0,  wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
@@ -518,6 +525,69 @@ void AMSMaterialsSetting::create_panel_kn(wxWindow* parent)
     parent->SetSizer(sizer);
 }
 
+void AMSMaterialsSetting::create_panel_runout(wxWindow* parent)
+{
+    parent->SetBackgroundColour(*wxWHITE);
+    auto sizer = new wxBoxSizer(wxVERTICAL);
+    auto title = new wxStaticText(parent, wxID_ANY, _L("When it runs out"));
+    title->SetForegroundColour(AMS_MATERIALS_SETTING_GREY800);
+    title->SetFont(Label::Head_14);
+
+    m_combo_runout = new ::ComboBox(parent, wxID_ANY, wxEmptyString, wxDefaultPosition,
+                                    wxSize(AMS_MATERIALS_SETTING_LABEL_WIDTH + FromDIP(250), FromDIP(30)), 0, nullptr, wxCB_READONLY);
+    m_combo_runout->SetKeepDropArrow(true);
+    m_combo_runout->GetDropDown().SetUseContentWidth(true);
+    m_combo_runout->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) { update_runout_text(); });
+
+    m_runout_hint = new Label(parent, Label::Body_13, wxEmptyString);
+    m_runout_hint->SetForegroundColour(AMS_MATERIALS_SETTING_GREY700);
+    m_runout_hint->SetBackgroundColour(*wxWHITE);
+    m_runout_warning = new Label(parent, Label::Body_13, wxEmptyString);
+    m_runout_warning->SetForegroundColour(wxColour(255, 111, 0));
+    m_runout_warning->SetBackgroundColour(*wxWHITE);
+
+    sizer->Add(0, 0, 0, wxTOP, FromDIP(10));
+    sizer->Add(title, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    sizer->Add(0, 0, 0, wxTOP, FromDIP(12));
+    sizer->Add(m_combo_runout, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    sizer->Add(0, 0, 0, wxTOP, FromDIP(6));
+    sizer->Add(m_runout_hint, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    sizer->Add(m_runout_warning, 0, wxLEFT | wxRIGHT, FromDIP(20));
+    parent->SetSizer(sizer);
+}
+
+// Orca: the row shows for a printer agent's tray that is an AFC lane, with the lane it runs out onto now.
+void AMSMaterialsSetting::update_runout()
+{
+    const MachineObject::AgentLane* lane = obj && obj->is_support_runout_lane && !is_virtual_tray() ? obj->agent_lane_at(ams_id, slot_id) :
+                                                                                                         nullptr;
+    m_runout_lane = lane ? lane->name : std::string();
+    m_runout_from = lane ? lane->runout : std::string();
+    m_panel_runout->Show(lane != nullptr);
+    if (!lane)
+        return;
+    m_combo_runout->CloseDropdown();
+    runout_lanes::fill(m_combo_runout, obj->agent_lanes, *lane, lane->runout, FromDIP(16));
+    m_combo_runout->Enable(!m_view_only);
+    update_runout_text();
+}
+
+void AMSMaterialsSetting::update_runout_text()
+{
+    const MachineObject::AgentLane* lane = obj ? obj->agent_lane(m_runout_lane) : nullptr;
+    if (!lane)
+        return;
+    const std::string to      = runout_lanes::selected(m_combo_runout);
+    const wxString    warning = runout_lanes::warning(obj->agent_lanes, *lane, to);
+    m_runout_hint->SetLabel(runout_lanes::outcome(obj->agent_lanes, *lane, to));
+    m_runout_hint->Wrap(AMS_MATERIALS_SETTING_LABEL_WIDTH + FromDIP(250));
+    m_runout_warning->SetLabel(warning);
+    m_runout_warning->Wrap(AMS_MATERIALS_SETTING_LABEL_WIDTH + FromDIP(250));
+    m_runout_warning->Show(!warning.empty());
+    Layout();
+    Fit();
+}
+
 void AMSMaterialsSetting::paintEvent(wxPaintEvent &evt)
 {
     auto      size = GetSize();
@@ -787,6 +857,15 @@ void AMSMaterialsSetting::on_select_ok(wxCommandEvent &event)
         return;
 
     if (m_view_only) return; // Orca: view-only never commits
+
+    // Orca: a printer agent's runout lane goes to the printer on its own, ahead of the filament checks.
+    if (m_panel_runout->IsShown()) {
+        const std::string runout = runout_lanes::selected(m_combo_runout);
+        if (runout != m_runout_from) {
+            obj->command_set_runout_lane(m_runout_lane, runout);
+            m_runout_from = runout;
+        }
+    }
 
     //get filament id
     ams_filament_id = "";
@@ -1272,6 +1351,7 @@ void AMSMaterialsSetting::Popup(wxString filament, wxString sn, wxString temp_mi
 {
     if (!obj) return;
     update_widgets();
+    update_runout();
     // set default value; a printer agent's tray without a K stays blank
     if (k.IsEmpty() && !obj->is_support_tray_k)
         k = "0.000";
@@ -1809,6 +1889,13 @@ void AMSMaterialsSetting::on_dpi_changed(const wxRect &suggested_rect)
     m_star_filled.msw_rescale();
     m_star_empty.msw_rescale();
     update_favorite_stars();
+    // Orca: the runout lanes' swatches are bitmaps of the old size.
+    m_combo_runout->Rescale();
+    if (const MachineObject::AgentLane* lane = (obj && m_panel_runout->IsShown()) ? obj->agent_lane(m_runout_lane) : nullptr) {
+        m_combo_runout->CloseDropdown();
+        runout_lanes::fill(m_combo_runout, obj->agent_lanes, *lane, runout_lanes::selected(m_combo_runout), FromDIP(16));
+        update_runout_text();
+    }
     this->Refresh();
 }
 
