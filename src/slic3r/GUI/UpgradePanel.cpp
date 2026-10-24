@@ -57,6 +57,13 @@ static const std::unordered_map<wxString, wxString> ACCESSORY_DISPLAY_STR = {
     {"O2L-FTS", L("Filament Track Switch")},
 };
 
+// Orca: a printer that a printer agent other than Bambu's drives, such as the AFC plugin's Klipper printers.
+// It has no Bambu firmware to update and its units report no AMS firmware.
+static bool is_agent_printer(const MachineObject* obj)
+{
+    return !obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID;
+}
+
 enum FIRMWARE_STASUS
 {
     UNKOWN,
@@ -255,7 +262,7 @@ MachineInfoPanel::MachineInfoPanel(wxWindow* parent, wxWindowID id, const wxPoin
 
     m_main_sizer->Add(m_main_left_sizer, 1, wxEXPAND, 0);
 
-    wxBoxSizer *m_main_right_sizer = new wxBoxSizer(wxVERTICAL);
+    m_main_right_sizer = new wxBoxSizer(wxVERTICAL);
 
     m_main_right_sizer->SetMinSize(wxSize(FromDIP(137), -1));
 
@@ -600,8 +607,7 @@ void MachineInfoPanel::update_printer_imgs(MachineObject* obj)
     auto img = obj->get_printer_thumbnail_img_str();
     img += "_png";
     // Orca: a printer agent's printer has no Bambu model image; it shows its printer preset's, as the sidebar does.
-    m_preset_thumbnail = img == "printer_thumbnail_png" && !obj->printer_agent_id.empty() &&
-                         obj->printer_agent_id != BBL_PRINTER_AGENT_ID;
+    m_preset_thumbnail = img == "printer_thumbnail_png" && is_agent_printer(obj);
 
     try
     {
@@ -630,6 +636,12 @@ void MachineInfoPanel::update(MachineObject* obj)
     m_obj = obj;
     if (obj) {
         this->Freeze();
+        // Orca: an agent printer has no Bambu firmware update, so the update button, progress and release note go.
+        const bool agent_printer = is_agent_printer(obj);
+        if (m_firmware_hidden && !agent_printer) {
+            m_main_right_sizer->ShowItems(true);
+            last_status = -1; // show_status() below sets each one again
+        }
         //update online status img
         m_panel_caption->Freeze();
         if (!obj->is_connected()) {
@@ -656,6 +668,9 @@ void MachineInfoPanel::update(MachineObject* obj)
         }
         m_panel_caption->Layout();
         m_panel_caption->Thaw();
+        if (agent_printer)
+            m_main_right_sizer->ShowItems(false);
+        m_firmware_hidden = agent_printer;
 
         // update version
         update_version_text(obj);
@@ -885,8 +900,7 @@ void MachineInfoPanel::update_ams_ext(MachineObject *obj)
     }
 
     // Orca: a printer agent's units report no AMS firmware, so they get no empty AMS rows (the AFC rows count them).
-    const bool agent_units = !obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID &&
-                             obj->get_ams_version().empty();
+    const bool agent_units = is_agent_printer(obj) && obj->get_ams_version().empty();
 
     //ams
     if (obj->ams_exist_bits != 0 && !agent_units)

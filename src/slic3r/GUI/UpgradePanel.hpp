@@ -191,6 +191,9 @@ protected:
     std::string     m_afc_url;
     // Orca: the printer image is its printer preset's (a printer agent's printer has no Bambu model image)
     bool            m_preset_thumbnail = false;
+    // Orca: the firmware update column (button, progress, release note), hidden for a printer agent's printer
+    wxBoxSizer*     m_main_right_sizer = nullptr;
+    bool            m_firmware_hidden = false;
 
     /* upgrade widgets */
     wxBoxSizer*     m_upgrading_sizer;
