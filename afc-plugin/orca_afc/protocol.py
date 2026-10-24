@@ -121,6 +121,10 @@ class Snapshot:
     top_cover: bool = False   # a U1 reports its top cover (filter and exhaust fan) attached
     message: str = ""         # AFC's oldest queued error or warning, until AFC_CLEAR_MESSAGE
     message_type: str = ""    # "error" or "warning"
+    # AMS filament backup, kept in the plugin's database namespace (merge_backup()):
+    # a print sent from OrcaSlicer links matching spools, and these are the runout lanes it set.
+    filament_backup: bool = True
+    backup_made: dict = field(default_factory=dict)  # lane -> runout lane
 
     def find_lane(self, name: str) -> Lane | None:
         return next((lane for lane in self.lanes if lane.name == name), None)
@@ -492,6 +496,29 @@ def parse_objects_status(status) -> Snapshot | None:
     return out
 
 
+DB_NAMESPACE = "orca_afc"     # the plugin's own items in Moonraker's database
+BACKUP_KEY = "filament_backup"  # {"on": bool, "made": {lane: runout lane}}
+
+
+def backup_value(on: bool, made: dict) -> dict:
+    """AMS filament backup as BACKUP_KEY keeps it."""
+    return {"on": bool(on), "made": dict(made) if on else {}}
+
+
+def merge_backup(namespace, out: Snapshot) -> None:
+    """AMS filament backup from the plugin's database namespace: on unless
+    turned off, with the runout lanes it set. Nothing stored keeps it on."""
+    data = namespace.get("value") if isinstance(namespace, dict) else None
+    value = data.get(BACKUP_KEY) if isinstance(data, dict) else None
+    if not isinstance(value, dict):
+        return
+    if isinstance(value.get("on"), bool):
+        out.filament_backup = value["on"]
+    made = value.get("made")
+    if isinstance(made, dict):
+        out.backup_made = {lane: to for lane, to in made.items() if isinstance(lane, str) and isinstance(to, str) and to}
+
+
 def merge_lane_data(lane_data, out: Snapshot) -> None:
     """Fill blanks (vendor, temps, Spoolman id, extruder index, weights) from
     Moonraker's "lane_data" database namespace ({"T0": {...}} from newer AFC,
@@ -728,7 +755,7 @@ def to_json(s: Snapshot) -> dict:
               "weight": l.weight, "initial_weight": l.initial_weight, "density": l.density,
               "nozzle_temp": l.nozzle_temp, "bed_temp": l.bed_temp, "prep": l.prep, "load": l.load,
               "tool_loaded": l.tool_loaded, "has_filament": l.has_filament, "status": l.status, "td": l.td,
-              "flow_k": l.flow_k if l.flow_k >= 0 else None}
+              "flow_k": l.flow_k if l.flow_k >= 0 else None, "runout_lane": l.runout_lane}
              for l in s.lanes]
     u1 = s.u1_print
     return {
@@ -736,7 +763,7 @@ def to_json(s: Snapshot) -> dict:
         "multiple_mapping": s.multiple_mapping, "current_lane": s.current_lane, "extruders": list(s.extruders),
         "u1_print": {"bed_level": u1.bed_level, "flow_calibrate": u1.flow_calibrate,
                      "time_lapse_camera": u1.time_lapse} if u1.present else None,
-        "units": units, "lanes": lanes, "max_tool": s.max_tool(),
+        "units": units, "lanes": lanes, "max_tool": s.max_tool(), "filament_backup": s.filament_backup,
     }
 
 

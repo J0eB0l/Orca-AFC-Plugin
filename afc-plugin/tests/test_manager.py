@@ -166,6 +166,32 @@ class CommandTest(Case):
             self.manager.edit_lane(self.client, {"lane": "lane2", "changes": {"material": "PLA\nM112"}})
         self.assertEqual(len(self.fake.scripts), 1)
 
+    def test_runout_lanes(self):
+        self.assertEqual(self.refreshed()["afc"]["lanes"][0]["runout_lane"], "")
+        self.assertEqual(self.manager.set_runout(self.client, {"links": [{"lane": "lane1", "runout": "lane5"}]}), "")
+        self.assertEqual(self.manager.edit_lane(self.client, {"lane": "lane2", "changes": {"weight": 30, "runout": "lane1"}}), "")
+        self.assertEqual(self.manager.edit_lane(self.client, {"lane": "lane5", "changes": {"runout": ""}}), "")
+        for params, error in (({"match": True}, "No two loaded lanes have the same material and color"),
+                              ({"links": [{"lane": "lane1"}, "lane2"]}, "each link needs a lane and a runout lane"),
+                              ({}, "each link needs a lane and a runout lane")):
+            with self.assertRaises(AFCError) as caught:
+                self.manager.set_runout(self.client, params)
+            self.assertEqual(str(caught.exception), error)
+        self.assertEqual(self.manager.set_runout(self.client, {"clear": True}), "")  # none set: nothing to send
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane1 RUNOUT=lane5",
+                                             "SET_WEIGHT LANE=lane2 WEIGHT=30\nSET_RUNOUT LANE=lane2 RUNOUT=lane1"])
+
+    def test_filament_backup(self):
+        self.assertTrue(self.refreshed()["afc"]["filament_backup"])  # on until turned off
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane1"]["runout_lane"] = "lane5"
+        self.fake.database["orca_afc"] = {"filament_backup": {"on": True, "made": {"lane1": "lane5"}}}
+        self.refreshed()
+        self.assertEqual(self.manager.set_backup(self.client, {"on": False}), "")
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane1 RUNOUT=NONE"])
+        self.assertFalse(self.refreshed()["afc"]["filament_backup"])
+        with self.assertRaises(AFCError):
+            self.manager.set_backup(self.client, {"on": "yes"})
+
     def test_klipper_error(self):
         self.fake.gcode_error = "Unknown command:\"SET_COLOR\""
         self.assertEqual(self.manager.edit_lane(self.client, {"lane": "lane2", "changes": {"color": "#FFFFFF"}}),

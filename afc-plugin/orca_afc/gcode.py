@@ -254,6 +254,15 @@ def printed_tools(text: str) -> dict:
     return {filament: int(tool) for filament, tool in enumerate(tools) if tool.isdigit()}
 
 
+def tools_printed(text: str) -> list:
+    """The T numbers a file prints with: its filaments' (renumbered) tools,
+    else the tools it changes to."""
+    if not _FILAMENT_USED.search(text):
+        return filaments_used(text)
+    tools = printed_tools(text)
+    return sorted({tools.get(filament, filament) for filament in filaments_used(text)})
+
+
 def top_cover_mode(settings: FileSettings, used: list) -> str:
     """The U1 top cover mode for a plate printing the filaments `used`, as
     Snapmaker's OrcaSlicer picks it from their softening temperature."""

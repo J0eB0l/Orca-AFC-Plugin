@@ -100,6 +100,8 @@ class FakeMoonraker:
             return 200, {"result": {"eventtime": 1.0, "status": status}}
         if method == "GET" and path == "/server/database/item" and query.get("namespace") in self.database:
             items = self.database[query["namespace"]]
+            if "key" not in query:
+                return 200, {"result": {"namespace": query["namespace"], "key": None, "value": dict(items)}}
             if query.get("key") not in items:
                 return 404, {"error": {"code": 404, "message": "Key '%s' not found" % query.get("key")}}
             return 200, {"result": {"namespace": query["namespace"], "key": query["key"],

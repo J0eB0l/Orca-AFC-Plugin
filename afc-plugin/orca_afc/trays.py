@@ -21,7 +21,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from .protocol import Dryer, Lane, Snapshot, tool_number
+from . import runout
+from .protocol import Dryer, Lane, Snapshot, material_key, tool_number
 
 # OrcaSlicer reads the tray presence bits with stol(), which a bit past 30
 # overflows on Windows (32-bit long), and the bit test itself shifts an int.
@@ -88,6 +89,14 @@ class Layout:
             return NO_TRAY
         box, slot = at
         return box.ams_id if box.single else box.ams_id * 4 + slot
+
+    def place(self, lane: Lane) -> tuple:
+        """The unit id and slot the Device tab shows a lane in, (-1, -1) for none."""
+        for m in lane.maps:
+            at = self._at.get(tool_number(m))
+            if at is not None:
+                return at[0].ams_id, at[1]
+        return -1, -1
 
 
 def _is_int(v) -> bool:
@@ -201,6 +210,9 @@ def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None
     if lane.tool_loaded:
         # The AFC build of OrcaSlicer shows it loaded, in a docked tool too.
         tray["in_tool"] = True
+    if lane.runout_lane:
+        # ... and marks the tray with the lane it runs out onto.
+        tray["runout"] = lane.runout_lane
     tray.update(extra or {})
     return tray
 
@@ -340,6 +352,25 @@ def refill_groups(snapshot: Snapshot, shown: Layout) -> list:
             bits.add(bit)
             names.add(lane.name)
     return [sum(1 << bit for bit in bits) for bits, names in groups.values() if len(names) > 1]
+
+
+def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
+    """Every AFC lane, for the runout lane choices of the AFC build of
+    OrcaSlicer: its unit, filament and material family (material_key()),
+    grams (-1 unknown), toolhead, the lane it runs out onto ("" for none), the
+    lanes with the same filament (runout.same_filament()) and where the
+    Device tab shows it."""
+    out = []
+    for lane in snapshot.lanes:
+        ams_id, slot_id = shown.place(lane)
+        same = [other.name for other in snapshot.lanes if other is not lane and runout.same_filament(lane, other)]
+        out.append({"name": lane.name, "unit": lane.unit, "color": _color(lane.color), "type": lane.material,
+                    "family": material_key(lane.material),
+                    "remain_g": int(round(lane.weight)) if lane.has_filament and lane.weight > 0 else -1,
+                    "toolhead": lane.extruder_index, "extruder": lane.extruder, "loaded": lane.has_filament,
+                    "in_tool": lane.tool_loaded, "runout": lane.runout_lane, "same": same,
+                    "ams_id": ams_id, "slot_id": slot_id})
+    return out
 
 
 def mapping_from_print(ams_mapping: str, ams_mapping2: str, filaments: int, shown: Layout | None = None) -> dict:

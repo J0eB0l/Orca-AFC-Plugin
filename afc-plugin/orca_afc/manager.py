@@ -10,7 +10,7 @@ import json
 import threading
 import time
 
-from . import protocol
+from . import protocol, runout
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
 from .protocol import AFCError, Snapshot
 
@@ -28,7 +28,8 @@ _ACTION_WORDS = {"load": "loading", "unload": "unloading", "eject": "ejecting"}
 
 def read_snapshot(client: Moonraker) -> Snapshot:
     """One AFC read: the webhook first, Klipper objects as the fallback, then
-    the lane_data database and the unit dryers to fill in the rest."""
+    the lane_data database and the unit dryers to fill in the rest, and AMS
+    filament backup from the plugin's own database items."""
     try:
         snap = protocol.parse_status_endpoint(client.afc_status())
         webhook_error = None
@@ -67,6 +68,10 @@ def read_snapshot(client: Moonraker) -> Snapshot:
         protocol.merge_lane_data(client.database_namespace("lane_data"), snap)
     except MoonrakerError:
         pass  # older AFC, or no lane_data yet
+    try:
+        protocol.merge_backup(client.database_namespace(protocol.DB_NAMESPACE), snap)
+    except MoonrakerError:
+        pass  # nothing stored yet
 
     # Unit dryers (ACE, AMS 2 Pro, AMS HT) live on the units' own Klipper objects.
     dryers = protocol.dryer_objects_query(snap)
@@ -213,8 +218,68 @@ class AFCManager:
         return ""
 
     def edit_lane(self, client: Moonraker, params: dict) -> str:
-        gcode = protocol.build_lane_edit_gcode(self.snapshot, params.get("lane", ""), params.get("changes", {}))
-        return self.send(client, gcode)
+        lane, changes = params.get("lane", ""), params.get("changes", {})
+        later, runout_only = [], False
+        if isinstance(changes, dict) and "runout" in changes:
+            changes = dict(changes)
+            to = changes.pop("runout")
+            if not isinstance(to, str):
+                raise AFCError("runout must be a lane name")
+            later, runout_only = runout.links_gcode(self.snapshot, [(lane, to)]), not changes
+        gcode = [] if runout_only else protocol.build_lane_edit_gcode(self.snapshot, lane, changes)
+        return self.send(client, gcode + later)
+
+    def set_runout(self, client: Moonraker, params: dict) -> str:
+        """Runout lanes from the AFC page: "links" [{lane, runout}] ("" for
+        none), or "match" (every set of matching spools) or "clear" (none)."""
+        if params.get("match"):
+            links = runout.matching_links(self.snapshot)
+            if not links:
+                raise AFCError("No two loaded lanes have the same material and color")
+        elif params.get("clear"):
+            links = runout.clear_links(self.snapshot)
+        else:
+            links = []
+            for link in params.get("links") if isinstance(params.get("links"), list) else [None]:
+                if not isinstance(link, dict) or not isinstance(link.get("lane"), str) or \
+                        not isinstance(link.get("runout", ""), str):
+                    raise AFCError("each link needs a lane and a runout lane")
+                links.append((link["lane"], link.get("runout", "")))
+        return self.send(client, runout.links_gcode(self.snapshot, links))
+
+    def set_backup(self, client: Moonraker, params: dict) -> str:
+        """AMS filament backup on or off ("on"), kept on the printer for every
+        OrcaSlicer. Turned off, it takes off the runout lanes it set."""
+        on = params.get("on")
+        if not isinstance(on, bool):
+            raise AFCError("on must be true or false")
+        snap = self.snapshot
+        try:
+            client.post("/server/database/item", {"namespace": protocol.DB_NAMESPACE, "key": protocol.BACKUP_KEY,
+                                                  "value": protocol.backup_value(on, snap.backup_made)})
+        except MoonrakerError as error:
+            return str(error)
+        if on:
+            return ""
+        made = [(name, "") for name, to in snap.backup_made.items()
+                if snap.find_lane(name) is not None and snap.find_lane(name).runout_lane == to]
+        return self.send(client, runout.links_gcode(snap, made))
+
+    def link_backups(self, client: Moonraker, snap: Snapshot, used) -> str:
+        """AMS filament backup for a print about to start on the lanes `used`
+        (runout.auto_links()), the links it made kept on the printer."""
+        if not snap.filament_backup:
+            return ""
+        links, made = runout.auto_links(snap, used, snap.backup_made)
+        error = self.send(client, runout.links_gcode(snap, links))
+        if error or made == snap.backup_made:
+            return error
+        try:
+            client.post("/server/database/item", {"namespace": protocol.DB_NAMESPACE, "key": protocol.BACKUP_KEY,
+                                                  "value": protocol.backup_value(True, made)})
+        except MoonrakerError as error:
+            return str(error)
+        return ""
 
     def lane_action(self, client: Moonraker, params: dict) -> str:
         """Start a lane load, unload or eject and return without waiting for

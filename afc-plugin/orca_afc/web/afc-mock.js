@@ -15,7 +15,7 @@
       extruder_index: head, color: color, multi_colors: [], material: material, sub_type: '', vendor: vendor,
       filament_name: vendor ? vendor + ' ' + material : '', spool_id: 0, weight: weight, initial_weight: 1000,
       density: 1.24, nozzle_temp: material === 'PETG' ? 240 : material === 'ABS' ? 260 : 215, bed_temp: material === 'PETG' ? 70 : material === 'ABS' ? 90 : 60,
-      prep: !!material, load: !!material, tool_loaded: false, has_filament: !!material, status: material ? 'Loaded' : 'None', td: '', flow_k: null,
+      prep: !!material, load: !!material, runout_lane: '', tool_loaded: false, has_filament: !!material, status: material ? 'Loaded' : 'None', td: '', flow_k: null,
     }, extra || {});
   }
 
@@ -37,25 +37,26 @@
       { name: 'Tools', type: 'Toolchanger', lanes: [], dryer: null },
     ],
     lanes: [
-      lane('lane0', 'Ace2_1', 1, 0, 0, '#F2F2F2', 'PLA', 'Polymaker', 640, { spool_id: 41, flow_k: 0.032 }),
+      lane('lane0', 'Ace2_1', 1, 0, 0, '#F2F2F2', 'PLA', 'Polymaker', 640, { spool_id: 41, flow_k: 0.032, runout_lane: 'lane14' }),
       lane('lane1', 'Ace2_1', 2, 1, 1, '#1D1D1F', 'PLA', 'Elegoo', 996, { tool_loaded: true, status: 'Tooled' }),
       lane('lane2', 'Ace2_1', 3, 2, 2, '#E94B3C', 'PLA', 'Generic', 978, { tool_loaded: true, status: 'Tooled', spool_id: 133 }),
       lane('lane3', 'Ace2_1', 4, 3, 3, '', '', '', 0),
       lane('lane4', 'AMS_1', 1, 4, 4, '#2ECC71', 'PETG', 'Sunlu', 410, { tool_loaded: true, status: 'Tooled' }),
       lane('lane5', 'AMS_1', 2, 5, 4, '#F4D03F', 'PETG', 'Sunlu', 88),
-      lane('lane6', 'AMS_1', 3, 6, 4, '', '', '', 0),
+      lane('lane6', 'AMS_1', 3, 6, 4, '#1D1D1F', 'PLA', 'Elegoo', 1000),
       lane('lane7', 'AMS_1', 4, 7, 4, '', '', '', 0),
       lane('lane8', 'Turtle_1', 1, 8, 5, '', '', '', 0),
-      lane('lane9', 'Turtle_1', 2, 9, 5, '#D69090', 'PLA', 'Generic', 768, { tool_loaded: true, status: 'Tooled', spool_id: 40, flow_k: 0.028 }),
+      lane('lane9', 'Turtle_1', 2, 9, 5, '#D69090', 'PLA', 'Generic', 768, { tool_loaded: true, status: 'Tooled', spool_id: 40, flow_k: 0.028, runout_lane: 'lane10' }),
       lane('lane10', 'Turtle_1', 3, 10, 5, '#8E44AD', 'PLA', 'Overture', 530, { multi_colors: ['#8E44AD', '#2E86DE', '#16A085'] }),
       lane('lane11', 'Turtle_1', 4, 11, 5, '', '', '', 0),
-      lane('lane12', 'Bambu_AMS_1', 1, 12, 0, '#0A2989', 'PLA', 'Bambu Lab', 60, { spool_id: 165 }),
+      lane('lane12', 'Bambu_AMS_1', 1, 12, 0, '#0A2989', 'PLA', 'Bambu Lab', 60, { spool_id: 165, runout_lane: 'lane15' }),
       lane('lane13', 'Bambu_AMS_1', 2, 13, 0, '#FF6A13', 'ABS', 'Bambu Lab', 964, { spool_id: 163, flow_k: 0.0215 }),
       lane('lane14', 'Bambu_AMS_1', 3, 14, 0, '#FFFFFF', 'PLA', 'Bambu Lab', 1000),
       lane('lane15', 'Bambu_AMS_1', 4, 15, 0, '#0086D6', 'PLA', 'Bambu Lab', 483, { spool_id: 136 }),
       lane('lane20', 'Bambu_AMS_HT_1', 1, 20, 0, '#5B5B5B', 'PA', 'Bambu Lab', 750, { sub_type: 'CF' }),
     ],
     max_tool: 20,
+    filament_backup: true,
   };
   const types = {};
   afc.units.forEach((u) => { types[u.name] = u.type; });
@@ -102,6 +103,8 @@
               const other = afc.lanes.find((x) => x.maps.includes(p.changes.map));
               if (other) other.maps = l.maps;
               l.maps = [p.changes.map];
+            } else if (k === 'runout') {
+              l.runout_lane = p.changes.runout;
             } else if (k === 'nozzle_temp' || k === 'bed_temp' || k === 'color' || k === 'material' || k === 'weight' || k === 'spool_id') {
               l[k] = p.changes[k];
               if (k === 'spool_id') l.flow_k = null;
@@ -120,6 +123,26 @@
           if (!afc.u1_print) return reply(msg.afc_id, false, 'This printer has no U1 print options');
           afc.u1_print = { bed_level: !!p.bed_level, flow_calibrate: !!p.flow_calibrate, time_lapse_camera: !!p.time_lapse_camera };
           return reply(msg.afc_id, true, '', state(true));
+        case 'set_runout': {
+          // A rough stand-in for the plugin's runout.matching_links().
+          const same = (a, b) => a.material && a.material === b.material && a.color.toUpperCase() === b.color.toUpperCase();
+          let links = p.links || [];
+          if (p.clear) links = afc.lanes.map((x) => ({ lane: x.name, runout: '' }));
+          if (p.match) {
+            links = [];
+            const loaded = afc.lanes.filter((x) => x.has_filament);
+            for (const l of loaded) {
+              const group = loaded.filter((x) => same(l, x)).sort((a, b) => (b.tool_loaded - a.tool_loaded) || (a.weight - b.weight));
+              const i = group.indexOf(l);
+              if (group.length > 1 && i < group.length - 1) links.push({ lane: l.name, runout: group[i + 1].name });
+            }
+          }
+          links.forEach((k) => { const x = afc.lanes.find((y) => y.name === k.lane); if (x) x.runout_lane = k.runout || ''; });
+          return reply(msg.afc_id, true, '', state(false));
+        }
+        case 'set_backup':
+          afc.filament_backup = !!p.on;
+          return reply(msg.afc_id, true, '', state(false));
         case 'lane_action':
           return reply(msg.afc_id, true, '', Object.assign(state(false), { error: 'Demo page: nothing moved' }));
         case 'dry': {

@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, controls, gcode, presets, protocol, swaptimes, trays, upstream
+from . import afclog, controls, gcode, presets, protocol, runout, swaptimes, trays, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -53,7 +53,7 @@ CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
 TIMELAPSE_MACRO = "gcode_macro " + gcode.TIMELAPSE_FRAME  # moonraker-timelapse's macro in Klipper
 LOG_EVERY = 10.0     # seconds between reads of AFC.log for the Assistant page
 CLEAR_MAX = 50       # AFC_CLEAR_MESSAGE sent at most per Clear
-DB_NAMESPACE = "orca_afc"  # the agent's own items in Moonraker's database
+DB_NAMESPACE = protocol.DB_NAMESPACE  # the agent's own items in Moonraker's database
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
 NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
@@ -79,7 +79,8 @@ STAGE_CREATE, STAGE_UPLOAD, STAGE_SENDING = 0, 1, 3
 # home_flag bits: the storage OrcaSlicer prints from (bits 8-9, 1 = normal), and
 # the print dialog's flow and pressure advance calibration switches.
 SD_CARD_NORMAL = 1 << 8
-AUTO_REFILL = 1 << 10  # the printer goes on with a refill group's next tray when one runs out
+# AMS filament backup is on: a print sent from OrcaSlicer links matching spools (runout.auto_links()).
+AUTO_REFILL = 1 << 10
 FLOW_CALIBRATION = 1 << 15
 PA_CALIBRATION = 1 << 16
 # flag3 bit: the printer takes up to 32 filaments. Without it the print dialog
@@ -313,8 +314,10 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_tray_k": True,
         # ... and takes the drying popup on the units with a dryer (trays.ams_json()).
         "support_remote_dry": True,
-        # AFC's runout lanes, as Bambu's auto refill groups below.
-        "support_filament_backup": True,
+        # AFC's runout lanes, as Bambu's auto refill groups below, which the AFC build of OrcaSlicer
+        # also sets from the tray popup and its Auto Refill dialog (afc_lanes, afc_runout), and
+        # AMS Settings' filament backup (home_flag AUTO_REFILL, print_option auto_switch_filament).
+        "support_filament_backup": True, "support_runout_lane": True,
         # The print dialog's switches: a U1 takes them all (its print_task_config), and
         # moonraker-timelapse takes Timelapse.
         "support_bed_leveling": 1 if u1 else 0, "support_flow_calibration": u1, "support_timelapse": u1 or timelapse,
@@ -377,10 +380,12 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # path to the extruder. Never with no tray (255), which OrcaSlicer reads as the external spool.
         now = out["ams"].get("tray_now")
         out["hw_switch_state"] = 1 if now not in (None, "%d" % trays.NO_TRAY) else 0
-        groups = trays.refill_groups(snapshot, trays.layout(snapshot, by_unit))
+        shown = trays.layout(snapshot, by_unit)
+        groups = trays.refill_groups(snapshot, shown)
         # Always sent, so a runout lane taken off leaves OrcaSlicer's groups too.
         out["filam_bak"] = groups
-        if groups:
+        out["afc_lanes"] = trays.lanes_json(snapshot, shown)
+        if snapshot.filament_backup:
             out["home_flag"] |= AUTO_REFILL
         # The AFC build of OrcaSlicer shows AFC's oldest error or warning on the Device tab, where Clear
         # sends clear_agent_message. Always sent, so a cleared message leaves the Device tab too.
@@ -1108,6 +1113,10 @@ else:
                 self._run(printer, "AFC_CLEAR_MESSAGE", push=True)
             elif command == "clear_agent_log":
                 self._clear_log(printer)
+            elif command == "afc_runout":
+                return self._runout(printer, job)
+            elif command == "print_option" and isinstance(job.get("auto_switch_filament"), bool):
+                self._backup(printer, job["auto_switch_filament"])
             elif command == "ams_filament_setting":
                 return self._filament_setting(printer, job)
             elif command == "extrusion_cali_set":
@@ -1133,6 +1142,56 @@ else:
             self._gcode.submit(run)
 
         # -------------------------------------------------------- the Device tab's controls
+
+        def _runout(self, printer: _Printer, job: dict) -> int:
+            """Runout lanes from the tray popup and the Auto Refill dialog: one
+            lane's ("lane", and "runout", "" for none), every set of matching
+            spools ("action": "match") or none ("action": "clear")."""
+            snapshot = printer.snapshot
+            if snapshot is None:
+                return FAILED
+            action = job.get("action")
+            if action == "match":
+                links = runout.matching_links(snapshot)
+            elif action == "clear":
+                links = runout.clear_links(snapshot)
+            elif isinstance(job.get("lane"), str) and isinstance(job.get("runout", ""), str):
+                links = [(job["lane"], job.get("runout", ""))]
+            else:
+                return ERR_INVALID_RESULT
+            try:
+                script = runout.links_gcode(snapshot, links)
+            except AFCError:
+                return ERR_INVALID_RESULT
+            if script:
+                self._run(printer, "\n".join(script), push=True)
+            return SUCCESS
+
+        def _backup(self, printer: _Printer, on: bool) -> None:
+            """AMS Settings' AMS filament backup switch (manager.set_backup())."""
+            def run():
+                try:
+                    self._manager.set_backup(printer.client, {"on": on})
+                except MoonrakerError:
+                    pass
+                self._push(printer)
+
+            self._worker.submit(run)
+
+        def _backups(self, printer: _Printer, snapshot, text: str, start: bool) -> None:
+            """AMS filament backup for a print sent to the printer: matching
+            spools linked for the lanes its file prints with. An upload while a
+            print runs leaves that print's runout lanes alone."""
+            if snapshot is None or not snapshot.filament_backup:
+                return
+            try:
+                if not start and printer.client.print_state() in ("printing", "paused"):
+                    return
+                used = [lane.name for lane in map(snapshot.lane_for_tool, gcode.tools_printed(text)) if lane]
+                if used:
+                    self._manager.link_backups(printer.client, snapshot, used)
+            except MoonrakerError:
+                pass  # the print goes on with the runout lanes it has
 
         def _filament_setting(self, printer: _Printer, job: dict) -> int:
             """The tray popup: the lane takes its color and material, and the
@@ -1366,6 +1425,7 @@ else:
                 except MoonrakerError:
                     return ERR_CANCELED if canceled.is_set() else ERR_UPLOAD_FAILED
             if not job.start:
+                self._backups(printer, snapshot, text, False)
                 return SUCCESS
             if canceled.is_set():
                 return ERR_CANCELED
@@ -1374,6 +1434,7 @@ else:
                     printer.client.set_timelapse(job.time_lapse)
                 except MoonrakerError:
                     pass  # the print goes on, with moonraker-timelapse as it was
+            self._backups(printer, snapshot, text, True)
             progress.set(STAGE_SENDING, 0, "Starting print...")
             try:
                 printer.client.post("/printer/print/start", {"filename": name}, timeout=30)

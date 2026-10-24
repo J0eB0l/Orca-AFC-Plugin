@@ -6,6 +6,9 @@ printer: every unit and lane, their spools, and the unit dryers. From the tab
 you can:
 
 - edit a lane's color, material, weight, temperatures, T number and Spoolman spool;
+- pick each lane's runout lane (AFC's infinite spool) on the **Infinite spool**
+  sheet, which shows the chains they make and warns about a runout lane that is
+  empty or holds another material or color;
 - load, unload and eject a lane (only while the printer is idle);
 - start and stop drying on an ACE, ACE 2 Pro, AMS 2 Pro or AMS HT;
 - see each spool's flow K, which AFC autocal saves in Spoolman.
@@ -130,8 +133,13 @@ Then:
   it on any spool, official OrcaSlicer only in the print dialog's tray list.
   A lane and its runout lanes (AFC's `runout_lane`) are one of OrcaSlicer's
   auto refill groups: **Auto Refill** on the Device tab and the print dialog's
-  tip list them. In the AFC build, AFC's oldest error or warning shows under
-  the print's progress until **Clear** (AFC_CLEAR_MESSAGE) or AFC drops it.
+  tip list them. In the AFC build, a tray's popup has **When it runs out** to
+  pick its lane's runout lane, a tray with one is marked, and **Auto Refill**
+  opens AFC's runout lanes instead: each chain with what it holds, a warning
+  for a runout lane that is empty or holds another material or color, and a
+  runout lane choice for every lane. Changes there go to the printer at once.
+  In the AFC build, AFC's oldest error or warning shows under the print's
+  progress until **Clear** (AFC_CLEAR_MESSAGE) or AFC drops it.
 - The sync button next to **Filament** in the Prepare sidebar puts each loaded
   lane in the slot of its T number (slot 1 is T0) with its spool's own preset,
   named like the spool ("Polymaker PolyLite PLA"; "AFC PLA 210C bed 60C" for a
@@ -216,6 +224,16 @@ Then:
   printing** and **Check toolheads before printing** turn these off. In the AFC build of OrcaSlicer the dialog also has
   **Upload**, which does the same without starting the print. **Send** in the menu
   next to **Print plate** uploads the file as sliced, with no tray choice.
+- With **AMS filament backup** on (the Device tab's AMS settings, or **Back up
+  each print with matching spools** on the AFC tab's **Infinite spool** sheet;
+  on by default and kept in Moonraker's database), **Print** and **Upload** give
+  each lane the print uses a runout lane: the loaded lanes with the same
+  material and color (closer than 60 in RGB) are chained, the print's own
+  lanes first, then the emptiest spare. A runout lane picked by hand stays, and
+  one the agent picked comes off at the next print once the spools no longer
+  match. A print started from Fluidd or Mainsail has only the runout lanes
+  picked by hand. In the AFC build, the print dialog's spool check counts those
+  spares too.
 
 Without the agent, OrcaSlicer's own Moonraker agent also syncs AFC's lanes by T
 number, with generic presets only.

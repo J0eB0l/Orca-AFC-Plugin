@@ -245,6 +245,57 @@
   function unitByName(name) { return ((state && state.afc && state.afc.units) || []).find((u) => u.name === name); }
   function laneByName(name) { return lanes().find((l) => l.name === name); }
 
+  // ------------------------------------------------------------------ runout
+  // AFC's infinite spool: a lane may name a runout lane, which AFC loads in its
+  // place when it runs out mid-print (SET_RUNOUT). Lanes link up into chains.
+  function runoutLane(l) { return l && l.runout_lane ? laneByName(l.runout_lane) : null; }
+  // The plugin's rule (runout.same_filament): same material, colors closer than 60.
+  function sameFilament(a, b) {
+    return a.has_filament && b.has_filament && !!materialKey(a.material) && materialKey(a.material) === materialKey(b.material) &&
+      hexOk(a.color) && hexOk(b.color) && colorDistance(a.color, b.color) <= 60;
+  }
+  // Whether `from` running out onto `to` would come back round to `from`.
+  function loopsBack(from, to) {
+    const seen = new Set();
+    for (let x = laneByName(to); x && !seen.has(x.name); x = runoutLane(x)) {
+      if (x.name === from) return true;
+      seen.add(x.name);
+    }
+    return false;
+  }
+  function chains() {
+    const into = new Set(lanes().map((l) => l.runout_lane).filter(Boolean));
+    const out = [];
+    for (const l of lanes()) {
+      if (!l.runout_lane || into.has(l.name)) continue;
+      const chain = [l];
+      for (let x = runoutLane(l); x && !chain.includes(x); x = runoutLane(x)) chain.push(x);
+      out.push(chain);
+    }
+    return out;
+  }
+  // As the AFC build's Device tab warns: only lanes whose materials are both known are compared.
+  function runoutWarning(l, to) {
+    if (!to) return '';
+    if (!to.has_filament) return to.name + ' is empty';
+    const a = materialKey(l.material), b = materialKey(to.material);
+    if (!l.has_filament || !a || !b || sameFilament(l, to)) return '';
+    if (a !== b) return to.name + ' holds ' + to.material;
+    return hexOk(l.color) && hexOk(to.color) ? to.name + ' is another color' : '';
+  }
+  function runoutOptions(l) {
+    const others = lanes().filter((x) => x.name !== l.name);
+    const option = (x) => '<option value="' + esc(x.name) + '"' + (x.name === l.runout_lane ? ' selected' : '') + (loopsBack(l.name, x.name) ? ' disabled' : '') + '>' +
+      esc([x.name, x.has_filament ? [x.material, x.vendor].filter(Boolean).join(' ') : 'empty', x.has_filament && x.weight > 0 ? grams(x.weight) : '',
+        x.extruder_index !== l.extruder_index && x.extruder_index >= 0 ? headName(x.extruder_index) : ''].filter(Boolean).join(' · ')) + '</option>';
+    const same = others.filter((x) => sameFilament(l, x));
+    const rest = others.filter((x) => !sameFilament(l, x));
+    return '<option value="">Pause the print</option>' +
+      (same.length ? '<optgroup label="Same filament">' + same.map(option).join('') + '</optgroup>' : '') +
+      '<optgroup label="' + (same.length ? 'Other lanes' : 'Lanes') + '">' + rest.map(option).join('') + '</optgroup>';
+  }
+
+  let runoutOpen = false;    // panel: the infinite spool sheet is open
   let stateJson = '';         // `state` as last drawn, to skip redrawing an unchanged poll
 
   async function load(refresh) {
@@ -304,11 +355,15 @@
     const stats = '<div class="stats"><span class="stat"><b>' + units.length + '</b>unit' + (units.length === 1 ? '' : 's') + '</span>' +
       '<span class="stat"><b>' + loadedCount + '</b>of ' + afc.lanes.length + ' lanes loaded</span></div>';
 
-    let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats);
+    const linked = chains().length;
+    const runoutBtn = '<button class="btn' + (runoutOpen ? ' on' : '') + '" id="runout" title="Runout lanes: what AFC loads when a lane runs out">' + icon('infinite') +
+      'Infinite spool' + (linked ? '<span class="count">' + linked + '</span>' : '') + '</button>';
+    let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats + runoutBtn);
     html += '<div class="main"><div class="scroll" id="scroll">' + headsStrip(afc);
     for (const unit of units) html += unitCard(unit);
     html += '</div>';
-    if (selected && laneByName(selected)) html += editor(laneByName(selected));
+    if (runoutOpen) html += runoutSheet();
+    else if (selected && laneByName(selected)) html += editor(laneByName(selected));
     html += '</div>';
     const dryOpen = dryUnit && unitByName(dryUnit) && unitByName(dryUnit).dryer;
     if (dryOpen) html += dryPopup(unitByName(dryUnit));
@@ -319,9 +374,66 @@
     }
     if (dryOpen) bindDry(unitByName(dryUnit));
     for (const el of document.querySelectorAll('.lane[data-lane]')) {
-      el.onclick = () => { selected = el.dataset.lane === selected ? null : el.dataset.lane; editorDirty = false; dryUnit = null; render(); };
+      el.onclick = () => { selected = el.dataset.lane === selected ? null : el.dataset.lane; editorDirty = false; dryUnit = null; runoutOpen = false; render(); };
     }
-    if (selected) bindEditor(laneByName(selected));
+    const ro = document.getElementById('runout');
+    if (ro) ro.onclick = () => { runoutOpen = !runoutOpen; selected = null; dryUnit = null; render(); };
+    if (runoutOpen) bindRunout();
+    else if (selected) bindEditor(laneByName(selected));
+  }
+
+  function runoutSheet() {
+    let html = '<div class="drawer wide" id="drawer"><div class="sheet-head"><span class="logo">' + icon('infinite') + '</span>' +
+      '<div class="grow"><h2>Infinite spool</h2><span class="hint">When a lane runs out mid-print, AFC loads its runout lane and keeps printing.</span></div>' +
+      '<button class="btn icon ghost" id="close" title="Close">' + icon('close') + '</button></div><div class="sheet-body">';
+    const all = chains();
+    const backup = !state.afc || state.afc.filament_backup !== false;
+    html += '<div class="backup"><label class="switch"><input type="checkbox" id="ro-backup"' + (backup ? ' checked' : '') + '> Back up each print with matching spools</label>' +
+      '<span class="hint">When OrcaSlicer sends a print, each lane it uses runs out onto the loaded spools with the same material and color. Runout lanes picked by hand stay.</span></div>';
+    html += '<div class="section-label">Chains</div>';
+    if (!all.length) html += '<div class="hint chain-none">No lane has a runout lane. A lane that runs out pauses the print.</div>';
+    for (const chain of all) {
+      const total = chain.reduce((a, x) => a + (x.has_filament ? x.weight || 0 : 0), 0);
+      const warns = chain.slice(0, -1).map((x, i) => runoutWarning(x, chain[i + 1])).filter(Boolean);
+      const heads = new Set(chain.map((x) => x.extruder_index));
+      html += '<div class="chain"><div class="chain-lanes">' + chain.map((x, i) => (i ? '<span class="chain-arrow">' + icon('arrow') + '</span>' : '') +
+        '<span class="chain-lane" data-lane="' + esc(x.name) + '">' + spool(x, true) + '<span><b>' + esc(x.name) + '</b><span class="hint">' +
+        esc(x.has_filament ? [x.material, grams(x.weight || 0)].join(' · ') : 'empty') + '</span></span></span>').join('') + '</div>' +
+        '<div class="chain-foot"><b>' + grams(total) + '</b><span class="hint">in all</span>' +
+        (heads.size > 1 ? '<span class="pill" title="AFC changes toolhead when it moves on">' + heads.size + ' toolheads</span>' : '') +
+        warns.map((w) => '<span class="pill warn">' + esc(w) + '</span>').join('') + '</div></div>';
+    }
+    html += '<div class="section-label">Lanes</div><div class="runout-list">';
+    for (const l of lanes().filter((x) => x.has_filament || x.runout_lane)) {
+      const warn = runoutWarning(l, runoutLane(l));
+      html += '<div class="runout-row">' + spool(l) + '<div class="who"><b>' + esc(l.name) + '</b><span class="hint">' + esc(laneSubtitle(l)) +
+        (l.weight > 0 ? ' · ' + grams(l.weight) : '') + '</span>' + (warn ? '<span class="pill warn">' + esc(warn) + '</span>' : '') + '</div>' +
+        '<div class="then">' + icon('arrow') + '<select data-runout="' + esc(l.name) + '">' + runoutOptions(l) + '</select></div></div>';
+    }
+    html += '</div></div><div class="sheet-foot"><button class="btn" id="ro-clear"' + (all.length ? '' : ' disabled') + '>Clear all</button>' +
+      '<button class="btn primary" id="ro-match" title="Chain loaded lanes with the same material and color">' + icon('infinite') + 'Link matching spools</button></div></div>';
+    return html;
+  }
+
+  function bindRunout() {
+    const $ = (id) => document.getElementById(id);
+    const save = (params, text) => run(() => call('set_runout', params), text);
+    $('close').onclick = () => { runoutOpen = false; render(); };
+    for (const el of document.querySelectorAll('select[data-runout]')) {
+      el.onchange = () => save({ links: [{ lane: el.dataset.runout, runout: el.value }] },
+        el.value ? el.dataset.runout + ' runs out onto ' + el.value : el.dataset.runout + ' pauses when it runs out');
+    }
+    $('ro-backup').onchange = (e) => run(() => call('set_backup', { on: e.target.checked }),
+      e.target.checked ? 'Each print gets matching spools as runout lanes' : 'Prints keep the runout lanes picked by hand');
+    $('ro-clear').onclick = () => save({ clear: true }, 'Runout lanes cleared');
+    $('ro-match').onclick = () => {
+      const loaded = lanes().filter((l) => l.has_filament);
+      if (!loaded.some((l, i) => loaded.slice(i + 1).some((x) => sameFilament(l, x)))) return toast('No two loaded lanes have the same material and color');
+      save({ match: true }, 'Matching spools linked');
+    };
+    for (const el of document.querySelectorAll('.chain-lane[data-lane]')) {
+      el.onclick = () => { runoutOpen = false; selected = el.dataset.lane; render(); };
+    }
   }
 
   function bar(sub, extra) {
@@ -381,6 +493,8 @@
     if (l.tool_loaded) status = '<span class="pill ok"><span class="dot"></span>In ' + esc(headName(l.extruder_index)) + '</span>';
     if (l.spool_id) status += '<span class="pill accent" title="Spoolman spool">#' + esc(l.spool_id) + '</span>';
     if (flowK(l)) status += '<span class="pill" title="Flow K (pressure advance) saved on the spool">' + esc(flowK(l)) + '</span>';
+    if (l.runout_lane) status += '<span class="pill' + (runoutWarning(l, runoutLane(l)) ? ' warn' : ' runout') + '" title="When ' + esc(l.name) + ' runs out, AFC goes on with ' +
+      esc(l.runout_lane) + (runoutWarning(l, runoutLane(l)) ? ' (' + esc(runoutWarning(l, runoutLane(l))) + ')' : '') + '">' + icon('infinite') + esc(l.runout_lane) + '</span>';
     const pct = remaining(l);
     const where = l.extruder_index >= 0 ? '<span class="where" title="Feeds ' + esc(headName(l.extruder_index)) + '">' + icon('nozzle') + esc(headName(l.extruder_index)) + '</span>' : '';
     return '<div class="lane' + (l.has_filament ? '' : ' empty') + (l.tool_loaded ? ' in-tool' : '') + (l.name === selected ? ' selected' : '') +
@@ -590,6 +704,8 @@
       '<div class="field"><label>Material</label><input id="f-material" list="materials" value="' + esc(l.material || '') + '"><datalist id="materials">' + MATERIALS.map((m) => '<option value="' + m + '">').join('') + '</datalist></div>' +
       '<div class="field"><label>Remaining (g)</label><input id="f-weight" type="number" min="0" step="1" value="' + esc(Math.round(l.weight || 0)) + '"></div>' +
       '<div class="field"><label>Tool (T number)</label><select id="f-map">' + (l.maps && l.maps.length ? '' : '<option value="">none</option>') + tOptions + '</select></div>' +
+      '<div class="field wide"><label>When it runs out</label><select id="f-runout">' + runoutOptions(l) + '</select>' +
+      '<span class="hint" id="f-runout-hint">' + esc(runoutHint(l, runoutLane(l))) + '</span></div>' +
       '<div class="field"><label>Nozzle °C</label><input id="f-nozzle" type="number" min="0" max="500" value="' + esc(l.nozzle_temp || '') + '"></div>' +
       '<div class="field"><label>Bed °C</label><input id="f-bed" type="number" min="0" max="200" value="' + esc(l.bed_temp || '') + '"></div>' +
       '<div class="field wide"><label>Spoolman spool ID' + (state.afc.spoolman ? '' : ' (Spoolman is not set up in AFC)') + '</label>' +
@@ -605,11 +721,19 @@
       '<div class="sheet-foot"><button class="btn primary" id="save" disabled>Save</button></div></div>';
   }
 
+  function runoutHint(l, to) {
+    if (!to) return 'AFC pauses the print.';
+    const warn = runoutWarning(l, to);
+    return 'AFC loads ' + to.name + (to.extruder_index !== l.extruder_index && to.extruder_index >= 0 ? ' into ' + headName(to.extruder_index) : '') +
+      ' and keeps printing.' + (warn ? ' Careful: ' + warn + '.' : '');
+  }
+
   function bindEditor(l) {
     const $ = (id) => document.getElementById(id);
     const save = $('save');
     const dirty = () => { editorDirty = true; save.disabled = false; };
-    for (const id of ['f-color', 'f-material', 'f-weight', 'f-map', 'f-nozzle', 'f-bed', 'f-spool']) {
+    $('f-runout').addEventListener('change', () => { $('f-runout-hint').textContent = runoutHint(l, laneByName($('f-runout').value)); });
+    for (const id of ['f-color', 'f-material', 'f-weight', 'f-map', 'f-runout', 'f-nozzle', 'f-bed', 'f-spool']) {
       $(id).addEventListener('input', dirty);
       $(id).addEventListener('change', dirty);
     }
@@ -636,6 +760,8 @@
         if (!isNaN(weight) && Math.round(weight) !== Math.round(l.weight || 0)) changes.weight = weight;
         const map = $('f-map').value;
         if (map && map !== (l.maps || [])[0]) changes.map = map;
+        const runout = $('f-runout').value;
+        if (runout !== (l.runout_lane || '')) changes.runout = runout;
         const nozzle = parseInt($('f-nozzle').value, 10);
         if (!isNaN(nozzle) && nozzle !== l.nozzle_temp) changes.nozzle_temp = nozzle;
         const bed = parseInt($('f-bed').value, 10);

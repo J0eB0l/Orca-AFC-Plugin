@@ -273,7 +273,7 @@ class StatusTest(Case):
         self.connect()
         status = self.push()
         self.assertEqual((status["gcode_state"], status["mc_print_stage"]), ("IDLE", 0))
-        self.assertEqual(status["home_flag"], afc_agent.SD_CARD_NORMAL | 1 | 2)
+        self.assertEqual(status["home_flag"], afc_agent.SD_CARD_NORMAL | 1 | 2 | afc_agent.AUTO_REFILL)
         # More than 16 filaments may print, and a tray's filament may be set while printing.
         self.assertEqual(status["flag3"], afc_agent.FILAMENTS_32 | afc_agent.FILAMENT_EDIT_PRINTING)
         self.assertTrue(status["sdcard"])
@@ -577,13 +577,63 @@ class DeviceTabTest(Case):
         self.assertEqual((push["filam_bak"], push["support_filament_backup"]), ([0b11], True))
         self.assertTrue(push["home_flag"] & afc_agent.AUTO_REFILL)
 
+    def test_runout_lanes_from_the_device_tab(self):
+        self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]["lane5"]["runout_lane"] = "lane1"
+        self.connect()
+        push = self.push()
+        self.assertTrue(push["support_runout_lane"])
+        lanes = {lane["name"]: lane for lane in push["afc_lanes"]}
+        self.assertEqual(lanes["lane2"], {"name": "lane2", "unit": "Turtle_1", "color": "00FF00FF", "type": "PETG",
+                                          "family": "PETG", "remain_g": 40, "toolhead": 0, "extruder": "extruder", "loaded": True,
+                                          "in_tool": False, "runout": "", "same": [], "ams_id": 0, "slot_id": 1})
+        self.assertEqual((lanes["lane5"]["runout"], lanes["lane5"]["ams_id"], lanes["lane5"]["slot_id"]), ("lane1", 1, 0))
+        # The tray shows the lane it runs out onto.
+        self.assertEqual(push["ams"]["ams"][1]["tray"][0]["runout"], "lane1")
+        self.assertNotIn("runout", push["ams"]["ams"][0]["tray"][0])
+        self.assertEqual((lanes["lane6"]["loaded"], lanes["lane6"]["remain_g"]), (False, -1))
+        self.assertEqual(self.send({"print": {"command": "afc_runout", "lane": "lane1", "runout": "lane2"}}), 0)
+        # lane1 -> lane5 -> lane1 would loop; lane1 red and lane5 blue match nothing.
+        self.assertEqual(self.send({"print": {"command": "afc_runout", "lane": "lane1", "runout": "lane5"}}),
+                         afc_agent.ERR_INVALID_RESULT)
+        self.assertEqual(self.send({"print": {"command": "afc_runout", "action": "match"}}), 0)
+        self.assertEqual(self.send({"print": {"command": "afc_runout", "action": "clear"}}), 0)
+        self.assertEqual(self.send({"print": {"command": "afc_runout", "lane": 5}}), afc_agent.ERR_INVALID_RESULT)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane1 RUNOUT=lane2", "SET_RUNOUT LANE=lane5 RUNOUT=NONE"])
+
+    def test_lanes_with_the_same_filament(self):
+        self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]["lane6"] = lane_status(
+            "lane6", "Bambu_AMS_1", 2, ["T5"], "extruder1", "0000FF", "PLA", True, 300)
+        self.connect()
+        lanes = {lane["name"]: lane for lane in self.push()["afc_lanes"]}
+        self.assertEqual((lanes["lane5"]["same"], lanes["lane6"]["same"], lanes["lane1"]["same"]), (["lane6"], ["lane5"], []))
+
+    def test_filament_backup_switch(self):
+        # AMS Settings' AMS filament backup: on until turned off, kept in Moonraker's database.
+        afc = self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]
+        afc["lane6"] = lane_status("lane6", "Bambu_AMS_1", 2, ["T5"], "extruder1", "0000FF", "PLA", True)
+        afc["lane5"]["runout_lane"] = "lane6"
+        afc["lane6"]["runout_lane"] = "lane1"
+        self.fake.database["orca_afc"] = {"filament_backup": {"on": True, "made": {"lane5": "lane6", "lane6": "lane2"}}}
+        self.connect()
+        self.assertTrue(self.push()["home_flag"] & afc_agent.AUTO_REFILL)
+        self.assertEqual(self.send({"print": {"command": "print_option", "auto_switch_filament": False}}), 0)
+        self.agent._worker.call(lambda: None, 5)
+        # Off takes off the runout lane it set; lane6's was set by hand since.
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane5 RUNOUT=NONE"])
+        self.assertEqual(self.fake.database["orca_afc"]["filament_backup"], {"on": False, "made": {}})
+        self.assertFalse(self.push()["home_flag"] & afc_agent.AUTO_REFILL)
+        self.send({"print": {"command": "print_option", "auto_switch_filament": True}})
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(self.fake.database["orca_afc"]["filament_backup"], {"on": True, "made": {}})
+        self.assertTrue(self.push()["home_flag"] & afc_agent.AUTO_REFILL)
+
     def test_no_swap_times_without_changes(self):
         self.connect()
         push = self.push()
         self.assertNotIn("swap_times", push)
         self.assertNotIn("toolhead_nozzles", push)  # Klipper's config has none
         self.assertEqual(push["filam_bak"], [])  # no runout lanes
-        self.assertFalse(push["home_flag"] & afc_agent.AUTO_REFILL)
         self.assertEqual(push["agent_message"], {})
 
     def test_afcs_message_on_the_device_tab(self):
@@ -820,6 +870,38 @@ class PrintTest(Case):
         self.assertEqual(self.fake.started, [])
         text = self.fake.uploads["Cube_box_plate_1.gcode"].decode()
         self.assertEqual([line.split(" ")[0] for line in text.splitlines() if line[:1] == "T"], ["T4", "T0"])
+
+    def matching_spool(self):
+        # lane6 holds the same blue PLA as lane5, which the print's filament 1 goes to.
+        afc = self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]
+        afc["lane6"] = lane_status("lane6", "Bambu_AMS_1", 2, ["T5"], "extruder1", "0000FF", "PLA", True, 300)
+
+    def test_a_print_links_matching_spools(self):
+        self.matching_spool()
+        self.connect()
+        code, _ = self.start(self.print_params())
+        self.assertEqual(code, 0)
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane5 RUNOUT=lane6"])
+        self.assertEqual(self.fake.database["orca_afc"]["filament_backup"], {"on": True, "made": {"lane5": "lane6"}})
+        paths = self.fake.paths()
+        self.assertLess(paths.index("/printer/gcode/script"), paths.index("/printer/print/start"))
+
+    def test_no_links_with_filament_backup_off(self):
+        self.matching_spool()
+        self.fake.database["orca_afc"] = {"filament_backup": {"on": False}}
+        self.connect()
+        self.assertEqual(self.start(self.print_params())[0], 0)
+        self.assertEqual(self.fake.scripts, [])
+
+    def test_an_upload_links_them_only_on_an_idle_printer(self):
+        self.matching_spool()
+        self.connect()
+        self.fake.objects["print_stats"]["state"] = "printing"
+        self.assertEqual(self.agent.start_send_gcode_to_sdcard(self.print_params(), None, None, None), 0)
+        self.assertEqual(self.fake.scripts, [])
+        self.fake.objects["print_stats"]["state"] = "complete"
+        self.assertEqual(self.agent.start_send_gcode_to_sdcard(self.print_params(), None, None, None), 0)
+        self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane5 RUNOUT=lane6"])
 
     def test_lan_check(self):
         self.assertEqual(self.agent.start_send_gcode_to_sdcard(PrintParams(project_name="verify_job"),

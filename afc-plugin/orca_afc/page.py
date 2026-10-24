@@ -96,6 +96,8 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
             return {}
         commands = {
             "edit_lane": manager.edit_lane,
+            "set_runout": manager.set_runout,
+            "set_backup": manager.set_backup,
             "lane_action": manager.lane_action,
             "dry": manager.dry,
             "apply_mapping": manager.apply_mapping,
