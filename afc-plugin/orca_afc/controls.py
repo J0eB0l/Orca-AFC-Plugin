@@ -4,7 +4,8 @@ OrcaSlicer sends its controls as Bambu's JSON commands; these turn them into
 the printer's own G-code:
 
 - The lamp switches the printer's lights: Klipper LEDs and output pins whose
-  names say they light the printer (main_led, chamber, caselight, ...).
+  names say they light the printer (main_led, chamber, caselight, the U1's
+  cavity_led, ...).
 - A tray's refresh button reads the spool's tag again with the command of the
   lane's unit, when the lane has a reader.
 - The tray edit popup sets the lane's color and material.
@@ -24,7 +25,7 @@ from .trays import NO_TRAY, Layout, lanes_by_tray
 # ------------------------------------------------------------------ lights
 
 LIGHT_KINDS = ("led", "neopixel", "dotstar", "pca9533", "pca9632", "output_pin")
-LIGHT_WORDS = ("main", "chamber", "case", "cabinet", "enclosure", "light", "lamp")
+LIGHT_WORDS = ("main", "chamber", "cavity", "case", "cabinet", "enclosure", "light", "lamp")  # cavity: the U1's
 # Lights on the toolhead or a unit show status; the lamp leaves them alone.
 NOT_LIGHT_WORDS = ("toolhead", "nozzle", "logo", "status", "sb_", "stealthburner")
 

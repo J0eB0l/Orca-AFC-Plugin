@@ -166,8 +166,9 @@ Then:
   lane is loaded, as on a Bambu printer; the AFC build does not. **Load** and
   **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
   Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
-  objects named with main, chamber, case, cabinet, enclosure, light or lamp
-  (`[led main_led]`, `[output_pin caselight]`), full white on or off.
+  objects named with main, chamber, cavity, case, cabinet, enclosure, light or
+  lamp (`[led main_led]`, `[output_pin caselight]`, the Snapmaker U1's
+  `[led cavity_led]`), full white on or off.
 - The Device tab's camera plays the first enabled webcam Moonraker lists (from
   `moonraker.conf` or Fluidd's and Mainsail's settings): an MJPEG stream
   (`mjpegstreamer`, `mjpegstreamer-adaptive`), else the webcam's snapshot,

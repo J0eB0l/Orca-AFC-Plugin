@@ -18,6 +18,11 @@ class LightTest(unittest.TestCase):
                    "neopixel toolhead_light", "output_pin beeper", "AFC_led Turtle_1", "led", "extruder"]
         self.assertEqual(controls.find_lights(objects), ["led main_led", "neopixel chamber", "output_pin caselight"])
 
+    def test_the_u1s_light(self):
+        objects = ["led cavity_led", "fan_generic cavity_fan", "output_pin e0_heat_sw", "temperature_sensor cavity"]
+        self.assertEqual(controls.find_lights(objects), ["led cavity_led"])
+        self.assertEqual(controls.light_gcode(["led cavity_led"], True), ["SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1"])
+
     def test_finds_the_chamber_sensor(self):
         self.assertEqual(controls.find_chamber(["temperature_sensor mcu_temp", "temperature_sensor cavity"]),
                          "temperature_sensor cavity")
