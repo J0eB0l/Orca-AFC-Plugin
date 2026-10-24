@@ -194,9 +194,11 @@ Then:
   (namespace `orca_afc`), so it holds on every computer. **Download AFC.log**
   saves the whole log from the printer. A new error or warning tags the page.
 - In the AFC build, the Device tab's **Update** page shows the printer preset's
-  picture, the AFC version installed, the newest on Armored Turtle's `main` and
-  `DEV` branches on GitHub (read every 6 hours), with the new version dot when
-  one is newer, and a **View on GitHub** button.
+  picture (and its name, for a printer of no known model), the AFC version
+  installed, the newest on Armored Turtle's `main` and `DEV` branches on GitHub
+  (read every 6 hours), with the new version dot when one is newer, how many
+  units and lanes AFC runs, and a **View on GitHub** button. AFC's units get no
+  empty AMS rows there.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

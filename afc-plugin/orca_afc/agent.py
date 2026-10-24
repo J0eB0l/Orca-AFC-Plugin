@@ -386,11 +386,12 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # sends clear_agent_message. Always sent, so a cleared message leaves the Device tab too.
         out["agent_message"] = {"text": snapshot.message, "type": snapshot.message_type} if snapshot.message else {}
         # Its Assistant page shows AFC.log's last lines and errors, where Clear sends clear_agent_log,
-        # and its Update page AFC's version beside the newest on GitHub.
+        # and its Update page AFC's version beside the newest on GitHub, with AFC's units and lanes.
         out["agent_log"] = afc_log or {}
         latest = dict(latest or {})
         out["afc_version"] = {"installed": snapshot.version, "latest": latest,
-                              "newer": upstream.newer(snapshot.version, latest), "url": upstream.REPO}
+                              "newer": upstream.newer(snapshot.version, latest), "url": upstream.REPO,
+                              "units": sum(1 for unit in snapshot.units if unit.lanes), "lanes": len(snapshot.lanes)}
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 

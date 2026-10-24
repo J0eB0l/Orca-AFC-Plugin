@@ -648,7 +648,8 @@ class DeviceTabTest(Case):
         self.agent._web.call(lambda: None, 5)  # GitHub read
         self.assertEqual(self.push(2)["afc_version"],
                          {"installed": "1.2.7", "latest": {"main": "1.2.0", "DEV": "1.2.8"}, "newer": True,
-                          "url": "https://github.com/ArmoredTurtle/AFC-Klipper-Add-On"})
+                          "url": "https://github.com/ArmoredTurtle/AFC-Klipper-Add-On",
+                          "units": 2, "lanes": 4})  # Turtle_1 and Bambu_AMS_1, two lanes each
 
     def test_lamp(self):
         self.fake.objects["led main_led"] = {"color_data": [[0.0, 0.0, 0.0, 1.0]]}
