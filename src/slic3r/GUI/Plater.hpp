@@ -331,6 +331,9 @@ public:
 
 private:
     void  auto_calc_flushing_volumes_internal(const int filament_id, const int extruder_id);
+    // Orca: after a sync, offers a fixed 50:50 mixed filament for each pair of physical filaments that
+    // makes a new color (missing_even_mix_pairs()), unless switched off in the preferences.
+    void  offer_mixed_filaments();
 
 private:
     struct priv;

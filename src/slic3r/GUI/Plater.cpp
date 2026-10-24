@@ -953,6 +953,8 @@ struct Sidebar::priv
     wxPanel*          m_panel_mixed_warning{nullptr};     // red bar for broken/mismatched mixes
     wxStaticText*     m_text_mixed_warning{nullptr};
     bool              m_mixed_filament_broken{false};
+    // The pairs offer_mixed_filaments() was last told No to; not offered again until the filaments change.
+    std::string       m_declined_mixed_pairs;
 
     wxScrolledWindow* m_scrolledWindow_filament_content;
     wxStaticLine* m_staticline2;
@@ -5146,6 +5148,55 @@ int Sidebar::ensure_mixed_filament(const std::vector<unsigned int> &components, 
     return int(created_at);
 }
 
+void Sidebar::offer_mixed_filaments()
+{
+    AppConfig &app_config = *wxGetApp().app_config;
+    if (!app_config.get_bool("offer_mixed_filaments_after_sync"))
+        return;
+
+    std::vector<std::string> colors, names, types;
+    collect_physical_filament_info(colors, names, types);
+    const std::vector<std::pair<unsigned int, unsigned int>> pairs =
+        missing_even_mix_pairs(wxGetApp().preset_bundle->project_config, types, colors);
+    const size_t max_filaments = size_t(EnforcerBlockerType::ExtruderMax);
+    const size_t used          = wxGetApp().preset_bundle->filament_presets.size();
+    const size_t count         = std::min(pairs.size(), used < max_filaments ? max_filaments - used : 0);
+    if (count == 0)
+        return;
+
+    std::string offered;
+    for (const auto &[a, b] : pairs)
+        offered += types[a - 1] + colors[a - 1] + "+" + types[b - 1] + colors[b - 1] + ";";
+    if (offered == p->m_declined_mixed_pairs)
+        return;
+
+    // TRN %1% is the number of mixed filaments to create, each from two synced filaments of one material.
+    wxString message = format_wxstr(_L_PLURAL("Create %1% mixed filament, mixing two synced filaments of the same material in different colors at 50/50?",
+                                              "Create %1% mixed filaments, mixing each pair of synced filaments of the same material in different colors at 50/50?",
+                                              count),
+                                    count);
+    if (count < pairs.size()) {
+        // TRN %1% is the number of pairs left out, %2% the most filaments a project can hold.
+        message += "\n" + format_wxstr(_L_PLURAL("%1% more pair does not fit, since a project holds up to %2% filaments.",
+                                                 "%1% more pairs do not fit, since a project holds up to %2% filaments.",
+                                                 pairs.size() - count),
+                                       pairs.size() - count, max_filaments);
+    }
+    RichMessageDialog dlg(this, message, _L("Mixed Filament"), wxYES_NO | wxYES_DEFAULT | wxICON_QUESTION);
+    dlg.ShowCheckBox(_L("Don't show again"));
+    const bool create = dlg.ShowModal() == wxID_YES;
+    if (dlg.IsCheckBoxChecked())
+        app_config.set_bool("offer_mixed_filaments_after_sync", false);
+    if (!create) {
+        p->m_declined_mixed_pairs = offered;
+        return;
+    }
+
+    wxBusyCursor busy;
+    for (size_t i = 0; i < count; ++i)
+        ensure_mixed_filament({pairs[i].first, pairs[i].second}, {50, 50});
+}
+
 void Sidebar::add_mixed_filament()
 {
     auto* plater = dynamic_cast<Plater*>(GetParent());
@@ -6616,6 +6667,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     }
     // Orca: an AFC printer's measured change times come with its filaments.
     wxGetApp().apply_measured_swap_times(*obj);
+    offer_mixed_filaments();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "begin pop_finsish_sync_ams_dialog";
     pop_finsish_sync_ams_dialog();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish pop_finsish_sync_ams_dialog";

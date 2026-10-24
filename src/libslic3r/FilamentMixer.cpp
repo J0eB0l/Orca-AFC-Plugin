@@ -12,6 +12,7 @@
 #include <sstream>
 #include <numeric>
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
 #include <string>
 #include <vector>
@@ -481,6 +482,24 @@ int find_fixed_mixed_filament(const ConfigBase                &project_config,
             return int(i);
     }
     return -1;
+}
+
+std::vector<std::pair<unsigned int, unsigned int>> missing_even_mix_pairs(const ConfigBase               &project_config,
+                                                                          const std::vector<std::string> &types,
+                                                                          const std::vector<std::string> &colors)
+{
+    std::vector<std::pair<unsigned int, unsigned int>> pairs;
+    const size_t count = std::min(types.size(), colors.size());
+    for (unsigned int a = 1; a <= count; ++a)
+        for (unsigned int b = a + 1; b <= count; ++b) {
+            const std::string &type = types[a - 1];
+            if (type != types[b - 1] || boost::algorithm::ends_with(type, "-S") || boost::iequals(colors[a - 1], colors[b - 1]))
+                continue;
+            if (find_fixed_mixed_filament(project_config, {a, b}, {50, 50}) < 0 &&
+                find_fixed_mixed_filament(project_config, {b, a}, {50, 50}) < 0)
+                pairs.emplace_back(a, b);
+        }
+    return pairs;
 }
 
 bool has_any_mixed_filament(const std::vector<unsigned char> &is_mixed)

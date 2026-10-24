@@ -4,6 +4,7 @@
 #include "libslic3r/Config.hpp"
 #include <string>
 #include <cstdlib>
+#include <utility>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -289,5 +290,25 @@ TEST_CASE("find_fixed_mixed_filament reuses only a fixed slot of the same blend"
     SECTION("Another ratio or another component order is a different blend") {
         REQUIRE(find_fixed_mixed_filament(cfg, {1, 2}, {1, 2}) == -1);
         REQUIRE(find_fixed_mixed_filament(cfg, {2, 1}, {50, 50}) == -1);
+    }
+}
+
+TEST_CASE("missing_even_mix_pairs offers each new color of one material once", "[FilamentMixer]")
+{
+    // Red, blue and another red PLA, white PETG, a support PLA and yellow PLA.
+    const std::vector<std::string> types  = {"PLA", "PLA", "PLA", "PETG", "PLA-S", "PLA"};
+    const std::vector<std::string> colors = {"#FF0000", "#0000FF", "#ff0000", "#FFFFFF", "#000000", "#FFFF00"};
+    using Pairs = std::vector<std::pair<unsigned int, unsigned int>>;
+
+    SECTION("Pairs of one material in different colors, never with a support filament") {
+        REQUIRE(missing_even_mix_pairs(DynamicPrintConfig(), types, colors) == Pairs{{1, 2}, {1, 6}, {2, 3}, {2, 6}, {3, 6}});
+    }
+    SECTION("A pair that already has a fixed 50:50 slot, in either order, is left out") {
+        DynamicPrintConfig cfg;
+        cfg.set_key_value("filament_is_mixed", new ConfigOptionBools({false, false, false, false, false, false, true, true}));
+        cfg.set_key_value("filament_mixed_components", new ConfigOptionStrings({"", "", "", "", "", "", "6,1", "2,3"}));
+        cfg.set_key_value("filament_mixed_sublayer_ratios",
+                          new ConfigOptionStrings({"", "", "", "", "", "", format_mixed_ratios({50, 50}), format_mixed_ratios({70, 30})}));
+        REQUIRE(missing_even_mix_pairs(cfg, types, colors) == Pairs{{1, 2}, {2, 3}, {2, 6}, {3, 6}});
     }
 }

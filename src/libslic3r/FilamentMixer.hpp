@@ -112,6 +112,14 @@ int find_fixed_mixed_filament(const ConfigBase                &project_config,
                               const std::vector<unsigned int> &components,
                               const std::vector<int>          &weights);
 
+// The pairs of physical filaments (1-based, first < second) that make a new color mixed 50:50 and have
+// no fixed 50:50 slot in `project_config` yet, in either order: of the same type, neither a support
+// filament (get_filament_type() ends its type in "-S") and not of the same color. `types` and `colors`
+// list the physical filaments in slot order.
+std::vector<std::pair<unsigned int, unsigned int>> missing_even_mix_pairs(const ConfigBase               &project_config,
+                                                                          const std::vector<std::string> &types,
+                                                                          const std::vector<std::string> &colors);
+
 // Returns true if any element in is_mixed is true.
 // ConfigOptionBools stores values as std::vector<unsigned char>.
 bool has_any_mixed_filament(const std::vector<unsigned char> &is_mixed);

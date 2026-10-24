@@ -2211,6 +2211,11 @@ void PreferencesDialog::create_items()
         {_L("Filament & Color"), _L("Color only")});
     g_sizer->Add(item_filament_sync_mode);
 
+    auto item_offer_mixed      = create_item_checkbox(_L("Offer mixed filaments after a sync"),
+                                                      _L("After syncing filaments from the printer, offer to create a mixed filament for each pair of the same material in different colors."),
+                                                      "offer_mixed_filaments_after_sync");
+    g_sizer->Add(item_offer_mixed);
+
     auto item_system_sync      = create_item_checkbox(_L("Update built-in presets automatically."), "", "sync_system_preset");
     g_sizer->Add(item_system_sync);
 
