@@ -463,10 +463,11 @@ TEST_CASE("A tower printed without a tool change is still validated against the 
 // Filament the tower purges for wipe_tower_toolchange_config's two filaments, which swap every
 // layer, on a printer with Multi-material per toolhead whose filaments feed `toolheads` (-1 = not
 // known). The flush between them is 280 mm3 (multifilament_config), the prime 15 mm3.
-static double tower_purge(const char *toolheads, bool purge_in_prime_tower)
+static double tower_purge(const char *toolheads, bool purge_in_prime_tower, const char *printer_model = "")
 {
     DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
-    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+    config.set_deserialize_strict({ { "printer_model", printer_model },
+                                    { "single_extruder_multi_material", "0" },
                                     { "multi_extruder_multi_material", "1" },
                                     { "purge_in_prime_tower", purge_in_prime_tower ? "1" : "0" },
                                     { "prime_volume", "15" },
@@ -494,4 +495,16 @@ TEST_CASE("Purge in prime tower flushes a lane change on a toolhead and only pri
     CHECK_THAT(tower_purge("0,1", true), Catch::Matchers::WithinRel(unknown, 1e-3));
     // Unchecked, a lane change only primes, as with SEMM off before.
     CHECK_THAT(tower_purge("0,0", false), Catch::Matchers::WithinRel(unknown, 1e-3));
+}
+
+TEST_CASE("A Snapmaker U1 flushes a fifth of the lane change volume on the prime tower", "[WipeTower]")
+{
+    // A U1 forms tips instead of cutting, so a lane change flushes 56 mm3 of the 280 mm3, still more than
+    // the 15 mm3 prime.
+    const double unknown = tower_purge("-1,-1", true, "Snapmaker U1");
+    const double u1      = tower_purge("0,0", true, "Snapmaker U1");
+    CHECK(u1 > unknown);
+    CHECK(u1 < tower_purge("0,0", true));
+    // A tool switch on a U1 still only primes.
+    CHECK_THAT(tower_purge("0,1", true, "Snapmaker U1"), Catch::Matchers::WithinRel(unknown, 1e-3));
 }

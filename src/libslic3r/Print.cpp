@@ -91,6 +91,7 @@
 #include <unordered_set>
 #include <sstream>
 #include <boost/filesystem/path.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/regex.hpp>
@@ -5077,8 +5078,19 @@ private:
 };
 } // namespace
 
+// Orca: a Snapmaker U1 forms a tip on the filament it unloads instead of cutting it, so little of the old
+// filament is left in the nozzle and a lane change needs about a fifth of the flushing volume matrix, which
+// is made for a printer that cuts. The AFC plugin scales its lane-change PURGE_LENGTH the same way.
+static constexpr float TIP_FORMING_FLUSH_FACTOR = 0.2f;
+
+static bool forms_filament_tips(const PrintConfig &config)
+{
+    return boost::starts_with(config.printer_model.value, "Snapmaker U1");
+}
+
 // Orca: the flush volume (mm3) of a lane change from filament `from` to `to`, from the flushing volume
-// matrix of the nozzle `to` feeds (the last one past the matrix) times that nozzle's flush multiplier.
+// matrix of the nozzle `to` feeds (the last one past the matrix) times that nozzle's flush multiplier,
+// and a fifth of that on a printer that forms tips.
 static float lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to)
 {
     const size_t nozzles = std::max<size_t>(config.nozzle_diameter.size(), 1);
@@ -5086,7 +5098,10 @@ static float lane_change_flush(const PrintConfig &config, unsigned int from, uns
     const size_t n       = config.filament_colour.size();
     const std::vector<double> matrix = get_flush_volumes_matrix(config.flush_volumes_matrix.values, head, nozzles);
     const size_t index   = size_t(from) * n + to;
-    return index < matrix.size() ? float(matrix[index] * config.flush_multiplier.get_at(head)) : 0.f;
+    if (index >= matrix.size())
+        return 0.f;
+    const float factor = forms_filament_tips(config) ? TIP_FORMING_FLUSH_FACTOR : 1.f;
+    return float(matrix[index] * config.flush_multiplier.get_at(head)) * factor;
 }
 
 void Print::_make_wipe_tower()
