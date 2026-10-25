@@ -305,11 +305,16 @@ public:
     bool is_tunnel_mqtt = false;
 
     //AmsTray vt_tray;                        // virtual tray
-    long  ams_exist_bits = 0;
-    long  tray_exist_bits = 0;
-    long  tray_is_bbl_bits = 0;
-    long  tray_read_done_bits = 0;
-    long  tray_reading_bits = 0;
+    // Orca: 64 bits, so a printer agent can report more trays than Bambu's 32.
+    uint64_t ams_exist_bits = 0;
+    uint64_t tray_exist_bits = 0;
+    uint64_t tray_is_bbl_bits = 0;
+    uint64_t tray_read_done_bits = 0;
+    uint64_t tray_reading_bits = 0;
+    // Orca: the bit an AMS HT's unit (ams_exist_bits) and tray (the tray bits)
+    // starts at; Bambu's 4 and 16 unless a printer agent moves them past its other units.
+    int   ams_ht_exist_bit = 4;
+    int   tray_ht_exist_bit = 16;
     bool  ams_air_print_status { false };
     /** Whether this printer supports virtual trays (external/manual filament loading).
      *  When true, vt_slot data is used by build_filament_ams_list() to include external filaments. */

@@ -39,6 +39,8 @@ public:
     static int get_flag_bits(std::string str, int start, int count = 1);
     static int get_flag_bits(int num, int start, int count = 1, int base = 10);
     static uint32_t get_flag_bits_no_border(std::string str, int start_idx, int count = 1);
+    // One bit of a 64-bit mask; false for a position outside it.
+    static bool get_bit(uint64_t bits, int pos) { return pos >= 0 && pos < 64 && ((bits >> pos) & 1ULL) != 0; }
 
     // eg. get_hex_bits(16, 1, 10) = 1
     static int get_hex_bits(int num, int pos, int input_num_base = 10) { return get_flag_bits(num, pos * 4, 4, input_num_base);};

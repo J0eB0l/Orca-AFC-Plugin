@@ -431,13 +431,17 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
         {
             if (jj["ams"].contains("ams_exist_bits"))
             {
-                obj->ams_exist_bits = stol(jj["ams"]["ams_exist_bits"].get<std::string>(), nullptr, 16);
+                obj->ams_exist_bits = std::stoull(jj["ams"]["ams_exist_bits"].get<std::string>(), nullptr, 16);
             }
 
             if (jj["ams"].contains("tray_exist_bits"))
             {
-                obj->tray_exist_bits = stol(jj["ams"]["tray_exist_bits"].get<std::string>(), nullptr, 16);
+                obj->tray_exist_bits = std::stoull(jj["ams"]["tray_exist_bits"].get<std::string>(), nullptr, 16);
             }
+
+            // Orca: a printer agent with more units than Bambu's layout holds moves the AMS HT bits.
+            obj->ams_ht_exist_bit  = jj["ams"].value("ht_ams_bit", 4);
+            obj->tray_ht_exist_bit = jj["ams"].value("ht_tray_bit", 16);
 
             if (jj["ams"].contains("cali_stat")) { system->m_ams_cali_stat = jj["ams"]["cali_stat"].get<int>(); }
 
@@ -454,15 +458,15 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
 
                 if (jj["ams"].contains("tray_read_done_bits"))
                 {
-                    obj->tray_read_done_bits = stol(jj["ams"]["tray_read_done_bits"].get<std::string>(), nullptr, 16);
+                    obj->tray_read_done_bits = std::stoull(jj["ams"]["tray_read_done_bits"].get<std::string>(), nullptr, 16);
                 }
                 if (jj["ams"].contains("tray_reading_bits"))
                 {
-                    obj->tray_reading_bits = stol(jj["ams"]["tray_reading_bits"].get<std::string>(), nullptr, 16);
+                    obj->tray_reading_bits = std::stoull(jj["ams"]["tray_reading_bits"].get<std::string>(), nullptr, 16);
                 }
                 if (jj["ams"].contains("tray_is_bbl_bits"))
                 {
-                    obj->tray_is_bbl_bits = stol(jj["ams"]["tray_is_bbl_bits"].get<std::string>(), nullptr, 16);
+                    obj->tray_is_bbl_bits = std::stoull(jj["ams"]["tray_is_bbl_bits"].get<std::string>(), nullptr, 16);
                 }
                 if (jj["ams"].contains("version"))
                 {
@@ -594,16 +598,16 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
 
                             if (type_id < 4)
                             {
-                                curr_ams->m_exist = (obj->ams_exist_bits & (1 << ams_id_int)) != 0 ? true : false;
+                                curr_ams->m_exist = DevUtil::get_bit(obj->ams_exist_bits, ams_id_int);
                             }
                             else if (type_id == DevAms::AMS_LITE_MIXED)
                             {
                                 // Mixed AMS-Lite (A2L / N9) exist flag lives at bit 12.
-                                curr_ams->m_exist = DevUtil::get_flag_bits(obj->ams_exist_bits, 12);
+                                curr_ams->m_exist = DevUtil::get_bit(obj->ams_exist_bits, 12);
                             }
                             else
                             {
-                                curr_ams->m_exist = DevUtil::get_flag_bits(obj->ams_exist_bits, 4 + (ams_id_int - 128));
+                                curr_ams->m_exist = DevUtil::get_bit(obj->ams_exist_bits, obj->ams_ht_exist_bit + (ams_id_int - 128));
                             }
                         }
                     }
@@ -864,16 +868,16 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
 
                                     if (type_id < 4)
                                     {
-                                        curr_tray->is_exists = (obj->tray_exist_bits & (1 << (ams_id_int * 4 + tray_id_int))) != 0 ? true : false;
+                                        curr_tray->is_exists = DevUtil::get_bit(obj->tray_exist_bits, ams_id_int * 4 + tray_id_int);
                                     }
                                     else if (type_id == DevAms::AMS_LITE_MIXED)
                                     {
                                         // Mixed AMS-Lite (A2L / N9) trays occupy tray-exist bits 24..27.
-                                        curr_tray->is_exists = DevUtil::get_flag_bits(obj->tray_exist_bits, AMS_LITE_MIXED_TRAY_INDEX_OFFSET + tray_id_int);
+                                        curr_tray->is_exists = DevUtil::get_bit(obj->tray_exist_bits, AMS_LITE_MIXED_TRAY_INDEX_OFFSET + tray_id_int);
                                     }
                                     else
                                     {
-                                        curr_tray->is_exists = DevUtil::get_flag_bits(obj->tray_exist_bits, 16 + (ams_id_int - 128));
+                                        curr_tray->is_exists = DevUtil::get_bit(obj->tray_exist_bits, obj->tray_ht_exist_bit + (ams_id_int - 128));
                                     }
 
                                 }

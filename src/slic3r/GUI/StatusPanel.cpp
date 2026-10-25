@@ -111,6 +111,7 @@
 #include "DeviceCore/DevConfig.h"
 #include "DeviceCore/DevManager.h"
 #include "DeviceCore/DevPrintTaskInfo.h"
+#include "DeviceCore/DevUtil.h"
 
 #include "DeviceTab/wgtDeviceNozzleRack.h"
 
@@ -3626,19 +3627,18 @@ void StatusPanel::update_ams(MachineObject *obj)
                 if (ams_id_int < 128) {
                     if (ams_it->second->IsAmsLiteMixed()) {
                         // Mixed AMS-Lite (A2L / N9) RFID-reading bits occupy positions 24..27.
-                        if ((obj->tray_reading_bits & (1 << (AMS_LITE_MIXED_TRAY_INDEX_OFFSET + tray_id_int))) != 0) {
+                        if (DevUtil::get_bit(obj->tray_reading_bits, AMS_LITE_MIXED_TRAY_INDEX_OFFSET + tray_id_int)) {
                             m_ams_control->PlayRridLoading(ams_id, tray_id);
                         } else {
                             m_ams_control->StopRridLoading(ams_id, tray_id);
                         }
-                    } else if ((obj->tray_reading_bits & (1 << (ams_id_int * 4 + tray_id_int))) != 0) {
+                    } else if (DevUtil::get_bit(obj->tray_reading_bits, ams_id_int * 4 + tray_id_int)) {
                         m_ams_control->PlayRridLoading(ams_id, tray_id);
                     } else {
                         m_ams_control->StopRridLoading(ams_id, tray_id);
                     }
                 } else {
-                    int check_flag = (1 << (16 + ams_id_int - 128));
-                    if ((obj->tray_reading_bits & check_flag) != 0) {
+                    if (DevUtil::get_bit(obj->tray_reading_bits, obj->tray_ht_exist_bit + ams_id_int - 128)) {
                         m_ams_control->PlayRridLoading(ams_id, tray_id);
                     } else {
                         m_ams_control->StopRridLoading(ams_id, tray_id);

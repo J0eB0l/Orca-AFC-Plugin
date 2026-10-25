@@ -1447,8 +1447,11 @@ int MachineObject::command_request_push_all(bool request_now)
     j["pushing"]["version"]     =  1;
     j["pushing"]["push_target"] =  1;
     // Orca: tells a printer agent that filament sync orders its trays by the tool each one reports.
-    if (!printer_agent_id.empty() && printer_agent_id != BBL_PRINTER_AGENT_ID)
+    if (!printer_agent_id.empty() && printer_agent_id != BBL_PRINTER_AGENT_ID) {
         j["pushing"]["tray_tool"] = true;
+        // ... and that it reads the tray bits as 64 bits, with the AMS HT bits where the agent says.
+        j["pushing"]["tray_bits64"] = true;
+    }
     return this->publish_json(j);
 }
 
