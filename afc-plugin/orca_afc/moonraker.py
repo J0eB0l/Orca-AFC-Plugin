@@ -102,9 +102,15 @@ class Moonraker:
     def database_namespace(self, namespace: str):
         return self.get("/server/database/item", {"namespace": namespace})
 
-    def log_tail(self, name: str, size: int, timeout: float = 10.0) -> str:
-        """The last `size` bytes of a file in Moonraker's logs folder (AFC.log)."""
-        raw = self._fetch("GET", "/server/files/logs/" + urllib.parse.quote(name),
+    def log_files(self) -> list:
+        """The files in Moonraker's logs root, each with its `path` there."""
+        answer = self.get("/server/files/list", {"root": "logs"})
+        return answer if isinstance(answer, list) else []
+
+    def log_tail(self, path: str, size: int, timeout: float = 10.0) -> str:
+        """The last `size` bytes of a file in Moonraker's logs root (AFC.log, at
+        its path there)."""
+        raw = self._fetch("GET", "/server/files/logs/" + urllib.parse.quote(path),
                           headers={"Range": "bytes=-%d" % size}, timeout=timeout)
         # A server that ignores Range sends the whole file.
         return raw[-size:].decode("utf-8", "replace")

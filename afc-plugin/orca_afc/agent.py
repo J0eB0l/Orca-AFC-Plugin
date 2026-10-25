@@ -561,6 +561,7 @@ class _Printer:
     afc_log: dict = None                              # afclog.view() of AFC.log
     log_due: float = 0.0                              # when to read it again
     log_cleared: str = None                           # its clear mark, None until read from Moonraker
+    log_path: str = None                              # its path in Moonraker's logs root, None until looked for
 
 
 def spool_key(lane) -> tuple:
@@ -907,10 +908,22 @@ else:
             try:
                 if printer.log_cleared is None:
                     printer.log_cleared = self._log_mark(printer)
-                text = printer.client.log_tail(afclog.LOG_NAME, afclog.TAIL)
+                text = printer.client.log_tail(self._log_path(printer), afclog.TAIL)
             except MoonrakerError:
                 return
-            printer.afc_log = afclog.view(text, printer.log_cleared)
+            printer.afc_log = afclog.view(text, printer.log_cleared, printer.log_path)
+
+        @staticmethod
+        def _log_path(printer: _Printer) -> str:
+            """AFC.log's path in the printer's Moonraker logs root, looked up once:
+            a Snapmaker U1 keeps Klipper's logs in klippylogs/. When the root
+            cannot be listed, or lists no AFC.log, the usual place is tried."""
+            if printer.log_path is None:
+                try:
+                    printer.log_path = afclog.log_path(printer.client.log_files()) or afclog.LOG_NAME
+                except MoonrakerError:
+                    printer.log_path = afclog.LOG_NAME
+            return printer.log_path
 
         @staticmethod
         def _log_mark(printer: _Printer) -> str:
@@ -935,7 +948,7 @@ else:
                     if not (isinstance(message, dict) and message.get("message")):
                         break
                     printer.client.gcode("AFC_CLEAR_MESSAGE")
-                mark = afclog.last_line(printer.client.log_tail(afclog.LOG_NAME, afclog.TAIL))
+                mark = afclog.last_line(printer.client.log_tail(self._log_path(printer), afclog.TAIL))
                 printer.client.post("/server/database/item",
                                     {"namespace": DB_NAMESPACE, "key": "log_cleared", "value": mark})
 
@@ -972,7 +985,7 @@ else:
             printer.stats_due = time.monotonic() + STATS_EVERY
             if not printer.swap.seeded:
                 try:
-                    printer.swap.seed(printer.client.log_tail("AFC.log", swaptimes.LOG_TAIL))
+                    printer.swap.seed(printer.client.log_tail(self._log_path(printer), swaptimes.LOG_TAIL))
                 except MoonrakerError:
                     printer.swap.seeded = True  # no log: only the changes seen while connected count
             try:

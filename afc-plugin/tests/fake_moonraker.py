@@ -42,7 +42,8 @@ class FakeMoonraker:
         self.afc_stats = None
         self.database = {}
         self.effects = {}
-        self.logs = {}       # Moonraker's logs folder: name -> text
+        self.logs = {}       # Moonraker's logs root: path -> text
+        self.unlistable_logs = False  # True to answer the logs root's file list 404, as an old Moonraker does
         self.spools = {}
         self.spool_fields = []
         self.webcams = []
@@ -114,6 +115,11 @@ class FakeMoonraker:
             if value is None:
                 return 404, {"error": {"code": 404, "message": "Namespace '%s' not found" % query.get("namespace")}}
             return 200, {"result": {"namespace": query["namespace"], "key": None, "value": value}}
+        if method == "GET" and path == "/server/files/list" and query.get("root") == "logs":
+            if self.unlistable_logs:
+                return 404, {"error": {"code": 404, "message": "Not Found"}}
+            return 200, {"result": [{"path": name, "size": len(text), "modified": 1.0, "permissions": "r"}
+                                    for name, text in self.logs.items()]}
         if method == "GET" and path.startswith("/server/files/logs/"):
             text = self.logs.get(urllib.parse.unquote(path[len("/server/files/logs/"):]))
             if text is None:

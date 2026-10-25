@@ -17,7 +17,9 @@ import re
 from dataclasses import dataclass
 
 LOG_NAME = "AFC.log"
-LOG_FILE = "logs/" + LOG_NAME  # its path in Moonraker's files, which the page downloads
+# Where it is in Moonraker's logs root: beside klippy.log on most printers, in
+# klippylogs/ on a Snapmaker U1. The page downloads it as logs/<that path>.
+LOG_PATHS = (LOG_NAME, "klippylogs/" + LOG_NAME)
 TAIL = 128 * 1024              # bytes of AFC.log read each time
 SHOWN = 300                    # lines the page shows
 PROBLEMS = 30                  # errors and warnings it lists
@@ -93,12 +95,24 @@ def problems(found: list) -> list:
     return list(reversed(list(seen.values())))[:PROBLEMS]
 
 
-def view(text: str, cleared: str) -> dict:
-    """The Assistant page's agent_log for a tail of AFC.log and its clear mark."""
+def log_path(files: list) -> str:
+    """AFC.log's path in Moonraker's logs root, given the root's file list
+    (/server/files/list?root=logs): the first of LOG_PATHS listed, else the
+    first file named AFC.log anywhere in it, else "" for no log."""
+    paths = [f.get("path") for f in files if isinstance(f, dict) and isinstance(f.get("path"), str)]
+    for path in LOG_PATHS:
+        if path in paths:
+            return path
+    return next((p for p in paths if p.rsplit("/", 1)[-1] == LOG_NAME), "")
+
+
+def view(text: str, cleared: str, path: str = LOG_NAME) -> dict:
+    """The Assistant page's agent_log for a tail of AFC.log, its clear mark and
+    its path in Moonraker's logs root."""
     found = entries(text)
     start = 0
     if cleared:
         start = next((n + 1 for n in range(len(found) - 1, -1, -1) if found[n].raw == cleared), 0)
-    return {"name": LOG_NAME, "file": LOG_FILE,
+    return {"name": LOG_NAME, "file": "logs/" + path,
             "lines": [[entry.level, entry.shown()] for entry in found[-SHOWN:]],
             "problems": [problem.to_json() for problem in problems(found[start:])]}

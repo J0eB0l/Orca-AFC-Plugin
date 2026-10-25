@@ -63,6 +63,15 @@ class ViewTest(unittest.TestCase):
     def test_cleared_at_the_last_line_lists_none(self):
         self.assertEqual(afclog.view(LOG, afclog.last_line(LOG))["problems"], [])
 
+    def test_the_logs_path_in_moonrakers_logs_root(self):
+        files = [{"path": "moonraker.log"}, {"path": "klippylogs/klippy.log"}, {"path": "klippylogs/AFC.log"}]
+        self.assertEqual(afclog.log_path(files), "klippylogs/AFC.log")
+        self.assertEqual(afclog.log_path(files + [{"path": "AFC.log"}]), "AFC.log")  # the usual place first
+        self.assertEqual(afclog.log_path([{"path": "old/AFC.log"}, "junk", {"size": 1}]), "old/AFC.log")
+        self.assertEqual(afclog.log_path([{"path": "klippy.log"}]), "")
+        self.assertEqual(afclog.view("", "", "klippylogs/AFC.log")["file"], "logs/klippylogs/AFC.log")
+        self.assertEqual(afclog.view("", "")["file"], "logs/AFC.log")
+
     def test_the_last_lines_only(self):
         text = "".join("10:00:%02d %d.000 - DEBUG:line %d\n" % (n % 60, n, n) for n in range(afclog.SHOWN + 5))
         lines = afclog.view(text, "")["lines"]

@@ -552,7 +552,7 @@ class DeviceTabTest(Case):
         self.assertEqual(self.agent.get_camera_url(), self.fake.url + "/webcam/snapshot.jpg")
 
     def test_swap_times_from_afcs_log_and_stats(self):
-        self.fake.logs["AFC.log"] = "".join("lane1 is now loaded in toolhead t:%d\n" % v for v in (30, 31, 90))
+        self.fake.logs["klippylogs/AFC.log"] = "".join("lane1 is now loaded in toolhead t:%d\n" % v for v in (30, 31, 90))
         self.fake.afc_stats = {"average_time": {"tool_load": 9000, "tool_unload": 0, "tool_swap": 0,
                                                 "new_average_calc": 1},
                                "extruder": {"change_count": {"tool_load": 100, "tool_unload": 0, "tool_selected": 0}}}
@@ -686,6 +686,26 @@ class DeviceTabTest(Case):
         self.fake.logs["AFC.log"] = self.LOG
         self.connect()
         self.assertEqual([p["text"] for p in self.push()["agent_log"]["problems"]], ["lane3 spool low"])
+
+    def test_a_snapmaker_u1_keeps_afc_log_in_klippylogs(self):
+        # Its Moonraker logs root holds Klipper's logs in a folder; the page downloads from there too.
+        self.fake.logs["klippylogs/klippy.log"] = "Klipper\n"
+        self.fake.logs["klippylogs/AFC.log"] = self.LOG
+        self.connect()
+        log = self.push()["agent_log"]
+        self.assertEqual(log["file"], "logs/klippylogs/AFC.log")
+        self.assertEqual([p["text"] for p in log["problems"]], ["lane3 spool low", "lane2 failed to load"])
+        self.assertEqual(self.fake.paths().count("/server/files/list"), 1)  # looked for once
+        # Clear marks the log there, and the change times come from it.
+        self.assertEqual(self.send({"print": {"command": "clear_agent_log", "sequence_id": "8"}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.database["orca_afc"]["log_cleared"], self.LOG.splitlines()[-1])
+
+    def test_afc_log_is_looked_for_in_the_usual_place_when_the_root_cannot_be_listed(self):
+        self.fake.logs["AFC.log"] = self.LOG
+        self.fake.unlistable_logs = True
+        self.connect()
+        self.assertEqual(self.push()["agent_log"]["file"], "logs/AFC.log")
 
     def test_no_afc_log(self):
         self.connect()

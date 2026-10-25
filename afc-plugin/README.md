@@ -201,7 +201,9 @@ Then:
   lines behind a switch). **Clear** empties AFC's message queue and hides the
   errors and warnings logged so far; the mark is kept in Moonraker's database
   (namespace `orca_afc`), so it holds on every computer. **Download AFC.log**
-  saves the whole log from the printer. A new error or warning tags the page.
+  saves the whole log from the printer. The log is read where the printer's
+  Moonraker keeps it (beside `klippy.log`, or in `klippylogs/` on a Snapmaker
+  U1). A new error or warning tags the page.
 - In the AFC build, the Device tab's **Update** page shows the printer preset's
   picture (and its name, for a printer of no known model), the AFC version
   installed, the newest on Armored Turtle's `main` and `DEV` branches on GitHub
