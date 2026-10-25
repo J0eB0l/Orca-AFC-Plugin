@@ -17,15 +17,14 @@ import re
 from dataclasses import dataclass
 
 LOG_NAME = "AFC.log"
-# Where it is in Moonraker's logs root: beside klippy.log on most printers, in
-# klippylogs/ on a Snapmaker U1. The page downloads it as logs/<that path>.
-LOG_PATHS = (LOG_NAME, "klippylogs/" + LOG_NAME)
 TAIL = 128 * 1024              # bytes of AFC.log read each time
 SHOWN = 300                    # lines the page shows
 PROBLEMS = 30                  # errors and warnings it lists
 WIDTH = 400                    # characters kept of a line
 
-_LINE = re.compile(r"^(\d\d:\d\d:\d\d) (\d+\.\d+) (?:\[[^\]]*\] *)?- ([A-Z]+):(.*)$")
+# The clock is padded to 10 characters, so a Klipper up for less than about
+# 28 hours has more than one space before it.
+_LINE = re.compile(r"^(\d\d:\d\d:\d\d) +(\d+\.\d+) (?:\[[^\]]*\] *)?- *([A-Z]+):(.*)$")
 _LEVELS = {"ERROR": "e", "WARN": "w", "INFO": "i", "DEBUG": "d", "RAW": "r"}
 _NAMES = {"e": "ERROR", "w": "WARN", "i": "INFO", "d": "DEBUG", "r": "RAW"}
 _NUMBER = re.compile(r"\d+(\.\d+)?")
@@ -97,13 +96,14 @@ def problems(found: list) -> list:
 
 def log_path(files: list) -> str:
     """AFC.log's path in Moonraker's logs root, given the root's file list
-    (/server/files/list?root=logs): the first of LOG_PATHS listed, else the
-    first file named AFC.log anywhere in it, else "" for no log."""
-    paths = [f.get("path") for f in files if isinstance(f, dict) and isinstance(f.get("path"), str)]
-    for path in LOG_PATHS:
-        if path in paths:
-            return path
-    return next((p for p in paths if p.rsplit("/", 1)[-1] == LOG_NAME), "")
+    (/server/files/list?root=logs): the newest file named AFC.log anywhere in
+    it, else "" for no log. It is beside klippy.log on most printers, and in
+    klippylogs/ on a Snapmaker U1, whose root can also hold an old one."""
+    logs = [f for f in files if isinstance(f, dict) and isinstance(f.get("path"), str)
+            and f["path"].rsplit("/", 1)[-1] == LOG_NAME]
+    if not logs:
+        return ""
+    return max(logs, key=lambda f: f.get("modified") or 0)["path"]
 
 
 def view(text: str, cleared: str, path: str = LOG_NAME) -> dict:

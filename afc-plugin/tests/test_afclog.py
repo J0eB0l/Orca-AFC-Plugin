@@ -23,6 +23,12 @@ class EntriesTest(unittest.TestCase):
         self.assertEqual(found[0].text, "AFC_BridgeBox chain1: can't reach the BridgeBox (timed out).")
         self.assertEqual(found[3].clock, "335737.728")
 
+    def test_a_klipper_up_less_than_a_day_pads_its_clock(self):
+        found = afclog.entries("04:54:11     40.184 [AFC_RFID.py:sync():1183]  - INFO: spool #140 assigned\n"
+                               "04:54:12     41.000 [AFC_prep.py:PREP():97]  -  RAW:  O  |  X  |\n")
+        self.assertEqual([(e.clock, e.level, e.text) for e in found],
+                         [("40.184", "i", "spool #140 assigned"), ("41.000", "r", "O  |  X  |")])
+
     def test_a_line_as_the_page_shows_it(self):
         found = afclog.entries(LOG)
         self.assertEqual(found[3].shown(), "16:59:09 ERROR ACE Ace2_1: failed to connect")
@@ -64,9 +70,14 @@ class ViewTest(unittest.TestCase):
         self.assertEqual(afclog.view(LOG, afclog.last_line(LOG))["problems"], [])
 
     def test_the_logs_path_in_moonrakers_logs_root(self):
-        files = [{"path": "moonraker.log"}, {"path": "klippylogs/klippy.log"}, {"path": "klippylogs/AFC.log"}]
+        files = [{"path": "moonraker.log"}, {"path": "klippylogs/klippy.log"},
+                 {"path": "klippylogs/AFC.log", "modified": 1792915000.0}]
         self.assertEqual(afclog.log_path(files), "klippylogs/AFC.log")
-        self.assertEqual(afclog.log_path(files + [{"path": "AFC.log"}]), "AFC.log")  # the usual place first
+        # a U1's logs root can also hold an AFC.log nothing writes any more
+        self.assertEqual(afclog.log_path(files + [{"path": "AFC.log", "modified": 1785015000.0}]),
+                         "klippylogs/AFC.log")
+        self.assertEqual(afclog.log_path([{"path": "AFC.log", "modified": 2.0},
+                                          {"path": "klippylogs/AFC.log", "modified": 1.0}]), "AFC.log")
         self.assertEqual(afclog.log_path([{"path": "old/AFC.log"}, "junk", {"size": 1}]), "old/AFC.log")
         self.assertEqual(afclog.log_path([{"path": "klippy.log"}]), "")
         self.assertEqual(afclog.view("", "", "klippylogs/AFC.log")["file"], "logs/klippylogs/AFC.log")
