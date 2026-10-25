@@ -350,9 +350,16 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
     return out
 
 
-def _refill_bit(tray: int):
-    """The bit of a tray id in Bambu's refill group masks, None past them:
-    trays 0-15 and 24-27 at their own bit, AMS HT units at 16-23."""
+def _refill_bit(tray: int, limits: Limits = BAMBU):
+    """The bit of a tray id in the refill group masks, None past them. Bambu's:
+    trays 0-15 and 24-27 at their own bit, AMS HT units at 16-23. The AFC
+    build's (WIDE): the tray bits of tray_exist_bits."""
+    if limits != BAMBU:
+        if 0 <= tray < limits.ht_tray_bit:
+            return tray
+        if HT_ID <= tray < HT_ID + limits.max_ht:
+            return limits.ht_tray_bit + tray - HT_ID
+        return None
     if 0 <= tray <= 15 or 24 <= tray <= 27:
         return tray
     if HT_ID <= tray < HT_ID + MAX_HT:
@@ -379,7 +386,7 @@ def refill_groups(snapshot: Snapshot, shown: Layout) -> list:
             linked |= {lane.name, lane.runout_lane}
     groups = {}  # root lane -> (tray bits, lanes with a tray)
     for tool, lane in sorted(lanes_by_tray(snapshot).items()):
-        bit = _refill_bit(shown.tray(tool)) if lane.name in linked else None
+        bit = _refill_bit(shown.tray(tool), shown.limits) if lane.name in linked else None
         if bit is not None:
             bits, names = groups.setdefault(root(lane.name), (set(), set()))
             bits.add(bit)

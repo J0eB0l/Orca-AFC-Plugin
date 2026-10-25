@@ -235,6 +235,22 @@ class RefillGroupTest(unittest.TestCase):
         # lane1 is tray 0 and lane12 the HT at 130 (bit 18); ace3 is tray 7 and extruder1 the HT at 128 (bit 16).
         self.assertEqual(sorted(trays.refill_groups(snap, shown)), [(1 << 16) | (1 << 7), (1 << 18) | 1])
 
+    def test_wide_groups_reach_every_unit(self):
+        # The AFC build's masks: a tray of the sixth unit and an AMS HT past Bambu's eight.
+        lanes, units = [], []
+        for n in range(6):
+            names = ["u%d_%d" % (n, i) for i in range(4)]
+            lanes += [loaded(name, n * 4 + i, unit="Unit_%d" % n) for i, name in enumerate(names)]
+            units.append(Unit("Unit_%d" % n, "Box_Turtle", names))
+        for n in range(10):
+            lanes.append(loaded("one%d" % n, 24 + n, unit="One_%d" % n))
+            units.append(Unit("One_%d" % n, "Box_Turtle", ["one%d" % n]))
+        snap = Snapshot(present=True, lanes=lanes, units=units)
+        snap.find_lane("u5_3").runout_lane = "one9"
+        shown = trays.layout(snap, by_unit=True, wide=True)
+        self.assertEqual(shown.tray(33), 137)
+        self.assertEqual(trays.refill_groups(snap, shown), [(1 << 23) | (1 << 57)])
+
     def test_no_runout_lanes(self):
         self.assertEqual(trays.refill_groups(units_snapshot(), trays.layout(units_snapshot())), [])
 
