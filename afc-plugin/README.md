@@ -28,7 +28,9 @@ Klipper file to AFC:
   OrcaSlicer, with "Purge in prime tower" and "Multi-material per toolhead" on,
   the prime tower flushes the lane changes of its own tool changes instead,
   from the toolhead each tray reported at filament sync, and those get no
-  `PURGE_LENGTH` unless the print dialog's mapping changed them;
+  `PURGE_LENGTH` unless the print dialog's mapping changed them. A Snapmaker U1
+  forms a tip on the filament it unloads instead of cutting it, so on a U1
+  both purge a fifth of the table's volume, which is made for a printer that cuts;
 - a lane whose Spoolman spool has a saved flow K prints with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
   lines for it take that K (filaments with adaptive pressure advance keep theirs);

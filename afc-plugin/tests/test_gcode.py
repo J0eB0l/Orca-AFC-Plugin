@@ -108,6 +108,11 @@ class PurgeTest(unittest.TestCase):
         out = self.run_file("T0\nT2\nT0\nT2\n", plan)
         self.assertNotIn("PURGE_LENGTH", out)
 
+    def test_u1_purges_a_fifth(self):
+        # A U1 forms tips instead of cutting, so a lane change purges a fifth of the table's 100 mm³.
+        out = self.run_file("T0\nT1\n", g.Plan(toolheads={0: 0, 1: 0}), extra="; printer_model = Snapmaker U1\n")
+        self.assertAlmostEqual(purge(out, 1), round(20 / area(1.75), 1))
+
     def test_uses_the_new_filaments_diameter(self):
         out = self.run_file("T0\nT2\n", g.Plan(toolheads={0: 0, 2: 0}))
         self.assertAlmostEqual(purge(out, 1), round(200 / area(2.85), 1))

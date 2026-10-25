@@ -24,7 +24,10 @@ rewrites the file for what AFC does with it:
   lane changes of the prime tower's tool changes on the tower, from the
   toolheads the trays reported at filament sync (`filament_toolhead`); such a
   change gets no PURGE_LENGTH when it is still the same lane change after the
-  print dialog's mapping. Every other lane change still goes to the poop.
+  print dialog's mapping. Every other lane change still goes to the poop. A
+  Snapmaker U1 forms a tip on the filament it unloads instead of cutting it, so
+  its lane changes purge a fifth of that volume (the table is made for a
+  printer that cuts); the AFC build's prime tower flushes a fifth there too.
 - **Spool pressure advance.** A lane whose Spoolman spool has a saved flow K
   (`flow_k`, written by AFC autocal) prints with it: a
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` follows its `T` line, and the file's own
@@ -147,6 +150,10 @@ def _ints(value: str) -> list:
     return out if value else []
 
 
+# A Snapmaker U1 forms a tip instead of cutting, so a lane change flushes this share of the table's volume.
+TIP_FORMING_FLUSH_FACTOR = 0.2
+
+
 def _on(config: dict, key: str) -> bool:
     return config.get(key, "0") in ("1", "true")
 
@@ -210,8 +217,9 @@ class FileSettings:
 
     def flush_volume(self, toolhead: int, before: int, after: int) -> float:
         """mm³ to flush going from filament `before` to `after` on a toolhead,
-        times that toolhead's flush multiplier. The table holds one n×n block
-        per nozzle; a toolhead past the last block uses the last one."""
+        times that toolhead's flush multiplier, and a fifth of that on a U1,
+        which forms tips. The table holds one n×n block per nozzle; a toolhead
+        past the last block uses the last one."""
         n = self.filaments
         if n <= 0 or before >= n or after >= n or not self.flush:
             return 0.0
@@ -223,6 +231,8 @@ class FileSettings:
         multiplier = self.multipliers[head] if head < len(self.multipliers) else (
             self.multipliers[0] if self.multipliers else 1.0)
         volume = self.flush[block * n * n + before * n + after] * multiplier
+        if self.u1:
+            volume *= TIP_FORMING_FLUSH_FACTOR
         return volume if math.isfinite(volume) and volume > 0 else 0.0
 
     def sliced_toolhead(self, filament: int) -> int:
