@@ -1,8 +1,9 @@
 """AFC's lanes as the AMS trays OrcaSlicer's device model reads.
 
 OrcaSlicer keeps a printer's filaments in Bambu's AMS shape: units of up to
-four trays (ids 0-7, a tray id being unit * 4 + slot) and one-tray AMS HT units
-(ids 128-135, a tray id being the unit id). Two layouts fit AFC's T numbers to it:
+four trays (ids 0-6, a tray id being unit * 4 + slot) and one-tray AMS HT units
+(ids 128-135, a tray id being the unit id); the AFC build reads more of both
+(WIDE). Two layouts fit AFC's T numbers to it:
 
 - By T number, as OrcaSlicer's own Moonraker agent lays out AFC's lane data:
   T(n) is tray n, in unit n // 4, slot n % 4. Filament sync then puts tray n in
@@ -40,6 +41,25 @@ DRY_DISCONNECTED = 100  # the AFC build of OrcaSlicer's "cannot dry" reason for 
 TOOLCHANGER = "Toolchanger"  # AFC's unit type for a toolchanger's tools
 
 
+@dataclass(frozen=True)
+class Limits:
+    """How many T numbers and units OrcaSlicer reads, and the bits an AMS HT's
+    unit and tray start at in its unit and tray masks."""
+    max_tray: int = MAX_TRAY
+    max_boxes: int = MAX_BOXES
+    max_ht: int = MAX_HT
+    ht_ams_bit: int = 4
+    ht_tray_bit: int = 16
+
+
+BAMBU = Limits()
+# The AFC build of OrcaSlicer reads the masks as 64 bits and takes the AMS HT
+# bits from the "ams" object (it says so with "tray_bits64" in its pushall):
+# twelve four-tray units on tray bits 0-47, sixteen AMS HT units on unit bits
+# 32-47 and tray bits 48-63, and a T number for every filament slot.
+WIDE = Limits(max_tray=63, max_boxes=12, max_ht=16, ht_ams_bit=32, ht_tray_bit=48)
+
+
 @dataclass
 class Box:
     """A unit OrcaSlicer shows: up to four trays, or one for an AMS HT."""
@@ -55,8 +75,9 @@ class Box:
 class Layout:
     """Which unit and slot OrcaSlicer shows each T number in, and back."""
 
-    def __init__(self, boxes: list, by_unit: bool = False, aliases: dict | None = None):
-        self.boxes, self.by_unit = boxes, by_unit
+    def __init__(self, boxes: list, by_unit: bool = False, aliases: dict | None = None,
+                 limits: Limits = BAMBU):
+        self.boxes, self.by_unit, self.limits = boxes, by_unit, limits
         self._at = {tool: (box, slot) for box in boxes for slot, tool in enumerate(box.tools)}
         # A T number a lane holds beside the one its tray shows lives in that tray.
         for alias, tool in (aliases or {}).items():
@@ -72,7 +93,7 @@ class Layout:
             return -1
         if not self.by_unit:
             tray = ams_id * 4 + slot_id
-            return tray if tray <= MAX_TRAY else -1
+            return tray if tray <= self.limits.max_tray else -1
         box = self.box(ams_id)
         return box.tools[slot_id] if box is not None and slot_id < len(box.tools) else -1
 
@@ -80,7 +101,7 @@ class Layout:
         """The T number of a tray id, -1 for none."""
         if not _is_int(tray) or tray < 0:
             return -1
-        return self.tool(tray, 0) if HT_ID <= tray < HT_ID + MAX_HT else self.tool(tray // 4, tray % 4)
+        return self.tool(tray, 0) if HT_ID <= tray < HT_ID + self.limits.max_ht else self.tool(tray // 4, tray % 4)
 
     def tray(self, tool: int) -> int:
         """The tray id OrcaSlicer knows T(tool) by, NO_TRAY for none."""
@@ -104,30 +125,34 @@ def _is_int(v) -> bool:
 
 
 def lanes_by_tray(snapshot: Snapshot) -> dict:
-    """T number -> the lane AFC maps to it, for T0 to T30."""
+    """T number -> the lane AFC maps to it, for T0 to T63 (layout() keeps the
+    ones OrcaSlicer reads)."""
     out = {}
     for lane in snapshot.lanes:
         for m in lane.maps:
             tool = tool_number(m)
-            if 0 <= tool <= MAX_TRAY and tool not in out:
+            if 0 <= tool <= WIDE.max_tray and tool not in out:
                 out[tool] = lane
     return out
 
 
-def layout(snapshot: Snapshot | None, by_unit: bool = False) -> Layout:
+def layout(snapshot: Snapshot | None, by_unit: bool = False, wide: bool = False) -> Layout:
     """The layout of AFC's T numbers: by AFC unit when asked and it fits
-    OrcaSlicer's units, else by T number."""
+    OrcaSlicer's units, else by T number. `wide`: the AFC build reads the
+    WIDE limits."""
+    limits = WIDE if by_unit and wide else BAMBU
     trays = lanes_by_tray(snapshot) if snapshot is not None else {}
+    trays = {tool: lane for tool, lane in trays.items() if tool <= limits.max_tray}
     if by_unit and trays:
-        fit = _unit_boxes(snapshot, trays)
+        fit = _unit_boxes(snapshot, trays, limits)
         if fit is not None:
-            return Layout(fit[0], True, fit[1])
+            return Layout(fit[0], True, fit[1], limits)
     last = max(trays) if trays else -1
     return Layout([Box(unit, [unit * 4 + slot for slot in range(min(3, last - unit * 4) + 1)])
-                   for unit in range(last // 4 + 1)])
+                   for unit in range(last // 4 + 1)], limits=limits)
 
 
-def _unit_boxes(snapshot: Snapshot, trays: dict):
+def _unit_boxes(snapshot: Snapshot, trays: dict, limits: Limits = BAMBU):
     """Each AFC unit's lanes, in lane order, as OrcaSlicer units, and the T
     numbers that are aliases of a shown one; None when they do not fit.
 
@@ -155,8 +180,9 @@ def _unit_boxes(snapshot: Snapshot, trays: dict):
             singles += [(tool, name) for tool in tools]
         else:
             boxes += [(tools[i:i + 4], name) for i in range(0, len(tools), 4)]
-    first_ht = max(0, 4 * len(boxes) - 16) if singles else 0
-    if len(boxes) > MAX_BOXES or first_ht + len(singles) > MAX_HT:
+    # The AMS HT ids start past the four-tray units' tray bits.
+    first_ht = max(0, 4 * len(boxes) - limits.ht_tray_bit) if singles else 0
+    if len(boxes) > limits.max_boxes or first_ht + len(singles) > limits.max_ht:
         return None
     aliases = {tool: own[lane.name] for tool, lane in trays.items() if own[lane.name] != tool}
     return ([Box(i, tools, name) for i, (tools, name) in enumerate(boxes)] +
@@ -230,7 +256,7 @@ def current_tray(snapshot: Snapshot) -> int:
     """The T number of the lane AFC has in the active toolhead, -1 for none."""
     lane = snapshot.find_lane(snapshot.current_lane) if snapshot.current_lane else None
     tools = [tool_number(m) for m in lane.maps] if lane is not None else []
-    return next((t for t in tools if 0 <= t <= MAX_TRAY), -1)
+    return next((t for t in tools if 0 <= t <= WIDE.max_tray), -1)
 
 
 def humidity_level(percent: float) -> int:
@@ -262,7 +288,7 @@ def unit_name(shown: Layout, box: Box) -> str:
 
 
 def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None, reading=(),
-             by_unit: bool = False, dry_filaments: dict | None = None) -> dict:
+             by_unit: bool = False, dry_filaments: dict | None = None, wide: bool = False) -> dict:
     """The "ams" object of a push_status message for AFC's lanes, laid out by
     layout(). `filament_ids` holds the filament id for each loaded T number,
     `extras` more tray fields by T number, `reading` the T numbers whose tag is
@@ -271,16 +297,17 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
     if not trays:
         return {"ams": [], "ams_exist_bits": "0", "tray_exist_bits": "0"}
     extras, dry_filaments = extras or {}, dry_filaments or {}
-    shown = layout(snapshot, by_unit)
+    shown = layout(snapshot, by_unit, wide)
+    limits = shown.limits
     hts = [box for box in shown.boxes if box.single]
     units, ams_bits, tray_bits, reading_bits = [], 0, 0, 0
     for box in shown.boxes:
         unit = snapshot.find_unit(box.unit) if box.unit else None
         dryer = unit.dryer if unit is not None else None
-        ams_bits |= 1 << (4 + box.ams_id - HT_ID if box.single else box.ams_id)
+        ams_bits |= 1 << (limits.ht_ams_bit + box.ams_id - HT_ID if box.single else box.ams_id)
         slots = []
         for slot, tool in enumerate(box.tools):
-            bit = 16 + box.ams_id - HT_ID if box.single else box.ams_id * 4 + slot
+            bit = limits.ht_tray_bit + box.ams_id - HT_ID if box.single else box.ams_id * 4 + slot
             lane = trays.get(tool)
             if lane is not None and lane.has_filament:
                 tray_bits |= 1 << bit
@@ -300,6 +327,9 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             # A toolchanger's tool shows its extruder's name, not "AMS HT".
             tool_lane = trays[box.tools[0]]
             entry["unit_name"] = tool_lane.extruder or tool_lane.name
+        elif box.unit:
+            # A one-lane unit shows its AFC name, not "AMS HT".
+            entry["unit_name"] = box.unit
         elif box.single and box.ams_id != HT_ID + hts.index(box):
             # OrcaSlicer numbers an AMS HT by its id, which starts later beside five four-tray units.
             entry["unit_name"] = "AMS HT-%d" % (hts.index(box) + 1)
@@ -312,9 +342,12 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
         units.append(entry)
     now = "%d" % shown.tray(current_tray(snapshot))
     # calibrate_remain_flag: OrcaSlicer draws how full each spool is only while the printer says it tracks it.
-    return {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits,
-            "tray_now": now, "tray_tar": now, "tray_reading_bits": "%X" % reading_bits,
-            "calibrate_remain_flag": True}
+    out = {"ams": units, "ams_exist_bits": "%X" % ams_bits, "tray_exist_bits": "%X" % tray_bits,
+           "tray_now": now, "tray_tar": now, "tray_reading_bits": "%X" % reading_bits,
+           "calibrate_remain_flag": True}
+    if limits != BAMBU:
+        out.update(ht_ams_bit=limits.ht_ams_bit, ht_tray_bit=limits.ht_tray_bit)
+    return out
 
 
 def _refill_bit(tray: int):

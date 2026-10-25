@@ -273,7 +273,7 @@ def _layers(state: str, stats: dict, position, job: dict):
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
-                latest=None) -> dict:
+                latest=None, wide: bool = False) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -375,12 +375,12 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     if lit is not None:
         out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
     if snapshot is not None:
-        out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading, by_unit, dry_filaments)
+        out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading, by_unit, dry_filaments, wide)
         # A Bambu printer's filament switch at the extruder: set, the Device tab draws the tray_now tray's
         # path to the extruder. Never with no tray (255), which OrcaSlicer reads as the external spool.
         now = out["ams"].get("tray_now")
         out["hw_switch_state"] = 1 if now not in (None, "%d" % trays.NO_TRAY) else 0
-        shown = trays.layout(snapshot, by_unit)
+        shown = trays.layout(snapshot, by_unit, wide)
         groups = trays.refill_groups(snapshot, shown)
         # Always sent, so a runout lane taken off leaves OrcaSlicer's groups too.
         out["filam_bak"] = groups
@@ -481,7 +481,8 @@ class PrintJob:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
-def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse: bool = False) -> str:
+def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse: bool = False,
+            wide: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
     filaments (laid out by AFC unit when `by_unit`), AFC's purges and spool
     flow K, on a U1 its print switches, and with the Timelapse switch on and
@@ -489,7 +490,7 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
     without AFC gets the file as it was sliced, apart from those switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
     if settings.klipper and snapshot is not None and snapshot.present:
-        shown = trays.layout(snapshot, by_unit)
+        shown = trays.layout(snapshot, by_unit, wide)
         mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
         text = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, mapping, settings), settings).text
     if snapshot is not None and snapshot.u1_print.present:
@@ -544,6 +545,7 @@ class _Printer:
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
     reading: set = field(default_factory=set)         # T numbers whose tag is being read
     by_unit: bool = False                             # OrcaSlicer syncs trays by the T number each reports: lay them out by AFC unit
+    wide: bool = False                                # ... and reads the tray masks as 64 bits (trays.WIDE)
     dry_filaments: dict = field(default_factory=dict) # unit -> the filament the drying popup started it for
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
     lane_k: dict = field(default_factory=dict)        # lane with no Spoolman spool -> (K set in the tray popup, spool_key())
@@ -840,7 +842,7 @@ else:
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
                                   printer.nozzles, printer.client.url, printer.timelapse, printer.afc_log,
-                                  self._latest)
+                                  self._latest, printer.wide)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1087,6 +1089,8 @@ else:
             elif pushing.get("command") == "pushall":
                 if pushing.get("tray_tool") is True:
                     printer.by_unit = True
+                if pushing.get("tray_bits64") is True:
+                    printer.wide = True
                 self._worker.submit(lambda: self._push(printer))
             elif job.get("command"):
                 return self._print_command(printer, job)
@@ -1265,7 +1269,7 @@ else:
 
         def _layout(self, printer: _Printer) -> trays.Layout:
             """The units and slots the Device tab shows AFC's T numbers in."""
-            return trays.layout(printer.snapshot, printer.by_unit)
+            return trays.layout(printer.snapshot, printer.by_unit, printer.wide)
 
         def _drying(self, printer: _Printer, job: dict) -> int:
             """The drying popup of a unit with a dryer: starts it (mode 1, for
@@ -1415,7 +1419,7 @@ else:
             if snapshot is not None:
                 self._kept_k(printer, snapshot)
             original = data.decode("utf-8", "surrogateescape")
-            text = prepare(original, job, snapshot, printer.by_unit, printer.timelapse)
+            text = prepare(original, job, snapshot, printer.by_unit, printer.timelapse, printer.wide)
             name = job.stored or upload_name(job.project, job.plate)
             if canceled.is_set():
                 return ERR_CANCELED

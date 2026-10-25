@@ -115,8 +115,8 @@ Then:
   tray per T number, four to a unit (the first unit holds T0 to T3). The AFC
   build of OrcaSlicer shows each AFC unit as its own AMS instead, four lanes to
   one, and a unit of one lane (a Bambu AMS HT) or each tool of a toolchanger as
-  an AMS HT. A unit of four lanes is labeled with its AFC name (a unit of more
-  than four is numbered, Turtle_1-1 and Turtle_1-2), and a toolchanger's tool
+  an AMS HT. Each unit is labeled with its AFC name (a unit of more
+  than four lanes is numbered, Turtle_1-1 and Turtle_1-2), and a toolchanger's tool
   with its extruder's name, in the print dialog's tray list and the drying popup. A lane that also holds a print's T number (AFC maps a print's
   filaments onto lanes that way) is still one tray, under its own T number. A Bambu AMS Lite
   (`ams_model: lite`) of four lanes is drawn as an AMS Lite. A unit with a dryer (ACE, Bambu AMS 2 Pro or AMS HT) shows its
@@ -125,8 +125,11 @@ Then:
   AFC_BAMBU_HEATER_START). The popup allows the AMS 2 Pro's 65 °C; a unit that
   dries cooler (an ACE's 55 °C) dries at its most. A unit that is not
   connected cannot start; in the AFC build the popup says so. AFC units that would need
-  more than seven AMS, more than five beside AMS HT units, more than four AMS HT
-  beside five AMS, or more than eight AMS HT are shown by T number.
+  more than twelve AMS or more than sixteen AMS HT are shown by T number. Other
+  builds of OrcaSlicer read Bambu's 32-bit tray masks: they show T0 to T30, and
+  by T number AFC units that would need more than seven AMS, more than five
+  beside AMS HT units, more than four AMS HT beside five AMS, or more than eight
+  AMS HT.
   The AFC build also shows the chamber's temperature when Klipper has a
   heater_generic, temperature_sensor or temperature_fan named with chamber,
   cavity, enclosure or cabinet.

@@ -800,6 +800,14 @@ class UnitLayoutTest(Case):
         echo = self.calls.messages("print", "ams_filament_setting")[0]
         self.assertEqual((echo["ams_id"], echo["tray_id"], echo["nozzle_temp_min"]), (128, 0, 215))  # the lane's own temperature
 
+    def test_wide_masks_when_the_build_reads_them(self):
+        self.connect()
+        self.assertNotIn("ht_tray_bit", self.push_by_unit()["ams"])
+        self.assertEqual(self.send({"pushing": {"command": "pushall", "tray_tool": True, "tray_bits64": True}}), 0)
+        ams = self.calls.messages("print", "push_status", 2)[-1]["ams"]
+        self.assertEqual((ams["ht_ams_bit"], ams["ht_tray_bit"], ams["ams_exist_bits"], ams["tray_exist_bits"]),
+                         (32, 48, "100000003", "1000000000013"))
+
     def test_drying_popup_runs_the_units_dryer(self):
         self.connect()
         self.push_by_unit()

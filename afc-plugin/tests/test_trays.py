@@ -71,7 +71,11 @@ class AmsTest(unittest.TestCase):
     def test_first_lane_per_t_number(self):
         a, b = loaded("a", 2), loaded("b", 2)
         self.assertIs(trays.lanes_by_tray(Snapshot(lanes=[a, b, loaded("far", 40)]))[2], a)
-        self.assertNotIn(40, trays.lanes_by_tray(Snapshot(lanes=[loaded("far", 40)])))
+        self.assertIn(63, trays.lanes_by_tray(Snapshot(lanes=[loaded("far", 63)])))
+        self.assertNotIn(64, trays.lanes_by_tray(Snapshot(lanes=[loaded("far", 64)])))
+        # By T number OrcaSlicer reads T0-T30.
+        self.assertEqual(trays.layout(Snapshot(lanes=[loaded("a", 2), loaded("far", 40)])).boxes,
+                         [trays.Box(0, [0, 1, 2])])
 
 
 def units_snapshot():
@@ -97,9 +101,9 @@ class UnitLayoutTest(unittest.TestCase):
                          [("0", "0001"), ("1", "400023"), ("128", "0004"), ("129", "0004"), ("130", "0004")])
         turtle, ace, tool1, tool2, ht = ams["ams"]
         self.assertEqual((turtle["humidity"], "dryer" in turtle), ("0", False))  # an AMS, no humidity shown
-        # Four-tray units show their AFC unit's name, a toolchanger's tools their extruder's;
-        # another AMS HT keeps OrcaSlicer's.
-        self.assertEqual([u.get("unit_name") for u in ams["ams"]], ["Turtle_1", "Ace_1", "extruder1", "extruder2", None])
+        # Units show their AFC unit's name, a toolchanger's tools their extruder's.
+        self.assertEqual([u.get("unit_name") for u in ams["ams"]],
+                         ["Turtle_1", "Ace_1", "extruder1", "extruder2", "Bambu_AMS_1"])
         self.assertEqual([t["tool"] for t in turtle["tray"]] + [t["tool"] for t in ace["tray"]], [0, 1, 2, 3, 6, 7, 8, 9])
         self.assertEqual((tool1["tray"][0]["tool"], tool1["dryer"], tool2["tray"][0]["tool"], ht["tray"][0]["tool"]),
                          (4, False, 5, 12))
@@ -172,11 +176,37 @@ class UnitLayoutTest(unittest.TestCase):
         # Unit bits 0-4 and 8-10, tray bits 0-19 and 20-22, the lane12 HT spinning on bit 22.
         self.assertEqual((ams["ams_exist_bits"], ams["tray_exist_bits"], ams["tray_reading_bits"]),
                          ("71F", "7FFFFF", "400000"))
-        # OrcaSlicer would number them AMS HT-5 on; a toolchanger's tools keep their extruder's name.
-        self.assertEqual([u.get("unit_name") for u in ams["ams"][5:]], ["extruder1", "extruder2", "AMS HT-3"])
+        # OrcaSlicer would number them AMS HT-5 on; each keeps its own name.
+        self.assertEqual([u.get("unit_name") for u in ams["ams"][5:]], ["extruder1", "extruder2", "Bambu_AMS_1"])
         shown = trays.layout(snap, by_unit=True)
         self.assertEqual((shown.tray(12), shown.tool_of_tray(134), shown.tray(24), shown.tool(4, 3)), (134, 12, 19, 24))
         self.assertEqual(ams["tray_now"], "133")  # extruder2, T5
+        self.assertNotIn("ht_tray_bit", ams)  # Bambu's AMS HT bits
+
+    def test_more_units_on_the_afc_build(self):
+        # Twelve units of four and sixteen one-lane units, T0-T63: the AFC build
+        # reads 64-bit masks with the AMS HT bits the agent names.
+        lanes, units = [], []
+        for n in range(12):
+            names = ["u%d_%d" % (n, i) for i in range(4)]
+            lanes += [loaded(name, n * 4 + i, unit="Unit_%d" % n) for i, name in enumerate(names)]
+            units.append(Unit("Unit_%d" % n, "Box_Turtle", names))
+        for n in range(16):
+            lanes.append(loaded("one%d" % n, 48 + n, unit="One_%d" % n))
+            units.append(Unit("One_%d" % n, "Box_Turtle", ["one%d" % n]))
+        snap = Snapshot(present=True, current_lane="one15", lanes=lanes, units=units)
+        ams = trays.ams_json(snap, {}, reading={63}, by_unit=True, wide=True)
+        self.assertEqual([u["id"] for u in ams["ams"]], [str(n) for n in range(12)] + [str(128 + n) for n in range(16)])
+        self.assertEqual((ams["ams_exist_bits"], ams["tray_exist_bits"], ams["tray_reading_bits"]),
+                         ("FFFF00000FFF", "F" * 16, "8000000000000000"))
+        self.assertEqual((ams["ht_ams_bit"], ams["ht_tray_bit"], ams["tray_now"]), (32, 48, "143"))
+        self.assertEqual([u.get("unit_name") for u in ams["ams"]][11:13], ["Unit_11", "One_0"])
+        shown = trays.layout(snap, by_unit=True, wide=True)
+        self.assertEqual((shown.tool_of_tray(143), shown.tool(11, 3), shown.tray(63)), (63, 47, 143))
+        # The same printer on another OrcaSlicer build falls back to T0-T30 by T number.
+        narrow = trays.layout(snap, by_unit=True)
+        self.assertEqual((narrow.by_unit, narrow.boxes[-1].tools), (False, [28, 29, 30]))
+        self.assertNotIn("ht_tray_bit", trays.ams_json(snap, {}, by_unit=True))
 
     def test_t_numbers_when_the_units_do_not_fit(self):
         snap = units_snapshot()
