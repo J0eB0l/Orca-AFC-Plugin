@@ -73,9 +73,17 @@ namespace Slic3r
         return system->Owner()->GetNozzleSystem()->GetExtNozzle(m_current_nozzle_id).m_diameter;
     }
 
-    std::unordered_map<int, bool> DevExtder::GetBackupStatus(unsigned int fila_back_group)
+    std::unordered_map<int, bool> DevExtder::GetBackupStatus(uint64_t fila_back_group, int ht_tray_bit)
     {
         std::unordered_map<int, bool> trayid_group;
+        if (ht_tray_bit != 16) {
+            // Orca: a printer agent's own layout, trays below ht_tray_bit and AMS HT units from it.
+            for (int i = 0; i < 64; i++) {
+                if (DevUtil::get_bit(fila_back_group, i)) { trayid_group[i < ht_tray_bit ? i : 128 + i - ht_tray_bit] = true; }
+            }
+            return trayid_group;
+        }
+
         for (int i = 0; i < 16; i++)
         {
             if (fila_back_group & (1 << i))
@@ -187,8 +195,8 @@ namespace Slic3r
 
         std::vector<DevAmsSlotId> backup_group;
         for (const auto& extruder : m_extders) {
-            for (int fila_backup : extruder.GetFilamBackup()) {
-                for (auto [tray_id,  is_valid] : DevExtder::GetBackupStatus(fila_backup)) {
+            for (uint64_t fila_backup : extruder.GetFilamBackup()) {
+                for (auto [tray_id,  is_valid] : DevExtder::GetBackupStatus(fila_backup, Owner()->tray_ht_exist_bit)) {
                     if (is_valid && tray_map.find(tray_id) != tray_map.end() && tray_map[tray_id] != ams_slot_id) {
                         backup_group.emplace_back(tray_map[tray_id]);
                     }
@@ -308,7 +316,7 @@ namespace Slic3r
             const json& filam_bak_items = njon["filam_bak"];
             for (const auto& filam_bak_item : filam_bak_items)
             {
-                const auto& filam_bak_val = filam_bak_item.get<int>();
+                const auto& filam_bak_val = filam_bak_item.get<uint64_t>();
                 extder_obj.m_filam_bak.emplace_back(filam_bak_val);
             }
 

@@ -2293,14 +2293,14 @@ void  AmsReplaceMaterialDialog::update_to_nozzle(int nozzle_id)
         const auto& extder = m_obj->GetExtderSystem()->GetExtderById(nozzle_id);
         if (extder)
         {
-            for (int filam : extder->GetFilamBackup())
+            for (uint64_t filam : extder->GetFilamBackup())
             {
                 std::map<std::string, wxColour> group_info;
                 std::string    group_material;
                 bool   is_in_tray = false;
 
                 //get color & material
-                const auto& trayid_group = DevExtder::GetBackupStatus(filam);
+                const auto& trayid_group = DevExtder::GetBackupStatus(filam, m_obj->tray_ht_exist_bit);
                 for (const auto& elem : trayid_group)
                 {
                     if (elem.second)

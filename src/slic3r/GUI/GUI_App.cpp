@@ -5495,7 +5495,7 @@ wxString GUI_App::transition_tridid(int trid_id) const
         int id_index = trid_id / 4;
         return wxString::Format("%s", maping_dict[id_index]);
     }
-    else if (trid_id >= 0x80 && trid_id <= 0x87) { // n3s
+    else if (trid_id >= 0x80 && trid_id <= 0x8F) { // n3s (Orca: 0x88-0x8F only from a printer agent)
         const char base = 'A' + (trid_id - 128);
         wxString prefix("HT-");
         prefix.append(base);

@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -69,11 +70,13 @@ public:
     bool             HasFilamentInExt() const { return m_ext_has_filament; }
     bool             HasFilamentInBuffer() const = delete; //{ return m_buffer_has_filament; }  
     bool             HasFilamBackup() const { return !m_filam_bak.empty(); }
-    std::vector<int> GetFilamBackup() const { return m_filam_bak; }
+    std::vector<uint64_t> GetFilamBackup() const { return m_filam_bak; }
 
     // Decode a filament-backup bit group into { tray_id -> valid }. Bits 0-15 map directly to tray ids,
     // bits 16-23 to single-AMS tray ids 128+, bits 24-27 to AMS-Lite-mixed (N9) tray ids 24-27.
-    static std::unordered_map<int, bool> GetBackupStatus(unsigned int fila_back_group);
+    // Orca: ht_tray_bit is MachineObject::tray_ht_exist_bit; a printer agent that moves it lays the
+    // refill bits out like tray_exist_bits.
+    static std::unordered_map<int, bool> GetBackupStatus(uint64_t fila_back_group, int ht_tray_bit = 16);
 
     // ams binding on current extruder
     const DevAmsSlotInfo& GetSlotPre() const { return m_spre; }
@@ -101,7 +104,7 @@ private:
     // filament
     bool             m_ext_has_filament = false;
     bool             m_buffer_has_filament = false;
-    std::vector<int> m_filam_bak;// the refill filam
+    std::vector<uint64_t> m_filam_bak;// the refill filam
 
     // binded ams
     DevAmsSlotInfo m_spre; // tray_pre

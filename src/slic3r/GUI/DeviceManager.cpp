@@ -3897,7 +3897,7 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                             if (jj.contains("filam_bak")) {
                                 if (jj["filam_bak"].is_array()) {
                                     for (auto it = jj["filam_bak"].begin(); it != jj["filam_bak"].end(); it++) {
-                                        const auto& filam_bak_val = it.value().get<int>();
+                                        const auto& filam_bak_val = it.value().get<uint64_t>();
                                         m_extder_system->m_extders[MAIN_EXTRUDER_ID].m_filam_bak.push_back(filam_bak_val);
                                     }
                                 }
