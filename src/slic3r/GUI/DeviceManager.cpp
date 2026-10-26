@@ -1126,6 +1126,8 @@ wxString MachineObject::get_curr_stage()
     if (stage_list_info.empty()) {
         return "";
     }
+    if (!stage_text.empty())
+        return wxString::FromUTF8(stage_text);
     return get_stage_string(stage_curr);
 }
 
@@ -3879,6 +3881,9 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         }
                         if (jj.contains("stg_cur")) {
                            stage_curr = jj["stg_cur"].get<int>();
+                        }
+                        if (jj.contains("stg_text") && jj["stg_text"].is_string()) {
+                            stage_text = jj["stg_text"].get<std::string>();
                         }
 
                         if (jj.contains("stg_cd")) {

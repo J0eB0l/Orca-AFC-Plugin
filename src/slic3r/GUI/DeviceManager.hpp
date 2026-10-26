@@ -522,6 +522,7 @@ public:
 
     std::vector<int> stage_list_info;
     int stage_curr = 0;
+    std::string stage_text; // a printer agent's own words for stage_curr (stg_text), shown in place of Bambu's
     int stage_remaining_seconds = 0; 
     int m_push_count = 0;
     int m_full_msg_count = 0; /*the full message count, there are full or diff messages from network*/
