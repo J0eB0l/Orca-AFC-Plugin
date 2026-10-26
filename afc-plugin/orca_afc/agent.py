@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, controls, gcode, presets, protocol, runout, swaptimes, trays, upstream
+from . import afclog, controls, gcode, presets, protocol, runout, stage, swaptimes, trays, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -57,6 +57,7 @@ DB_NAMESPACE = protocol.DB_NAMESPACE  # the agent's own items in Moonraker's dat
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
 NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
+PROBE_LINES = 40       # newest G-code store lines read for bed probing each push while printing
 
 # What OrcaSlicer sends as the access code when the printer's API key is empty.
 NO_ACCESS_CODE = "88888888"
@@ -205,7 +206,9 @@ def status_query(extruders: list, lights=(), chamber: str = "") -> dict:
     # display_status holds the slicer's M73 progress, print_stats.info the layers SET_PRINT_STATS_INFO sets.
     query = {"print_stats": ["state", "filename", "print_duration", "info"], "toolhead": ["homed_axes", "extruder"],
              "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"],
-             "display_status": ["progress"], "gcode_move": ["gcode_position"]}
+             "display_status": ["progress", "message"], "gcode_move": ["gcode_position"],
+             # What AFC is doing, for the Device tab's stage line (stage.describe()).
+             "AFC": stage.AFC_FIELDS}
     for name in extruders or ["extruder"]:
         query[name] = ["temperature", "target"]
     if chamber:
@@ -273,7 +276,7 @@ def _layers(state: str, stats: dict, position, job: dict):
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
-                latest=None, wide: bool = False) -> dict:
+                latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -284,8 +287,10 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     `nozzles` each toolhead's nozzle size (toolhead_nozzles()), `files_url`
     the printer's Moonraker, whose files the Device tab's Storage page lists,
     `timelapse` whether the printer runs moonraker-timelapse, `afc_log`
-    AFC.log for the Assistant page (afclog.view()) and `latest` AFC's newest
-    versions on GitHub (upstream.read())."""
+    AFC.log for the Assistant page (afclog.view()), `latest` AFC's newest
+    versions on GitHub (upstream.read()), `toolheads` how many the printer has
+    and `probing` whether it probed its bed since the last push
+    (stage.ProbeWatch), for the stage line."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -335,6 +340,13 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # ... and its Storage page lists the G-code files and moonraker-timelapse videos there,
         # with the printer's access code as the API key.
         out["ipcam"] = {"file": {"local": "moonraker", "url": files_url, "model_download": "enabled"}}
+    if state in ("printing", "paused"):
+        # The line under the progress bar: Bambu's stage number, which OrcaSlicer words itself, and
+        # the AFC build of OrcaSlicer shows stg_text instead when there is one.
+        code, text = stage.describe(objects, snapshot, toolheads, probing)
+        out.update({"stg": [{"stage": code}], "stg_cur": code, "stg_text": text})
+    else:
+        out.update({"stg": [], "stg_cur": 0, "stg_text": ""})
     nozzle = obj(str(toolhead.get("extruder") or "extruder"))
     bed = obj("heater_bed")
     for key, source, name in (("nozzle_temper", nozzle, "temperature"), ("nozzle_target_temper", nozzle, "target"),
@@ -564,6 +576,7 @@ class _Printer:
     log_due: float = 0.0                              # when to read it again
     log_cleared: str = None                           # its clear mark, None until read from Moonraker
     log_path: str = None                              # its path in Moonraker's logs root, None until looked for
+    probes: object = field(default_factory=lambda: stage.ProbeWatch())  # bed probing, for the stage line
 
 
 def spool_key(lane) -> tuple:
@@ -842,9 +855,24 @@ else:
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
                                   printer.nozzles, printer.client.url, printer.timelapse, printer.afc_log,
-                                  self._latest, printer.wide)
+                                  self._latest, printer.wide, len(printer.extruders),
+                                  self._probing(printer, status))
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
+
+        def _probing(self, printer: _Printer, status: dict) -> bool:
+            """Whether the printer probed its bed since the last push, from the
+            G-code store's newest lines; only asked while a print runs."""
+            state = str((status.get("print_stats") or {}).get("state") or "").lower()
+            if state != "printing":
+                printer.probes = stage.ProbeWatch()
+                return False
+            try:
+                answer = printer.client.get("/server/gcode_store", {"count": PROBE_LINES})
+                entries = answer["gcode_store"]
+            except (MoonrakerError, KeyError, TypeError):
+                return False
+            return printer.probes.update(entries)
 
         def _job(self, printer: _Printer, filename) -> dict:
             """job_info() of the file being printed, read once per file, and

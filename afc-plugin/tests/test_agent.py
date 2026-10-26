@@ -291,6 +291,25 @@ class StatusTest(Case):
         self.assertEqual((status["subtask_name"], status["mc_percent"], status["mc_remaining_time"]),
                          ("cube.gcode", 25, 30))
 
+    def test_stage_line(self):
+        self.connect()
+        idle = self.push()
+        self.assertEqual((idle["stg"], idle["stg_cur"], idle["stg_text"]), ([], 0, ""))
+        self.fake.objects["print_stats"] = {"state": "printing", "filename": "cube.gcode", "print_duration": 0}
+        status = self.push(2)
+        # Bambu's stage number, which any OrcaSlicer words itself, and AFC's own words with the numbers.
+        self.assertEqual((status["stg"], status["stg_cur"]), ([{"stage": 13}], 13))
+        self.assertEqual(status["stg_text"], "Homing")
+        self.fake.objects["toolhead"]["homed_axes"] = "xyz"
+        self.assertEqual(self.push(3)["stg_text"], "Heating toolhead 2 to 215 °C (now 210 °C)")
+        self.fake.objects["extruder1"]["temperature"] = 215.0
+        self.fake.gcode_store.append({"message": "// probe at 10.000,10.000 is z=0.012", "time": 100.0})
+        self.assertEqual(self.push(4)["stg_cur"], 1)  # bed leveling
+        self.fake.objects["AFC"].update({"current_state": "Loading", "current_lane": "lane1"})
+        status = self.push(5)
+        self.assertEqual((status["stg_cur"], status["stg_text"]), (24, "Loading lane1 (T0) into toolhead 1"))
+        self.assertIn("/server/gcode_store", self.fake.paths())
+
     def test_printing_with_the_files_metadata(self):
         self.fake.objects["print_stats"] = {"state": "printing", "filename": "parts/cube.gcode", "print_duration": 600,
                                             "info": {"total_layer": 50, "current_layer": 12}}

@@ -33,6 +33,7 @@ class FakeMoonraker:
     started   files /printer/print/start was asked to print
     timelapse moonraker-timelapse's settings, or None for a 404 (no component)
     offline   True to answer everything 503, as Moonraker does while Klipper restarts
+    gcode_store  /server/gcode_store entries ({"message", "time", "type"}), oldest first
     """
 
     def __init__(self):
@@ -60,6 +61,7 @@ class FakeMoonraker:
         self.started = []
         self.timelapse = None
         self.offline = False
+        self.gcode_store = []
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self))
@@ -138,6 +140,9 @@ class FakeMoonraker:
             if self.gcode_error:
                 return 400, {"error": {"code": 400, "message": self.gcode_error}}
             return 200, {"result": "ok"}
+        if method == "GET" and path == "/server/gcode_store":
+            count = int(query.get("count") or 100)
+            return 200, {"result": {"gcode_store": self.gcode_store[-count:]}}
         if method == "GET" and path == "/printer/info":
             return 200, {"result": self.info}
         if method == "POST" and path == "/server/files/upload":
