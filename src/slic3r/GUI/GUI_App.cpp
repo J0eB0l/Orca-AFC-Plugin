@@ -3145,10 +3145,11 @@ void GUI_App::init_plugin_gui_wiring()
 }
 
 // Orca: plugins shipped in resources/plugins (the AFC plugin) are installed at the first start and whenever
-// the build ships a newer version than the one installed, keeping the user's enabled state, capability
-// switches and the permissions already granted to that plugin. An installed copy at the same or a newer
-// version is left alone, so the plugin can still be updated on its own, and each shipped version is put in
-// only once, so a plugin the user removed stays removed until the build ships a newer one.
+// the build ships a newer version than the one installed, even one the user put in from a wheel of another
+// name, keeping the user's enabled state, capability switches and the permissions already granted to that
+// plugin. An installed copy at the same or a newer version is left alone, so the plugin can still be updated
+// on its own, and each shipped version is put in only once, so a plugin the user removed stays removed until
+// the build ships a newer one.
 static void install_bundled_plugins(PluginManager& plugin_mgr, AppConfig& app_config)
 {
     namespace fs = boost::filesystem;
@@ -3187,12 +3188,17 @@ static void install_bundled_plugins(PluginManager& plugin_mgr, AppConfig& app_co
                 app_config.set("bundled_plugins", key, shipped.version);
                 continue;
             }
-            if (installed->plugin_key != key) // a copy under another key would load the same plugin twice
-                continue;
         }
 
         PluginInstallState kept;
         const bool keep_state = installed && read_install_state(fs::path(installed->plugin_root), kept);
+        // An older copy the user put in from a differently named wheel goes first: left beside the shipped
+        // one, the same plugin would load twice, and kept instead, the user never gets the newer version.
+        if (installed && installed->plugin_key != key && !plugin_mgr.delete_plugin(installed->plugin_key, error)) {
+            BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " could not replace " << installed->plugin_key
+                                     << ": " << error;
+            continue;
+        }
         PluginDescriptor descriptor;
         if (!plugin_mgr.install_plugin(entry.path(), descriptor, error)) {
             BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " failed to install: " << error;
