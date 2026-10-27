@@ -103,6 +103,9 @@ public:
     // Orca: the same translation for a Bambu id the app itself names, whichever printer is selected.
     static std::string bambu_to_orca_filament_id(const std::string& bambu_filament_id);
     std::string from_orca_filament_id(const std::string& orca_filament_id) const override;
+    // The same translation for Bambu-keyed data (filaments_color_codes.json) read while another
+    // agent, or none, is live.
+    static std::string bambu_filament_id(const std::string& orca_filament_id);
 
     // Rewrite every string under "tray_info_idx", "filament_id" or "filamentId", at any depth,
     // in a JSON document (an MQTT payload or PrintParams::ams_mapping_info). Text that does not
