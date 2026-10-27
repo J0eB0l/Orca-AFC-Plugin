@@ -17,8 +17,10 @@ import re
 from dataclasses import dataclass
 
 LOG_NAME = "AFC.log"
-TAIL = 128 * 1024              # bytes of AFC.log read each time
-SHOWN = 300                    # lines the page shows
+TAIL = 128 * 1024              # bytes of AFC.log read each time after the first
+FIRST = 1 << 20                # bytes read the first time
+SHOWN = 1000                   # lines other than DEBUG the page keeps
+DEBUG_SHOWN = 1000             # newest lines among which it keeps the DEBUG ones
 PROBLEMS = 30                  # errors and warnings it lists
 WIDTH = 400                    # characters kept of a line
 
@@ -106,13 +108,33 @@ def log_path(files: list) -> str:
     return max(logs, key=lambda f: f.get("modified") or 0)["path"]
 
 
-def view(text: str, cleared: str, path: str = LOG_NAME) -> dict:
-    """The Assistant page's agent_log for a tail of AFC.log, its clear mark and
-    its path in Moonraker's logs root."""
+def merge(kept: list, text: str) -> list:
+    """The entries kept so far with a newer tail's entries added after them,
+    trimmed to what the page shows: the last SHOWN lines other than DEBUG, and
+    the DEBUG lines among the last DEBUG_SHOWN. A tail that no longer holds
+    the last kept line came after it (or the log rotated), so all of it is
+    added."""
     found = entries(text)
+    if kept:
+        last = kept[-1].raw
+        at = next((n for n in range(len(found) - 1, -1, -1) if found[n].raw == last), None)
+        found = kept + (found if at is None else found[at + 1:])
+    cut = len(found) - DEBUG_SHOWN
+    found = [entry for n, entry in enumerate(found) if n >= cut or entry.level != "d"]
+    others = [n for n, entry in enumerate(found) if entry.level != "d"]
+    if len(others) > SHOWN:
+        found = found[others[-SHOWN]:]
+    return found
+
+
+def view(found, cleared: str, path: str = LOG_NAME) -> dict:
+    """The Assistant page's agent_log for AFC.log's entries (merge()) or a tail
+    of it, its clear mark and its path in Moonraker's logs root."""
+    if isinstance(found, str):
+        found = merge([], found)
     start = 0
     if cleared:
         start = next((n + 1 for n in range(len(found) - 1, -1, -1) if found[n].raw == cleared), 0)
     return {"name": LOG_NAME, "file": "logs/" + path,
-            "lines": [[entry.level, entry.shown()] for entry in found[-SHOWN:]],
+            "lines": [[entry.level, entry.shown()] for entry in found],
             "problems": [problem.to_json() for problem in problems(found[start:])]}

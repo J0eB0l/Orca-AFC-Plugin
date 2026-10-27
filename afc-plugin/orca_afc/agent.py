@@ -578,6 +578,7 @@ class _Printer:
     timelapse: bool = False                           # moonraker-timelapse runs here (_timelapse())
     timelapse_due: float = 0.0                        # when to look again
     afc_log: dict = None                              # afclog.view() of AFC.log
+    log_entries: list = field(default_factory=list)   # afclog.merge() of its reads
     log_due: float = 0.0                              # when to read it again
     log_cleared: str = None                           # its clear mark, None until read from Moonraker
     log_path: str = None                              # its path in Moonraker's logs root, None until looked for
@@ -936,17 +937,20 @@ else:
 
         def _afc_log(self, printer: _Printer) -> None:
             """AFC.log for the Assistant page, read every LOG_EVERY s with its
-            clear mark (once); a failed read keeps the last."""
+            clear mark (once) and added to what was read before; a failed read
+            keeps the last."""
             if time.monotonic() < printer.log_due:
                 return
             printer.log_due = time.monotonic() + LOG_EVERY
             try:
                 if printer.log_cleared is None:
                     printer.log_cleared = self._log_mark(printer)
-                text = printer.client.log_tail(self._log_path(printer), afclog.TAIL)
+                text = printer.client.log_tail(self._log_path(printer),
+                                               afclog.TAIL if printer.log_entries else afclog.FIRST)
             except MoonrakerError:
                 return
-            printer.afc_log = afclog.view(text, printer.log_cleared, printer.log_path)
+            printer.log_entries = afclog.merge(printer.log_entries, text)
+            printer.afc_log = afclog.view(printer.log_entries, printer.log_cleared, printer.log_path)
 
         @staticmethod
         def _log_path(printer: _Printer) -> str:

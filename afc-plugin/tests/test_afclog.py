@@ -84,10 +84,37 @@ class ViewTest(unittest.TestCase):
         self.assertEqual(afclog.view("", "")["file"], "logs/AFC.log")
 
     def test_the_last_lines_only(self):
-        text = "".join("10:00:%02d %d.000 - DEBUG:line %d\n" % (n % 60, n, n) for n in range(afclog.SHOWN + 5))
+        def line(n, level):
+            return "10:%02d:%02d %d.000 - %s:line %d\n" % (n // 60 % 60, n % 60, n, level, n)
+
+        total = afclog.SHOWN + afclog.DEBUG_SHOWN + 5
+        text = "".join(line(n, "DEBUG" if n % 2 else "INFO") for n in range(2 * total))
         lines = afclog.view(text, "")["lines"]
-        self.assertEqual(len(lines), afclog.SHOWN)
-        self.assertEqual(lines[-1], ["d", "10:00:04 DEBUG line %d" % (afclog.SHOWN + 4)])
+        self.assertEqual(sum(level != "d" for level, _ in lines), afclog.SHOWN)
+        # the DEBUG lines among the newest DEBUG_SHOWN only
+        self.assertEqual(sum(level == "d" for level, _ in lines), afclog.DEBUG_SHOWN // 2)
+        self.assertEqual(lines[-1][1], "10:%02d:%02d DEBUG line %d" % ((2 * total - 1) // 60 % 60,
+                                                                      (2 * total - 1) % 60, 2 * total - 1))
+
+
+class MergeTest(unittest.TestCase):
+    @staticmethod
+    def lines(first, last):
+        return "".join("11:00:%02d %d.000 - INFO:line %d\n" % (n % 60, n, n) for n in range(first, last))
+
+    def test_a_newer_tail_adds_only_its_new_lines(self):
+        kept = afclog.merge([], self.lines(0, 10))
+        kept = afclog.merge(kept, "ne 5\n" + self.lines(6, 15))  # a tail starts inside a line
+        self.assertEqual([e.text for e in kept], ["line %d" % n for n in range(15)])
+
+    def test_a_tail_without_the_last_kept_line_is_all_added(self):
+        kept = afclog.merge([], self.lines(0, 5))
+        kept = afclog.merge(kept, self.lines(100, 103))
+        self.assertEqual([e.text for e in kept], ["line %d" % n for n in [0, 1, 2, 3, 4, 100, 101, 102]])
+
+    def test_an_unchanged_log_adds_nothing(self):
+        kept = afclog.merge([], self.lines(0, 5))
+        self.assertEqual(afclog.merge(kept, self.lines(0, 5)), kept)
 
 
 if __name__ == "__main__":
