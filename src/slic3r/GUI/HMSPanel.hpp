@@ -70,6 +70,8 @@ public:
 private:
     void show_problems(const std::vector<MachineObject::AgentLogProblem>& problems);
     void show_lines();
+    void add_lines(const std::vector<std::pair<char, std::string>>& lines);
+    void append_line(char level, const std::string& text);
     void download();
 
     std::string m_dev_id;
@@ -77,6 +79,8 @@ private:
     std::string m_url; // the log's address in the printer's Moonraker
     std::string m_api_key;
     std::vector<std::pair<char, std::string>>     m_lines;
+    size_t                                        m_shown{0};       // lines in m_log
+    bool                                          m_hovered{false}; // the mouse is over m_log
     std::vector<MachineObject::AgentLogProblem>   m_problems;
     std::string                                   m_newest; // the newest problem listed
     std::string                                   m_read;   // the newest problem seen on screen

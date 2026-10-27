@@ -229,6 +229,15 @@ AgentLogPanel::AgentLogPanel(wxWindow* parent)
             obj->command_clear_agent_log();
     });
     m_download->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { download(); });
+    // Read while the mouse is over it, so a refresh never scrolls it away.
+    m_log->Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent& e) {
+        m_hovered = true;
+        e.Skip();
+    });
+    m_log->Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& e) {
+        m_hovered = false;
+        e.Skip();
+    });
     m_debug->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) {
         e.Skip(); // the check box redraws itself
         show_lines();
@@ -265,11 +274,9 @@ void AgentLogPanel::update(MachineObject* obj)
     };
     if (!std::equal(m_problems.begin(), m_problems.end(), log.problems.begin(), log.problems.end(), same))
         show_problems(log.problems);
-    // Kept as they are while the log has the focus, so it can be read and copied.
-    if (m_lines != log.lines && !m_log->HasFocus()) {
-        m_lines = log.lines;
-        show_lines();
-    }
+    // Kept as they are while the log has the focus or the mouse, so it can be read, scrolled and copied.
+    if (m_lines != log.lines && !m_log->HasFocus() && !m_hovered)
+        add_lines(log.lines);
     if (IsShownOnScreen())
         m_read = m_newest;
 }
@@ -314,20 +321,48 @@ void AgentLogPanel::show_problems(const std::vector<MachineObject::AgentLogProbl
     Layout();
 }
 
+void AgentLogPanel::add_lines(const std::vector<std::pair<char, std::string>>& lines)
+{
+    // The agent sends the log's last lines each time: the ones after the last shown are appended, and the
+    // whole log is redrawn when that line is gone or the oldest ones have been dropped as often as kept.
+    const auto last  = m_lines.empty() ? lines.rend() : std::find(lines.rbegin(), lines.rend(), m_lines.back());
+    const auto added = lines.rend() - last;
+    m_lines          = lines;
+    if (last == lines.rend() || m_shown > 2 * lines.size()) {
+        show_lines();
+        return;
+    }
+    const bool debug = m_debug->GetValue();
+    m_log->Freeze();
+    for (auto it = lines.begin() + added; it != lines.end(); ++it) {
+        if (it->first == 'd' && !debug)
+            continue;
+        append_line(it->first, it->second);
+    }
+    m_log->ShowPosition(m_log->GetLastPosition());
+    m_log->Thaw();
+}
+
+void AgentLogPanel::append_line(char level, const std::string& text)
+{
+    const wxColour colour = level == 'e' ? wxColour("#E14747") :
+                            level == 'w' ? wxColour("#FF6F00") :
+                            level == 'd' ? wxColour(144, 144, 144) : m_log->GetForegroundColour();
+    m_log->SetDefaultStyle(wxTextAttr(colour));
+    m_log->AppendText(from_u8(text) + "\n");
+    ++m_shown;
+}
+
 void AgentLogPanel::show_lines()
 {
-    const bool     debug  = m_debug->GetValue();
-    const wxColour normal = m_log->GetForegroundColour();
+    const bool debug = m_debug->GetValue();
     m_log->Freeze();
     m_log->Clear();
+    m_shown = 0;
     for (const auto& [level, text] : m_lines) {
         if (level == 'd' && !debug)
             continue;
-        const wxColour colour = level == 'e' ? wxColour("#E14747") :
-                                level == 'w' ? wxColour("#FF6F00") :
-                                level == 'd' ? wxColour(144, 144, 144) : normal;
-        m_log->SetDefaultStyle(wxTextAttr(colour));
-        m_log->AppendText(from_u8(text) + "\n");
+        append_line(level, text);
     }
     m_log->ShowPosition(m_log->GetLastPosition());
     m_log->Thaw();
