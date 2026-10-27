@@ -69,3 +69,25 @@ TEST_CASE("place takes a spool that has nowhere to go off the printer", "[AFCLay
     CHECK((plan.moves[0].filament == 1 && plan.moves[0].from == -1 && plan.moves[0].to == 1));
     CHECK((plan.moves[1].filament == 7 && plan.moves[1].from == 1 && plan.moves[1].to == -1));
 }
+
+TEST_CASE("fit_toolheads keeps a group on the toolhead that holds its spools", "[AFCLayout]")
+{
+    // All three spools sit on toolhead 0, the quickest unit; the engine put them on toolheads 1 to 3.
+    std::vector<Lane> lanes{{"lane0", "Turtle", 0, 0, true, 50.},  {"lane1", "Turtle", 0, 1, true, 50.},
+                            {"lane2", "Turtle", 0, 2, true, 50.},  {"lane3", "A", 1, 9, true, 100.},
+                            {"lane4", "B", 2, -1, false, 100.}, {"lane5", "C", 3, -1, false, 100.}};
+    std::vector<int>  groups(10, -1);
+    groups[0] = 1;
+    groups[1] = 2;
+    groups[2] = 3;
+    const std::vector<int> loads{1, 5, 1, 0, 0, 0, 0, 0, 0, 0};
+    const std::vector<int> heads = fit_toolheads(lanes, groups, loads, 60., 4);
+    // The most loaded filament stays in the quickest unit; the others take a toolhead each.
+    CHECK(heads[1] == 0);
+    CHECK((heads[0] != heads[2] && heads[0] > 0 && heads[2] > 0));
+    CHECK(heads[9] == -1);
+    const Plan plan = place(lanes, heads, loads, 60.);
+    CHECK(plan.lane_of[1] == 1);
+    // The empty toolheads take a spool each before the one whose lane must be cleared.
+    CHECK(plan.moves.size() == 2);
+}

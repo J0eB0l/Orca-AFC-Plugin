@@ -5,6 +5,7 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <utility>
 
 namespace Slic3r::AFCLayout {
 
@@ -113,46 +114,92 @@ static std::vector<int> assign(const std::vector<std::vector<double>>& cost)
     return out;
 }
 
+namespace {
+
+// The lane each filament's spool is in now, -1 none.
+std::vector<int> current_lanes(const std::vector<Lane>& lanes, size_t filaments)
+{
+    std::vector<int> current(filaments, -1);
+    for (size_t l = 0; l < lanes.size(); ++l)
+        if (lanes[l].loaded && lanes[l].filament >= 0 && size_t(lanes[l].filament) < current.size() && current[lanes[l].filament] < 0)
+            current[lanes[l].filament] = int(l);
+    return current;
+}
+
+bool printed(const std::vector<int>& toolhead_of, int filament)
+{
+    return filament >= 0 && size_t(filament) < toolhead_of.size() && toolhead_of[filament] >= 0;
+}
+
+// The filaments of `group` on toolhead_of, loaded most first, in the lanes of toolhead `head`: each
+// filament's lane (-1 none, for the least loaded when the toolhead has too few lanes) and the cost.
+std::pair<std::vector<std::pair<int, int>>, double> fill_toolhead(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of,
+                                                                  const std::vector<int>& current, const std::vector<int>& loads,
+                                                                  double move_seconds, int group, int head)
+{
+    std::vector<int> rows, columns;
+    for (size_t f = 0; f < toolhead_of.size(); ++f)
+        if (toolhead_of[f] == group)
+            rows.push_back(int(f));
+    for (size_t l = 0; l < lanes.size(); ++l)
+        if (lanes[l].toolhead == head)
+            columns.push_back(int(l));
+    std::stable_sort(rows.begin(), rows.end(), [&loads](int a, int b) { return loads[a] > loads[b]; });
+    std::vector<std::pair<int, int>> lane_of;
+    // More filaments than lanes: the ones loaded least get none, which no layout should choose.
+    double total = rows.size() > columns.size() ? 1e9 * double(rows.size() - columns.size()) : 0.;
+    for (size_t r = columns.size(); r < rows.size(); ++r)
+        lane_of.emplace_back(rows[r], -1);
+    rows.resize(std::min(rows.size(), columns.size()));
+    std::vector<std::vector<double>> cost(rows.size(), std::vector<double>(columns.size()));
+    for (size_t r = 0; r < rows.size(); ++r)
+        for (size_t c = 0; c < columns.size(); ++c) {
+            const Lane& lane     = lanes[columns[c]];
+            const bool  in_place = current[rows[r]] == columns[c];
+            // A spool the print does not use has to make way.
+            const bool clears = lane.loaded && !in_place && !printed(toolhead_of, lane.filament);
+            cost[r][c]        = (in_place ? 0. : move_seconds) + (clears ? move_seconds : 0.) +
+                         (rows[r] < int(loads.size()) ? loads[rows[r]] : 0) * lane.seconds;
+        }
+    const std::vector<int> column_of = assign(cost);
+    for (size_t r = 0; r < rows.size(); ++r)
+        if (column_of[r] >= 0) {
+            lane_of.emplace_back(rows[r], columns[column_of[r]]);
+            total += cost[r][column_of[r]];
+        }
+    return {lane_of, total};
+}
+
+} // namespace
+
+std::vector<int> fit_toolheads(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, const std::vector<int>& loads,
+                               double move_seconds, int heads)
+{
+    if (heads < 2)
+        return toolhead_of;
+    const std::vector<int>           current = current_lanes(lanes, toolhead_of.size());
+    std::vector<std::vector<double>> cost(heads, std::vector<double>(heads));
+    for (int group = 0; group < heads; ++group)
+        for (int head = 0; head < heads; ++head)
+            cost[group][head] = fill_toolhead(lanes, toolhead_of, current, loads, move_seconds, group, head).second;
+    const std::vector<int> head_of = assign(cost);
+    std::vector<int>       out     = toolhead_of;
+    for (int& head : out)
+        if (head >= 0 && head < heads)
+            head = head_of[head];
+    return out;
+}
+
 Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, const std::vector<int>& loads, double move_seconds)
 {
     Plan plan;
     plan.lane_of.assign(toolhead_of.size(), -1);
-    auto printed = [&toolhead_of](int filament) {
-        return filament >= 0 && size_t(filament) < toolhead_of.size() && toolhead_of[filament] >= 0;
-    };
-    std::vector<int> current(toolhead_of.size(), -1); // the lane each filament's spool is in now
-    for (size_t l = 0; l < lanes.size(); ++l)
-        if (lanes[l].loaded && lanes[l].filament >= 0 && size_t(lanes[l].filament) < current.size() && current[lanes[l].filament] < 0)
-            current[lanes[l].filament] = int(l);
-
-    std::set<int> heads(toolhead_of.begin(), toolhead_of.end());
+    const std::vector<int> current = current_lanes(lanes, toolhead_of.size());
+    std::set<int>          heads(toolhead_of.begin(), toolhead_of.end());
     heads.erase(-1);
-    for (int head : heads) {
-        std::vector<int> rows, columns;
-        for (size_t f = 0; f < toolhead_of.size(); ++f)
-            if (toolhead_of[f] == head)
-                rows.push_back(int(f));
-        for (size_t l = 0; l < lanes.size(); ++l)
-            if (lanes[l].toolhead == head)
-                columns.push_back(int(l));
-        // More filaments than lanes: the ones loaded least get none.
-        std::stable_sort(rows.begin(), rows.end(), [&loads](int a, int b) { return loads[a] > loads[b]; });
-        rows.resize(std::min(rows.size(), columns.size()));
-        std::vector<std::vector<double>> cost(rows.size(), std::vector<double>(columns.size()));
-        for (size_t r = 0; r < rows.size(); ++r)
-            for (size_t c = 0; c < columns.size(); ++c) {
-                const Lane& lane     = lanes[columns[c]];
-                const bool  in_place = current[rows[r]] == columns[c];
-                // A spool the print does not use has to make way.
-                const bool clears = lane.loaded && !in_place && !printed(lane.filament);
-                cost[r][c]        = (in_place ? 0. : move_seconds) + (clears ? move_seconds : 0.) +
-                             (rows[r] < int(loads.size()) ? loads[rows[r]] : 0) * lane.seconds;
-            }
-        const std::vector<int> column_of = assign(cost);
-        for (size_t r = 0; r < rows.size(); ++r)
-            if (column_of[r] >= 0)
-                plan.lane_of[rows[r]] = columns[column_of[r]];
-    }
+    for (int head : heads)
+        for (const auto& [filament, lane] : fill_toolhead(lanes, toolhead_of, current, loads, move_seconds, head, head).first)
+            plan.lane_of[filament] = lane;
 
     std::vector<bool> taken(lanes.size(), false);
     for (int lane : plan.lane_of)
@@ -171,7 +218,7 @@ Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, 
         if (to < 0 || current[f] == to)
             continue;
         plan.moves.push_back({int(f), current[f], to});
-        if (!lanes[to].loaded || printed(lanes[to].filament))
+        if (!lanes[to].loaded || printed(toolhead_of, lanes[to].filament))
             continue;
         // The spool there swaps into the lane this one left when it can.
         auto spot = std::find(free_lanes.begin(), free_lanes.end(), current[f]);

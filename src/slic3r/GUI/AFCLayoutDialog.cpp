@@ -150,8 +150,9 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         out.suggested = out.current;
     out.now   = AFCLayout::count_changes(layer_filaments, out.current);
     out.after = AFCLayout::count_changes(layer_filaments, out.suggested);
-    // The grouping counts flushes; a toolhead's lane changes decide.
-    if (out.after.lane_changes > out.now.lane_changes) {
+    out.suggested = AFCLayout::fit_toolheads(out.lanes, out.suggested, out.after.loads, MOVE_SECONDS, int(heads));
+    // The grouping counts flushes; a toolhead's lane changes decide, and a tie keeps the spools where they are.
+    if (out.after.lane_changes >= out.now.lane_changes) {
         out.suggested = out.current;
         out.after     = out.now;
     }

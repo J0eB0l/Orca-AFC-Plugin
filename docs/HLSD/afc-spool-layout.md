@@ -18,7 +18,11 @@ most as many filaments as it has lanes. Every lane change adds a fixed cost to t
 grouping that changes lanes less wins even when the matrix purges little. The dialog keeps the
 current grouping when the engine's would change lanes more often by its own count
 (`AFCLayout::count_changes`, each toolhead starting a layer on the filament it holds and ending on
-one the next layer uses).
+one the next layer uses), or ties with it.
+
+The engine numbers its groups in no particular order, so `AFCLayout::fit_toolheads` then gives each
+group the toolhead where its spools cost the least to place, by a minimum-cost assignment of groups to
+toolheads over the lane costs below. A group whose spools already sit on a toolhead stays there.
 
 How much regrouping helps depends on the print. A plate with many colors on few toolheads changes
 lanes about as often however they are grouped; one whose colors fall into layers or regions gains

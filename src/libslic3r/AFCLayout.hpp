@@ -51,6 +51,12 @@ struct Plan
     std::vector<Move> moves;
 };
 
+// The grouping engine numbers its groups in no particular order: toolhead_of with each group (0 to
+// heads - 1) moved to the toolhead where place() would cost the least for all groups together, so a
+// group stays on the toolhead whose lanes already hold its spools.
+std::vector<int> fit_toolheads(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, const std::vector<int>& loads,
+                               double move_seconds, int heads);
+
 // The lanes for the printed filaments on their toolheads (toolhead_of, -1 for a filament not printed):
 // each spool moved costs move_seconds, each load the seconds of its lane, and a lane holding a spool
 // the print does not use costs one move to clear. The spools cleared go to the lanes the moved spools
