@@ -399,7 +399,8 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
     OrcaSlicer: its unit, filament and material family (material_key()),
     grams (-1 unknown), toolhead, the lane it runs out onto ("" for none), the
     lanes with the same filament (runout.same_filament()) and where the
-    Device tab shows it."""
+    Device tab shows it, and its T numbers, Spoolman spool (0 none) and
+    temperatures (0 unknown)."""
     out = []
     for lane in snapshot.lanes:
         ams_id, slot_id = shown.place(lane)
@@ -409,7 +410,10 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
                     "remain_g": int(round(lane.weight)) if lane.has_filament and lane.weight > 0 else -1,
                     "toolhead": lane.extruder_index, "extruder": lane.extruder, "loaded": lane.has_filament,
                     "in_tool": lane.tool_loaded, "runout": lane.runout_lane, "same": same,
-                    "ams_id": ams_id, "slot_id": slot_id})
+                    "ams_id": ams_id, "slot_id": slot_id,
+                    # For the suggested spool layout, which writes a moved spool's lane back to AFC.
+                    "tools": [tool_number(m) for m in lane.maps if tool_number(m) >= 0],
+                    "spool_id": lane.spool_id, "nozzle_temp": lane.nozzle_temp, "bed_temp": lane.bed_temp})
     return out
 
 

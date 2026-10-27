@@ -34,6 +34,10 @@ class SwapTimesTest(unittest.TestCase):
         self.assertEqual(swaptimes.log_samples(LOG), {"load": [34.244, 51.434], "unload": [23.118, 3600.5],
                                                       "tool_change": [5.676]})
 
+    def test_lane_samples(self):
+        self.assertEqual(swaptimes.lane_samples(LOG), {"lane1": {"load": [34.244], "unload": [23.118]},
+                                                       "lane2": {"load": [51.434], "unload": []}})
+
     def test_totals_sum_the_counts_of_every_extruder(self):
         self.assertEqual(swaptimes.totals({"value": stats((100, 4), (50, 2), (12, 2))}),
                          {"load": (100, 4), "unload": (50, 2), "tool_change": (12, 2)})

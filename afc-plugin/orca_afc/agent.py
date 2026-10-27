@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, controls, gcode, presets, protocol, runout, stage, swaptimes, trays, upstream
+from . import afclog, controls, gcode, layout, presets, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -276,7 +276,8 @@ def _layers(state: str, stats: dict, position, job: dict):
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
-                latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False) -> dict:
+                latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
+                lane_times=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -290,7 +291,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     AFC.log for the Assistant page (afclog.view()), `latest` AFC's newest
     versions on GitHub (upstream.read()), `toolheads` how many the printer has
     and `probing` whether it probed its bed since the last push
-    (stage.ProbeWatch), for the stage line."""
+    (stage.ProbeWatch), for the stage line, and `lane_times` each lane's
+    changes in AFC.log (swaptimes.lane_samples())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -397,6 +399,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # Always sent, so a runout lane taken off leaves OrcaSlicer's groups too.
         out["filam_bak"] = groups
         out["afc_lanes"] = trays.lanes_json(snapshot, shown)
+        # Each unit's lane change time, by which the AFC build of OrcaSlicer's suggested spool layout
+        # ranks the units after the printer's Preferred units, and which it applies with afc_layout.
+        out["afc_units"] = units.unit_times(snapshot, lane_times or {})
         if snapshot.filament_backup:
             out["home_flag"] |= AUTO_REFILL
         # The AFC build of OrcaSlicer shows AFC's oldest error or warning on the Device tab, where Clear
@@ -856,7 +861,7 @@ else:
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
                                   printer.nozzles, printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
-                                  self._probing(printer, status))
+                                  self._probing(printer, status), printer.swap.lanes)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1160,6 +1165,8 @@ else:
                 self._clear_log(printer)
             elif command == "afc_runout":
                 return self._runout(printer, job)
+            elif command == "afc_layout":
+                return self._layout_moves(printer, job)
             elif command == "print_option" and isinstance(job.get("auto_switch_filament"), bool):
                 self._backup(printer, job["auto_switch_filament"])
             elif command == "ams_filament_setting":
@@ -1187,6 +1194,32 @@ else:
             self._gcode.submit(run)
 
         # -------------------------------------------------------- the Device tab's controls
+
+        def _layout_moves(self, printer: _Printer, job: dict) -> int:
+            """Sync layout to AFC (layout.py): the lanes the spools went to, with
+            what each spool's old lane knew. The reply says how each lane took it."""
+            if printer.snapshot is None:
+                return FAILED
+            try:
+                lines, outcome = layout.apply_gcode(printer.snapshot, job.get("moves"))
+            except AFCError:
+                return ERR_INVALID_RESULT
+            reply = {"command": "afc_layout", "lanes": outcome}
+            if isinstance(job.get("sequence_id"), str):
+                reply["sequence_id"] = job["sequence_id"]
+
+            def run():
+                try:
+                    if lines:
+                        printer.client.gcode("\n".join(lines), timeout=LANE_MOVE_TIMEOUT)
+                    reply["result"] = "success"
+                except MoonrakerError:
+                    reply["result"] = "failed"
+                self._send(printer, {"print": reply})
+                self._worker.submit(lambda: self._push(printer))
+
+            self._gcode.submit(run)
+            return SUCCESS
 
         def _runout(self, printer: _Printer, job: dict) -> int:
             """Runout lanes from the tray popup and the Auto Refill dialog: one

@@ -604,7 +604,8 @@ class DeviceTabTest(Case):
         lanes = {lane["name"]: lane for lane in push["afc_lanes"]}
         self.assertEqual(lanes["lane2"], {"name": "lane2", "unit": "Turtle_1", "color": "00FF00FF", "type": "PETG",
                                           "family": "PETG", "remain_g": 40, "toolhead": 0, "extruder": "extruder", "loaded": True,
-                                          "in_tool": False, "runout": "", "same": [], "ams_id": 0, "slot_id": 1})
+                                          "in_tool": False, "runout": "", "same": [], "ams_id": 0, "slot_id": 1,
+                                          "tools": [1], "spool_id": 12, "nozzle_temp": 215, "bed_temp": 60})
         self.assertEqual((lanes["lane5"]["runout"], lanes["lane5"]["ams_id"], lanes["lane5"]["slot_id"]), ("lane1", 1, 0))
         # The tray shows the lane it runs out onto.
         self.assertEqual(push["ams"]["ams"][1]["tray"][0]["runout"], "lane1")
@@ -619,6 +620,27 @@ class DeviceTabTest(Case):
         self.assertEqual(self.send({"print": {"command": "afc_runout", "lane": 5}}), afc_agent.ERR_INVALID_RESULT)
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["SET_RUNOUT LANE=lane1 RUNOUT=lane2", "SET_RUNOUT LANE=lane5 RUNOUT=NONE"])
+
+    def test_sync_layout_to_afc(self):
+        # Spool 12 (PETG, lane2, T1, and lane5 in this fixture) went to lane1, which forgot its spool
+        # when it came out.
+        afc = self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane1"]
+        afc.update({"spool_id": None, "material": "", "color": ""})
+        self.connect()
+        units = {unit["name"]: unit for unit in self.push()["afc_units"]}
+        self.assertEqual((units["Turtle_1"]["measured"], units["Turtle_1"]["type"]), (False, "Box_Turtle"))
+        moves = [{"lane": "lane1", "tool": 1, "spool_id": 12, "material": "PETG", "color": "#00FF00", "was": {}},
+                 {"lane": "lane6", "tool": 0, "spool_id": 5, "material": "PLA", "was": {}}]
+        self.assertEqual(self.send({"print": {"command": "afc_layout", "moves": moves, "sequence_id": "3"}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        reply = self.calls.messages("print", "afc_layout")[0]
+        self.assertEqual((reply["result"], reply["sequence_id"], reply["lanes"]),
+                         ("success", "3", {"lane1": "written", "lane6": "empty"}))
+        self.assertEqual(self.fake.scripts[0].splitlines(), [
+            "SET_SPOOL_ID LANE=lane2 SPOOL_ID=", "SET_SPOOL_ID LANE=lane5 SPOOL_ID=", "SET_SPOOL_ID LANE=lane1 SPOOL_ID=12",
+            "SET_MATERIAL LANE=lane1 MATERIAL=PETG", "SET_COLOR LANE=lane1 COLOR=00FF00", "SET_MAP LANE=lane1 MAP=T1"])
+        self.assertEqual(self.send({"print": {"command": "afc_layout", "moves": [{"lane": "nope", "tool": 0}]}}),
+                         afc_agent.ERR_INVALID_RESULT)
 
     def test_lanes_with_the_same_filament(self):
         self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]["lane6"] = lane_status(

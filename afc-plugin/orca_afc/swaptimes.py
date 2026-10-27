@@ -25,11 +25,27 @@ _LOG = {
     "unload": re.compile(r"unload done t:(\d+(?:\.\d+)?)"),
     "tool_change": re.compile(r"Tool swap done \(\S*?t:(\d+(?:\.\d+)?)s"),
 }
+# The same loads and unloads with the lane they moved, for each unit's own times.
+_LANE_LOG = {
+    "load": re.compile(r"(\S+) is now loaded in toolhead t:(\d+(?:\.\d+)?)"),
+    "unload": re.compile(r"Lane (\S+) unload done t:(\d+(?:\.\d+)?)"),
+}
 
 
 def log_samples(text: str) -> dict:
     """{key: [seconds]} of the changes AFC.log names, oldest first."""
     return {key: [float(v) for v in pattern.findall(text or "")] for key, pattern in _LOG.items()}
+
+
+def lane_samples(text: str) -> dict:
+    """{lane: {"load": [seconds], "unload": [seconds]}} of the changes AFC.log
+    names, oldest first, without the stand-alone ones timed from an old mark."""
+    out = {}
+    for key, pattern in _LANE_LOG.items():
+        for lane, value in pattern.findall(text or ""):
+            if 0 < float(value) <= LONGEST:
+                out.setdefault(lane, {"load": [], "unload": []})[key].append(float(value))
+    return out
 
 
 def _number(value) -> float:
@@ -71,6 +87,7 @@ class Tracker:
     def __init__(self):
         self.samples = {key: [] for key in KEYS}
         self.seeded = False
+        self.lanes = {}  # lane_samples() of AFC.log, read once a connection
         self._last = {}
 
     def _add(self, key: str, values) -> None:
@@ -80,6 +97,7 @@ class Tracker:
 
     def seed(self, log_text: str) -> None:
         self.seeded = True
+        self.lanes = lane_samples(log_text)
         for key, values in log_samples(log_text).items():
             self._add(key, values)
 
