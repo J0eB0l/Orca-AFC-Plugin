@@ -1182,6 +1182,16 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("afc_unit_order", coStrings);
+    def->label = L("Preferred units");
+    def->tooltip = L("The AFC units the suggested spool layout of a printer with several toolheads fills first, in "
+                     "this order. The other units follow, quickest first by the change times in AFC's log, else by "
+                     "their kind: BoxTurtle, EMU, AMS 2 Pro and AMS HT, ACE 2, the other Bambu units and OpenAMS, "
+                     "then the rest, and the ACE last.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionStrings());
+
     def = this->add("afc_toolhead_check", coBool);
     def->label = L("Check toolheads before printing");
     def->tooltip = L("The print dialog warns when the file uses more toolheads than the printer has, or when a "

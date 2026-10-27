@@ -20983,6 +20983,22 @@ bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolhe
     return true;
 }
 
+void Plater::apply_filament_toolheads(const std::vector<int> &toolheads)
+{
+    std::vector<int> &heads   = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    bool              changed = false;
+    for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
+        if (toolheads[i] >= 0 && heads[i] != toolheads[i]) {
+            heads[i] = toolheads[i];
+            changed  = true;
+        }
+    if (!changed)
+        return;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": slicing the plate again for the suggested spool layout";
+    update_project_dirty_from_presets();
+    reslice();
+}
+
 void Plater::record_slice_preset(std::string action)
 {
     // record slice preset

@@ -89,6 +89,7 @@
 #include "slic3r/plugin/PluginConfig.hpp"
 #include "slic3r/plugin/PluginManager.hpp"
 #include "Plater.hpp"
+#include "AFCLayoutDialog.hpp"
 #include "ParamsDialog.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
@@ -5970,6 +5971,20 @@ if (is_marlin_flavor)
         optgroup->append_single_option_line("afc_spool_check");
         optgroup->append_single_option_line("afc_toolhead_check");
         optgroup->append_single_option_line("afc_settings_check");
+        create_line_with_widget(optgroup.get(), "afc_unit_order", "", [this](wxWindow* parent) {
+            Button* btn = new Button(parent, _L("Set") + " " + dots);
+            btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+            auto sizer = new wxBoxSizer(wxHORIZONTAL);
+            sizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL);
+            btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                AFCUnitOrderDialog dlg(this, m_config->option<ConfigOptionStrings>("afc_unit_order")->values);
+                if (dlg.ShowModal() == wxID_OK) {
+                    load_key_value("afc_unit_order", dlg.order());
+                    update_changed_ui();
+                }
+            });
+            return sizer;
+        });
 
         // IDEX/IQEX (IMEX) parallel printing configuration
         optgroup = page->new_optgroup(L("IDEX/IQEX Configuration"), L"param_advanced");
@@ -6653,7 +6668,7 @@ void TabPrinter::toggle_options()
         // Orca: with Multi-material per toolhead it flushes a toolhead's lane changes on the tower.
         toggle_option("purge_in_prime_tower", (bSEMM || m_config->opt_bool("multi_extruder_multi_material")) && supports_wipe_tower_2);
 
-        for (auto el : {"afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_settings_check"})
+        for (auto el : {"afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_settings_check", "afc_unit_order"})
             toggle_line(el, m_config->opt_bool("afc_enabled"));
 
         // IDEX/IQEX: show carriage config options only when is_imex is enabled

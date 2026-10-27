@@ -1562,6 +1562,15 @@ int MachineObject::command_runout_lanes(const std::string& action)
     return this->publish_json(j);
 }
 
+int MachineObject::command_afc_layout(const json& moves)
+{
+    json j;
+    j["print"]["command"]     = "afc_layout";
+    j["print"]["moves"]       = moves;
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 int MachineObject::command_upgrade_confirm()
 {
     BOOST_LOG_TRIVIAL(info) << "command_upgrade_confirm";
@@ -3393,8 +3402,21 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         lane.in_tool  = item.value("in_tool", false);
                         lane.ams_id   = item.value("ams_id", -1);
                         lane.slot_id  = item.value("slot_id", -1);
+                        for (const json& tool : item.value("tools", json::array()))
+                            if (tool.is_number_integer())
+                                lane.tools.push_back(tool.get<int>());
+                        lane.spool_id    = item.value("spool_id", 0);
+                        lane.nozzle_temp = item.value("nozzle_temp", 0);
+                        lane.bed_temp    = item.value("bed_temp", 0);
                         agent_lanes.push_back(std::move(lane));
                     }
+                }
+                if (jj.contains("afc_units") && jj["afc_units"].is_array()) {
+                    agent_units.clear();
+                    for (const json& item : jj["afc_units"])
+                        if (item.is_object() && item.contains("name") && item["name"].is_string())
+                            agent_units.push_back({item["name"].get<std::string>(), item.value("type", std::string()),
+                                                   item.value("seconds", 0.), item.value("measured", false)});
                 }
                 if (jj.contains("afc_version") && jj["afc_version"].is_object()) {
                     const json& version     = jj["afc_version"];

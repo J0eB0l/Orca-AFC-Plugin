@@ -26,6 +26,8 @@
 #include "libslic3r/BeltTransform.hpp"
 #include "libslic3r/GCode/MachineFrameTransform.hpp"
 #include "MsgDialog.hpp"
+#include "AFCLayoutDialog.hpp"
+#include "MainFrame.hpp"
 #include <boost/container_hash/hash.hpp>
 #include "slic3r/GUI/MeshUtils.hpp"
 #include <set>
@@ -1788,11 +1790,13 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     // filament_map with Multi-material per toolhead, else the toolhead of its own number.
     m_toolhead_filaments.clear();
     m_toolhead_nozzles.clear();
+    m_toolhead_lanes = false;
     const auto* afc = print.full_print_config().option<ConfigOptionBool>("afc_enabled");
     if (!print.is_BBL_printer() && afc && afc->value && print.config().nozzle_diameter.values.size() > 1) {
         m_toolhead_nozzles = print.config().nozzle_diameter.values;
         m_toolhead_filaments.resize(m_toolhead_nozzles.size());
         const bool per_toolhead = print.config().multi_extruder_multi_material.value;
+        m_toolhead_lanes        = per_toolhead;
         for (auto extruder_id : m_viewer.get_used_extruders_ids()) {
             const int head = !per_toolhead ? int(extruder_id) : extruder_id < filament_maps.size() ? filament_maps[extruder_id] - 1 : -1;
             if (head >= 0 && size_t(head) < m_toolhead_filaments.size())
@@ -5742,6 +5746,12 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
 
     ImGui::Dummy({window_padding, window_padding});
     imgui.text_wrapped(_u8L("Synced filaments print on the tool their AFC lane feeds."), ImGui::GetContentRegionAvail().x);
+    // The lanes that change tools least for this print, and Sync layout to AFC once the spools are moved.
+    if (m_toolhead_lanes) {
+        ImGui::Dummy({window_padding, window_padding});
+        if (imgui.button(_L("Suggest spool layout")))
+            wxGetApp().CallAfter([] { AFCLayoutDialog::show(wxGetApp().mainframe); });
+    }
     ImGui::Dummy({window_padding, window_padding});
 }
 

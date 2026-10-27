@@ -698,9 +698,24 @@ public:
         bool        in_tool {false};
         int         ams_id {-1};
         int         slot_id {-1};
+        // For the suggested spool layout: its T numbers, Spoolman spool (0 none) and temperatures (0 unknown).
+        std::vector<int> tools;
+        int              spool_id {0};
+        int              nozzle_temp {0};
+        int              bed_temp {0};
+    };
+    // Orca: a printer agent's units (afc_units) and the seconds a lane change takes on each, measured in
+    // AFC.log or the agent's own figure for the kind of unit, for the suggested spool layout.
+    struct AgentUnit
+    {
+        std::string name;
+        std::string type;
+        double      seconds {0.};
+        bool        measured {false};
     };
     bool                   is_support_runout_lane {false};
     std::vector<AgentLane> agent_lanes;
+    std::vector<AgentUnit> agent_units;
     const AgentLane*       agent_lane(const std::string& name) const;
     const AgentLane*       agent_lane_at(int ams_id, int slot_id) const;
 
@@ -839,6 +854,9 @@ public:
     // lanes with the same filament linked ("match") or none ("clear").
     int command_set_runout_lane(const std::string& lane, const std::string& runout);
     int command_runout_lanes(const std::string& action);
+    // Orca: Sync layout to AFC (afc_layout): the lanes the spools of a suggested layout went to, each with
+    // its T number and what the spool's old lane knew of it (AFCLayoutDialog).
+    int command_afc_layout(const nlohmann::json& moves);
     int command_set_printer_nozzle(std::string nozzle_type, float diameter);
     int command_set_printer_nozzle2(int id, std::string nozzle_type, float diameter);
     int command_get_access_code();

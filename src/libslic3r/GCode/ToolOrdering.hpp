@@ -344,6 +344,12 @@ public:
     // path; the per-layer engine supplies non-empty values.
     static MultiNozzleUtils::LayeredNozzleGroupResult get_recommended_filament_maps(const std::vector<std::vector<unsigned int>>& layer_filaments, const Print* print,const FilamentMapMode mode, const std::vector<std::set<int>>& physical_unprintables, const std::vector<std::set<int>>& geometric_unprintables, const std::map<int, std::set<NozzleVolumeType>>& unprintable_volumes = {}, const std::unordered_map<int, int>& nozzle_status = {});
 
+    // Orca: the suggested spool layout of an AFC printer with several toolheads (AFCLayout.hpp). The
+    // toolhead for each filament (-1 for one not printed) that flushes least with at most
+    // lanes_per_toolhead[e] filaments on toolhead e, empty when the grouping fails.
+    static std::vector<int> get_afc_toolhead_groups(const Print* print, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                                                    const std::vector<int>& lanes_per_toolhead);
+
     // Wrap stitched per-layer filament->nozzle maps from a sequential (by-object) selector regroup
     // into one print-wide result. nozzle_map_per_layer / layer_filaments / layer_sequences are the
     // per-object planned layers concatenated in print order; nozzle_map_per_layer is taken by value

@@ -1892,6 +1892,38 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
     return result_opt ? *result_opt : LayeredNozzleGroupResult();
 }
 
+std::vector<int> ToolOrdering::get_afc_toolhead_groups(const Print* print, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                                                       const std::vector<int>& lanes_per_toolhead)
+{
+    if (print == nullptr || layer_filaments.empty())
+        return {};
+    const size_t extruder_nums = print->config().nozzle_diameter.values.size();
+    if (extruder_nums < 2 || lanes_per_toolhead.size() != extruder_nums)
+        return {};
+    const std::vector<std::set<int>> none(extruder_nums);
+    FilamentGroupContext context = build_filament_group_context(print, layer_filaments, none, none, {}, FilamentMapMode::fmmAutoForFlush, {});
+    // Each toolhead holds as many filaments as it has lanes, and no AMS limits or matches them.
+    context.machine_info.max_group_size = lanes_per_toolhead;
+    context.machine_info.machine_filament_info.assign(extruder_nums, {});
+    context.group_info.has_filament_switcher = false;
+    context.speed_info.group_with_time       = false;
+    // A lane change costs a load and an unload even when it purges nothing.
+    constexpr float lane_change_mm3 = 100.f;
+    for (FlushMatrix& matrix : context.model_info.flush_matrix)
+        for (size_t from = 0; from < matrix.size(); ++from)
+            for (size_t to = 0; to < matrix[from].size(); ++to)
+                if (from != to)
+                    matrix[from][to] += lane_change_mm3;
+
+    FilamentGroup    fg(context);
+    std::vector<int> ret = fg.calc_filament_group();
+    const auto       used = collect_sorted_used_filaments(layer_filaments);
+    for (size_t i = 0; i < ret.size(); ++i)
+        if (std::find(used.begin(), used.end(), (unsigned int) i) == used.end() || ret[i] < 0 || size_t(ret[i]) >= extruder_nums)
+            ret[i] = -1;
+    return ret;
+}
+
 FilamentChangeStats ToolOrdering::get_filament_change_stats(FilamentChangeMode mode)
 {
     switch (mode)

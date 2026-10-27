@@ -31,6 +31,8 @@ set(lisbslic3r_sources
     AABBMesh.hpp
     AABBTreeIndirect.hpp
     AABBTreeLines.hpp
+    AFCLayout.cpp
+    AFCLayout.hpp
     Algorithm/LineSplit.cpp
     Algorithm/LineSplit.hpp
     Algorithm/RegionExpansion.cpp

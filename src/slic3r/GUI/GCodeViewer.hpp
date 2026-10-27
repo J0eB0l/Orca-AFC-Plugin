@@ -223,6 +223,9 @@ private:
     // Orca: an AFC printer's used filaments by the toolhead each prints on, and the toolheads' nozzle sizes
     std::vector<std::vector<ExtruderFilament>> m_toolhead_filaments;
     std::vector<double>                        m_toolhead_nozzles;
+    // ... and whether its toolheads take lanes of their own (Multi-material per toolhead), which the
+    // suggested spool layout needs.
+    bool                                       m_toolhead_lanes{false};
 
     // bounding box of toolpaths
     BoundingBoxf3 m_paths_bounding_box;
