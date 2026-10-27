@@ -50,6 +50,7 @@
 #include <cstring>
 #include "slic3r/GUI/LibVGCode/LibVGCodeWrapper.hpp"
 #include <cassert>
+#include <cfloat>
 #include <cstdint>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/constants.hpp>
@@ -5749,8 +5750,21 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
     // The lanes that change tools least for this print, and Sync layout to AFC once the spools are moved.
     if (m_toolhead_lanes) {
         ImGui::Dummy({window_padding, window_padding});
+        imgui.push_confirm_button_style();
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.f * m_scale);
         if (imgui.button(_L("Suggest spool layout")))
-            wxGetApp().CallAfter([] { AFCLayoutDialog::show(wxGetApp().mainframe); });
+            wxGetApp().CallAfter([] {
+                AFCLayoutDialog::show(wxGetApp().mainframe);
+                // The modal dialog took the mouse, so the canvas never saw it leave the button, which
+                // would stay hovered until the mouse next moves over the canvas.
+                ImGui::GetIO().MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+                if (GLCanvas3D* canvas = wxGetApp().plater()->get_current_canvas3D()) {
+                    canvas->set_as_dirty();
+                    canvas->request_extra_frame();
+                }
+            });
+        ImGui::PopStyleVar();
+        imgui.pop_confirm_button_style();
     }
     ImGui::Dummy({window_padding, window_padding});
 }
