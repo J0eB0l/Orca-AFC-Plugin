@@ -681,6 +681,10 @@ public:
 
     void on_filament_change(size_t filament_idx);
     void on_filament_count_change(size_t extruders_count);
+    // Moves mixed slots that sit ahead of physical ones to the tail of the filament list and
+    // re-points the model (target, or the plater's own) and the filament settings at their new
+    // slots. Everything else assumes the physical-first order. Returns whether anything moved.
+    bool keep_mixed_filaments_at_tail(Model *target = nullptr);
     void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_before_delete = {});
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     // BBS

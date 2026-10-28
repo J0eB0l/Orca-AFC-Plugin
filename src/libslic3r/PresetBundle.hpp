@@ -655,6 +655,11 @@ public:
     size_t                      num_mixed_filaments() const;
     // How many slots hold a real filament, i.e. everything ahead of the mixed tail.
     size_t                      num_physical_filaments() const;
+    // Moves any mixed slot that sits ahead of a physical one to the tail, keeping both runs in
+    // order, and renumbers the mixes' components. Returns old -> new zero-based slot for every
+    // slot that moved (empty when the list was already physical-first); the caller remaps the
+    // model's references with it (remap_model_filament_slots).
+    std::map<int, int>          move_mixed_filaments_to_tail();
 
     void                        on_extruders_count_changed(int extruder_count);
 

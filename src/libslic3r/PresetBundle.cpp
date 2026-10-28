@@ -4491,6 +4491,94 @@ size_t PresetBundle::num_mixed_filaments() const
     return size_t(std::count(opt->values.begin(), opt->values.begin() + std::min(slot_count, opt->values.size()), true));
 }
 
+std::map<int, int> PresetBundle::move_mixed_filaments_to_tail()
+{
+    std::map<int, int> relocations;
+    auto *is_mixed_opt = project_config.option<ConfigOptionBools>("filament_is_mixed");
+    if (is_mixed_opt == nullptr)
+        return relocations;
+    const auto *colour_opt = project_config.option<ConfigOptionStrings>("filament_colour");
+    const size_t slots      = colour_opt ? colour_opt->values.size() : 0;
+    auto is_mixed = [is_mixed_opt](size_t i) { return i < is_mixed_opt->values.size() && is_mixed_opt->values[i]; };
+
+    // order[new slot] = old slot: physical slots first, then the mixed ones, each in their own order.
+    std::vector<size_t> order;
+    for (size_t i = 0; i < slots; ++i)
+        if (!is_mixed(i))
+            order.push_back(i);
+    for (size_t i = 0; i < slots; ++i)
+        if (is_mixed(i))
+            order.push_back(i);
+    std::vector<int> new_slot(slots);
+    for (size_t to = 0; to < slots; ++to) {
+        new_slot[order[to]] = int(to);
+        if (order[to] != to)
+            relocations.emplace(int(order[to]), int(to));
+    }
+    if (relocations.empty())
+        return relocations;
+
+    // Arrays shorter than the slot list keep their missing tail; a tool changer's filament_presets
+    // may run past it, and those extra entries stay where they are.
+    auto permute = [&order, slots](auto &values) {
+        if (values.size() < slots)
+            return;
+        auto copy = values;
+        for (size_t to = 0; to < slots; ++to)
+            values[to] = copy[order[to]];
+    };
+    permute(this->filament_presets);
+    permute(this->ams_multi_color_filment);
+    for (const char *key : {"filament_colour", "filament_multi_colour", "filament_colour_type", "filament_mixed_components",
+                            "filament_mixed_sublayer_ratios", "filament_mixed_gradient_range", "filament_mixed_gradient_curve"})
+        if (auto *opt = project_config.option<ConfigOptionStrings>(key))
+            permute(opt->values);
+    for (const char *key : {"filament_map", "filament_nozzle_map", "filament_volume_map", "filament_toolhead"})
+        if (auto *opt = project_config.option<ConfigOptionInts>(key))
+            permute(opt->values);
+    for (const char *key : {"filament_is_mixed", "filament_mixed_gradient", "filament_mixed_gradient_per_part"})
+        if (auto *opt = project_config.option<ConfigOptionBools>(key))
+            permute(opt->values);
+    if (auto *opt = project_config.option<ConfigOptionFloats>("spool_pressure_advance"))
+        permute(opt->values);
+
+    // Components name physical slots by one-based number, and those moved too.
+    if (auto *comp_opt = project_config.option<ConfigOptionStrings>("filament_mixed_components"))
+        for (std::string &comps : comp_opt->values) {
+            std::vector<unsigned int> ids = parse_mixed_components(comps);
+            if (ids.empty())
+                continue;
+            for (unsigned int &id : ids)
+                if (id >= 1 && id <= slots)
+                    id = unsigned(new_slot[id - 1] + 1);
+            comps = format_mixed_components(ids);
+        }
+
+    // Two flush volumes per slot (out, in).
+    auto *vector_opt = project_config.option<ConfigOptionFloats>("flush_volumes_vector");
+    if (vector_opt && vector_opt->values.size() == 2 * slots) {
+        auto      &flush_vector = vector_opt->values;
+        const auto copy         = flush_vector;
+        for (size_t to = 0; to < slots; ++to) {
+            flush_vector[2 * to]     = copy[2 * order[to]];
+            flush_vector[2 * to + 1] = copy[2 * order[to] + 1];
+        }
+    }
+    // The flush matrix is slots x slots per nozzle; a matrix of another size is left to be rebuilt.
+    auto        *matrix_opt     = project_config.option<ConfigOptionFloats>("flush_volumes_matrix");
+    auto        *multiplier_opt = project_config.option<ConfigOptionFloats>("flush_multiplier");
+    const size_t nozzles        = multiplier_opt ? multiplier_opt->values.size() : 0;
+    if (matrix_opt && nozzles > 0 && matrix_opt->values.size() == slots * slots * nozzles) {
+        auto      &matrix = matrix_opt->values;
+        const auto copy   = matrix;
+        for (size_t base = 0; base < matrix.size(); base += slots * slots)
+            for (size_t r = 0; r < slots; ++r)
+                for (size_t c = 0; c < slots; ++c)
+                    matrix[base + r * slots + c] = copy[base + order[r] * slots + order[c]];
+    }
+    return relocations;
+}
+
 // Colours describe actual slots; on a tool changer filament_presets can be topped up to the tool count alone.
 // Imported projects may have fewer mixed flags than slots. Missing flags mean physical filaments.
 size_t PresetBundle::num_physical_filaments() const

@@ -8737,3 +8737,35 @@ TEST_CASE("The cloud diff force-emits a disabled override only where the cloud w
     // An ironing override defaults to nil: an absent key stays nil, so it is not sent.
     CHECK(key_values.count("filament_ironing_flow") == 0);
 }
+
+TEST_CASE("move_mixed_filaments_to_tail puts physical filaments first", "[PresetBundle][FilamentMixer]")
+{
+    PresetBundle bundle;
+    auto        &cfg = bundle.project_config;
+    // Slots 1 P, 2 mix of 1 + 3, 3 P, 4 P.
+    bundle.filament_presets = {"a", "mix", "b", "c"};
+    cfg.option<ConfigOptionStrings>("filament_colour", true)->values = {"#A", "#M", "#B", "#C"};
+    cfg.option<ConfigOptionBools>("filament_is_mixed", true)->values = {false, true, false, false};
+    cfg.option<ConfigOptionStrings>("filament_mixed_components", true)->values = {"", "1,3", "", ""};
+    cfg.option<ConfigOptionFloats>("flush_multiplier", true)->values = {1.};
+    cfg.option<ConfigOptionFloats>("flush_volumes_vector", true)->values = {1, 2, 3, 4, 5, 6, 7, 8};
+    std::vector<double> matrix(16);
+    for (size_t i = 0; i < matrix.size(); ++i)
+        matrix[i] = double(i);
+    cfg.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values = matrix;
+
+    const std::map<int, int> moved = bundle.move_mixed_filaments_to_tail();
+
+    CHECK(moved == std::map<int, int>{{1, 3}, {2, 1}, {3, 2}});
+    CHECK(bundle.filament_presets == std::vector<std::string>{"a", "b", "c", "mix"});
+    CHECK(cfg.option<ConfigOptionStrings>("filament_colour", true)->values == std::vector<std::string>{"#A", "#B", "#C", "#M"});
+    CHECK(cfg.option<ConfigOptionBools>("filament_is_mixed", true)->values == std::vector<unsigned char>{false, false, false, true});
+    // The mix's second component was slot 3, now slot 2.
+    CHECK(cfg.option<ConfigOptionStrings>("filament_mixed_components", true)->values[3] == "1,2");
+    CHECK(cfg.option<ConfigOptionFloats>("flush_volumes_vector", true)->values == std::vector<double>{1, 2, 5, 6, 7, 8, 3, 4});
+    // New row 1 is old row 2: from old slot 2 to old slots 0, 2, 3, 1.
+    const auto &moved_matrix = cfg.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values;
+    CHECK(std::vector<double>(moved_matrix.begin() + 4, moved_matrix.begin() + 8) == std::vector<double>{8, 10, 11, 9});
+
+    CHECK(bundle.move_mixed_filaments_to_tail().empty());
+}

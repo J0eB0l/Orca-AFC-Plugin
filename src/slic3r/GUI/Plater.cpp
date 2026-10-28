@@ -5811,6 +5811,8 @@ void Sidebar::jump_to_option(size_t selected)
 // BBS. Move logic from Plater::on_extruders_change() to Sidebar::on_filament_count_change().
 void Sidebar::on_filament_count_change(size_t num_filaments)
 {
+    // Callers that skip Plater::on_filament_count_change (a printer switch) get the order fixed here.
+    p->plater->keep_mixed_filaments_at_tail();
     // num_filaments counts every slot; mixed-color slots are virtual and get no combo of
     // their own (they are rendered by update_mixed_filament_list instead), so the physical
     // subset drives the combo list.
@@ -6472,6 +6474,8 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     auto obj = wxGetApp().getDeviceManager()->get_selected_machine();
     if (!obj)
         return;
+    // The sync sets the mixed slots aside by cutting the tail, so they have to be there.
+    p->plater->keep_mixed_filaments_at_tail();
     GUI::wxGetApp().sidebar().load_ams_list(obj);
 
     auto & list = wxGetApp().preset_bundle->filament_ams_list;
@@ -9939,6 +9943,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             // Update filament colors for the MM-printer profile in the full config
                             // to avoid black (default) colors for Extruders in the ObjectList,
                             // when for extruder colors are used filament colors
+                            // A project saved with a mixed slot ahead of a physical one: fix the
+                            // order now, with the loaded objects, before they reach the plater.
+                            q->keep_mixed_filaments_at_tail(&model);
                             q->on_filament_count_change(preset_bundle->filament_presets.size());
                             is_project_file = true;
 
@@ -21639,9 +21646,45 @@ void Plater::on_filament_change(size_t filament_idx)
     std::string filament_type = filament->config.option<ConfigOptionStrings>("filament_type")->values[0];
 }
 
+bool Plater::keep_mixed_filaments_at_tail(Model *target)
+{
+    PresetBundle            &bundle = *wxGetApp().preset_bundle;
+    const std::map<int, int> moved  = bundle.move_mixed_filaments_to_tail();
+    if (moved.empty())
+        return false;
+    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": moved " << moved.size() << " filament slot(s) to keep the mixed ones at the tail";
+
+    Model &model = target ? *target : this->model();
+    remap_model_filament_slots(model, moved);
+
+    // Settings that name a filament by one-based slot number, on the print preset and per object.
+    static const char *keys[] = {"support_filament",        "support_interface_filament", "wipe_tower_filament",
+                                 "outer_wall_filament_id",  "inner_wall_filament_id",     "sparse_infill_filament_id",
+                                 "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"};
+    auto remap_keys = [&moved](auto &config) {
+        for (const char *key : keys)
+            if (config.has(key))
+                if (auto it = moved.find(config.opt_int(key) - 1); it != moved.end())
+                    config.set_key_value(key, new ConfigOptionInt(it->second + 1));
+    };
+    remap_keys(bundle.prints.get_edited_preset().config);
+    for (ModelObject *object : model.objects) {
+        remap_keys(object->config);
+        for (ModelVolume *volume : object->volumes)
+            remap_keys(volume->config);
+    }
+    if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        tab->reload_config();
+        tab->update_dirty();
+    }
+    return true;
+}
+
 // BBS.
 void Plater::on_filament_count_change(size_t num_filaments)
 {
+    keep_mixed_filaments_at_tail();
+
     // only update elements in plater
     update_filament_colors_in_full_config();
     sidebar().on_filament_count_change(num_filaments);
