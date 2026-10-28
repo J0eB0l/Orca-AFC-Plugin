@@ -1520,6 +1520,17 @@ int MachineObject::command_clear_agent_message()
 }
 
 // Orca: drops the errors and warnings the Assistant page lists from the printer agent's log (agent_log).
+int MachineObject::command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type)
+{
+    json j;
+    j["print"]["command"]         = "set_toolhead_nozzle";
+    j["print"]["extruder_index"]  = extruder;
+    j["print"]["nozzle_diameter"] = diameter;
+    j["print"]["nozzle_type"]     = type;
+    j["print"]["sequence_id"]     = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 int MachineObject::command_clear_agent_log()
 {
     json j;
@@ -3357,6 +3368,47 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     toolhead_nozzle_diameters.clear();
                     for (const json& size : jj["toolhead_nozzles"])
                         toolhead_nozzle_diameters.push_back(size.is_number() ? size.get<float>() : 0.f);
+                }
+                if (jj.contains("toolhead_parts") && jj["toolhead_parts"].is_array()) {
+                    agent_toolheads.clear();
+                    for (const json& part : jj["toolhead_parts"]) {
+                        if (!part.is_object())
+                            continue;
+                        AgentToolhead toolhead;
+                        toolhead.name     = part.value("name", std::string());
+                        toolhead.diameter = part.contains("diameter") && part["diameter"].is_number() ? part["diameter"].get<float>() : 0.f;
+                        toolhead.type     = part.value("type", std::string());
+                        agent_toolheads.push_back(toolhead);
+                    }
+                }
+                if (jj.contains("agent_calibration") && jj["agent_calibration"].is_string())
+                    agent_calibration_gcode = jj["agent_calibration"].get<std::string>();
+                if (jj.contains("agent_prompt") && jj["agent_prompt"].is_object()) {
+                    const json& prompt = jj["agent_prompt"];
+                    const auto  button = [](const json& item) {
+                        AgentPromptButton out;
+                        if (item.is_object()) {
+                            out.label = item.value("label", std::string());
+                            out.gcode = item.value("gcode", std::string());
+                            out.style = item.value("style", std::string());
+                        }
+                        return out;
+                    };
+                    agent_prompt       = AgentPrompt();
+                    agent_prompt.id    = prompt.value("id", 0);
+                    agent_prompt.open  = prompt.value("open", false);
+                    agent_prompt.title = prompt.value("title", std::string());
+                    for (const json& line : prompt.value("text", json::array()))
+                        if (line.is_string())
+                            agent_prompt.text.push_back(line.get<std::string>());
+                    for (const json& row : prompt.value("rows", json::array()))
+                        if (row.is_array()) {
+                            agent_prompt.rows.emplace_back();
+                            for (const json& item : row)
+                                agent_prompt.rows.back().push_back(button(item));
+                        }
+                    for (const json& item : prompt.value("footer", json::array()))
+                        agent_prompt.footer.push_back(button(item));
                 }
                 if (jj.contains("agent_message") && jj["agent_message"].is_object()) {
                     const json& message    = jj["agent_message"];

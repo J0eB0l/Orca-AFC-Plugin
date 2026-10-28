@@ -643,6 +643,36 @@ public:
     float measured_tool_change_time {-1.f};
     // Orca: a printer agent's nozzle size of each toolhead, by extruder number (0 unknown), for the print dialog
     std::vector<float> toolhead_nozzle_diameters;
+    // Orca: a printer agent's toolheads on Printer Parts (toolhead_parts), by extruder number: the name its
+    // filament system gives each, its nozzle size (0 unknown) and type (NozzleTypeStrToEumn's name, "" unknown),
+    // which command_set_toolhead_nozzle sets.
+    struct AgentToolhead
+    {
+        std::string name;
+        float       diameter {0.f};
+        std::string type;
+    };
+    std::vector<AgentToolhead> agent_toolheads;
+    // Orca: the printer console's open prompt (agent_prompt), which the Calibration window shows for a printer
+    // agent that runs its own calibration there: agent_calibration_gcode starts it ("" for Bambu's window).
+    // id changes whenever a prompt opens or closes; each button sends its G-code.
+    struct AgentPromptButton
+    {
+        std::string label;
+        std::string gcode;
+        std::string style;
+    };
+    struct AgentPrompt
+    {
+        int                                         id {0};
+        bool                                        open {false};
+        std::string                                 title;
+        std::vector<std::string>                    text;
+        std::vector<std::vector<AgentPromptButton>> rows;
+        std::vector<AgentPromptButton>              footer;
+    };
+    std::string agent_calibration_gcode;
+    AgentPrompt agent_prompt;
     // Orca: a printer agent's own error or warning, shown on the Device tab until cleared (clear_agent_message)
     std::string agent_message;
     bool        agent_message_is_error {false};
@@ -849,6 +879,7 @@ public:
     int command_clean_print_error(std::string task_id, int print_error);
     int command_clean_print_error_uiop(int print_error);
     int command_clear_agent_message();
+    int command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type);
     int command_clear_agent_log();
     // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
     // lanes with the same filament linked ("match") or none ("clear").

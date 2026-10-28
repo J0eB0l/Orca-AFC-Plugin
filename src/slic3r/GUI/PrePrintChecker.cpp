@@ -78,6 +78,7 @@ std::string PrePrintChecker::get_print_status_info(PrintDialogStatus status)
     case PrintStatusRackNozzleNumUnmeetWarning: return "PrintStatusRackNozzleNumUnmeetWarning";
     case PrintStatusHasUnreliableNozzleWarning: return "PrintStatusHasUnreliableNozzleWarning";
     case PrintStatusToolheadCountMismatch: return "PrintStatusToolheadCountMismatch";
+    case PrintStatusToolheadNozzleTooSoft: return "PrintStatusToolheadNozzleTooSoft";
     case PrintStatusOptionalPrinterModel: return "PrintStatusOptionalPrinterModel";
     case PrintStatusWarningExtFilamentNotMatch: return "PrintStatusWarningExtFilamentNotMatch";
     case PrintStatusFilamentWarningNozzleHRC: return "PrintStatusFilamentWarningNozzleHRC";

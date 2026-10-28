@@ -119,6 +119,8 @@ enum PrintDialogStatus : unsigned int {
     PrintStatusNozzleDiameterMismatch,
     // Orca: an AFC printer has fewer toolheads than the file prints with.
     PrintStatusToolheadCountMismatch,
+    // Orca: a filament harder than the nozzle Printer Parts gives its AFC toolhead.
+    PrintStatusToolheadNozzleTooSoft,
     PrintStatusOptionalPrinterModel,
     PrintStatusPrinterWarningEnd,
 

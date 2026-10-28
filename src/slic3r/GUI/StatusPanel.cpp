@@ -2995,6 +2995,8 @@ void StatusPanel::update(MachineObject *obj)
             calibration_dlg->update_machine_obj(obj);
             calibration_dlg->update_cali(obj);
         }
+        if (agent_prompt_dlg != nullptr)
+            agent_prompt_dlg->update_prompt(obj);
 
         std::string current_printer_type = obj->printer_type;
         bool supports_safety = DevPrinterConfigUtil::support_safety_options(current_printer_type);
@@ -5228,6 +5230,12 @@ void StatusPanel::on_show_safety_options(wxCommandEvent& event)
 
 void StatusPanel::on_show_parts_options(wxCommandEvent &event)
 {
+    // Orca: a printer agent that names its toolheads sets each one's nozzle here.
+    if (obj && !obj->agent_toolheads.empty()) {
+        AgentPartsDialog dlg(this, obj);
+        dlg.ShowModal();
+        return;
+    }
     if (obj) {
         if (print_parts_dlg == nullptr) {
             print_parts_dlg = new PrinterPartsDialog(this);
@@ -5253,6 +5261,14 @@ void StatusPanel::update_printer_parts_options(MachineObject* obj_)
 
 void StatusPanel::on_start_calibration(wxCommandEvent &event)
 {
+    // Orca: a printer agent that runs its own calibration shows its prompts here.
+    if (obj && !obj->agent_calibration_gcode.empty()) {
+        AgentPromptDialog dlg(this, obj, obj->agent_calibration_gcode);
+        agent_prompt_dlg = &dlg;
+        dlg.ShowModal();
+        agent_prompt_dlg = nullptr;
+        return;
+    }
     if (obj) {
         if (calibration_dlg == nullptr) {
             calibration_dlg = new CalibrationDialog();

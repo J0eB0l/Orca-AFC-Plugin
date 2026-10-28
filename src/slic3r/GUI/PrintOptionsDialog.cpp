@@ -1,5 +1,7 @@
 #include "PrintOptionsDialog.hpp"
 #include <boost/log/trivial.hpp>
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <ctime>
 #include <cassert>
@@ -26,12 +28,16 @@
 #include <wx/utils.h>
 #include <wx/msgdlg.h>
 #include "I18N.hpp"
+#include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "libslic3r/Utils.hpp"
 #include "Widgets/SwitchButton.hpp"
 #include "MsgDialog.hpp"
+#include "Widgets/DialogButtons.hpp"
+#include "format.hpp"
 
 #include "DeviceCore/DevConfig.h"
+#include "DeviceCore/DevManager.h"
 #include "DeviceCore/DevExtruderSystem.h"
 #include "DeviceCore/DevNozzleSystem.h"
 #include "DeviceCore/DevFan.h"
@@ -1909,5 +1915,232 @@ void PrinterPartsDialog::UpdateNozzleInfo(){
     Layout();
     Fit();
 }
+
+namespace {
+// The selected printer when it is still the one a dialog was opened for.
+MachineObject* selected_machine(const std::string& dev_id)
+{
+    DeviceManager* dev  = wxGetApp().getDeviceManager();
+    MachineObject* obj  = dev ? dev->get_selected_machine() : nullptr;
+    return obj && obj->get_dev_id() == dev_id ? obj : nullptr;
+}
+
+const std::vector<std::string> agent_nozzle_types = {"", "hardened_steel", "stainless_steel", "tungsten_carbide", "brass"};
+} // namespace
+
+AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
+    : DPIDialog(parent, wxID_ANY, _L("Printer Parts"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+    , m_dev_id(obj->get_dev_id())
+{
+    SetBackgroundColour(*wxWHITE);
+    SetFont(Label::Body_14);
+
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* grid  = new wxFlexGridSizer(3, FromDIP(10), FromDIP(15));
+    grid->AddGrowableCol(0);
+
+    const auto caption = [this](const wxString& text) {
+        auto* label = new Label(this, text);
+        label->SetFont(Label::Body_14);
+        label->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
+        return label;
+    };
+    grid->AddSpacer(0);
+    grid->Add(caption(_L_CONTEXT(L_CONTEXT("Type", "Nozzle Type"), "Nozzle Type")), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(caption(_L_CONTEXT(L_CONTEXT("Diameter", "Nozzle Diameter"), "Nozzle Diameter")), 0, wxALIGN_CENTER_VERTICAL);
+
+    const auto type_name = [](const std::string& type) -> wxString {
+        if (type == "hardened_steel") return _L("Hardened Steel");
+        if (type == "stainless_steel") return _L("Stainless Steel");
+        if (type == "tungsten_carbide") return _L("Tungsten Carbide");
+        if (type == "brass") return _L("Brass");
+        return _L("Unknown");
+    };
+    for (size_t i = 0; i < obj->agent_toolheads.size(); ++i) {
+        const MachineObject::AgentToolhead& toolhead = obj->agent_toolheads[i];
+        // TRN %1%: a toolhead's number, from 1; %2%: the printer's name for it, "extruder1".
+        auto* name = new Label(this, format_wxstr(_L("Toolhead %1% (%2%)"), i + 1, toolhead.name));
+        name->SetFont(Label::Head_14);
+        name->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#2C2C2E")));
+
+        Row row;
+        row.type = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(180), -1), 0, nullptr, wxCB_READONLY);
+        for (const std::string& type : agent_nozzle_types)
+            row.type->Append(type_name(type));
+        const auto type_at = std::find(agent_nozzle_types.begin(), agent_nozzle_types.end(), toolhead.type);
+        row.type->SetSelection(type_at == agent_nozzle_types.end() ? 0 : int(type_at - agent_nozzle_types.begin()));
+
+        row.sizes = {0.f, 0.2f, 0.25f, 0.3f, 0.4f, 0.5f, 0.6f, 0.8f, 1.f, 1.2f};
+        if (toolhead.diameter > 0.f &&
+            std::none_of(row.sizes.begin(), row.sizes.end(), [&](float size) { return std::abs(size - toolhead.diameter) < 0.001f; }))
+            row.sizes.insert(std::upper_bound(row.sizes.begin(), row.sizes.end(), toolhead.diameter), toolhead.diameter);
+        row.diameter = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(140), -1), 0, nullptr, wxCB_READONLY);
+        for (float size : row.sizes)
+            row.diameter->Append(size > 0.f ? wxString::Format("%g mm", size) : _L("Unknown"));
+        for (size_t k = 0; k < row.sizes.size(); ++k)
+            if (std::abs(row.sizes[k] - toolhead.diameter) < 0.001f)
+                row.diameter->SetSelection(int(k));
+
+        grid->Add(name, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
+        grid->Add(row.type, 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(row.diameter, 0, wxALIGN_CENTER_VERTICAL);
+        m_rows.push_back(row);
+    }
+
+    auto* tips = new Label(this, _L("Saved on the printer. A nozzle size of Unknown goes back to the size in the printer's configuration."), LB_AUTO_WRAP);
+    tips->SetFont(Label::Body_13);
+    tips->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
+    tips->SetMaxSize(wxSize(FromDIP(480), -1));
+
+    auto* line = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1), wxTAB_TRAVERSAL);
+    line->SetBackgroundColour(wxColour("#A6A9AA"));
+    sizer->Add(line, 0, wxEXPAND, 0);
+    sizer->Add(grid, 0, wxEXPAND | wxALL, FromDIP(18));
+    sizer->Add(tips, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(18));
+
+    auto* btns = new DialogButtons(this, {"OK", "Cancel"});
+    btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        apply();
+        EndModal(wxID_OK);
+    });
+    btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    sizer->Add(btns, 0, wxEXPAND);
+
+    SetSizerAndFit(sizer);
+    CenterOnParent();
+    wxGetApp().UpdateDlgDarkUI(this);
+}
+
+void AgentPartsDialog::apply()
+{
+    MachineObject* obj = selected_machine(m_dev_id);
+    if (obj == nullptr)
+        return;
+    for (size_t i = 0; i < m_rows.size() && i < obj->agent_toolheads.size(); ++i) {
+        const Row&  row      = m_rows[i];
+        const int   type_sel = row.type->GetSelection();
+        const int   size_sel = row.diameter->GetSelection();
+        std::string type     = type_sel >= 0 && type_sel < int(agent_nozzle_types.size()) ? agent_nozzle_types[type_sel] : std::string();
+        float       diameter = size_sel >= 0 && size_sel < int(row.sizes.size()) ? row.sizes[size_sel] : 0.f;
+        const MachineObject::AgentToolhead& toolhead = obj->agent_toolheads[i];
+        if (type != toolhead.type || std::abs(diameter - toolhead.diameter) > 0.001f)
+            obj->command_set_toolhead_nozzle(int(i), diameter, type);
+    }
+}
+
+void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
+{
+    for (Row& row : m_rows) {
+        row.type->Rescale();
+        row.diameter->Rescale();
+    }
+    GetSizer()->SetSizeHints(this);
+    Refresh();
+}
+
+AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode)
+    : DPIDialog(parent, wxID_ANY, _L("Calibration"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+    , m_dev_id(obj->get_dev_id())
+    , m_start_id(obj->agent_prompt.id)
+    , m_shown_id(obj->agent_prompt.id)
+{
+    SetBackgroundColour(*wxWHITE);
+    SetFont(Label::Body_14);
+
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* line  = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1), wxTAB_TRAVERSAL);
+    line->SetBackgroundColour(wxColour("#A6A9AA"));
+    m_content = new wxPanel(this);
+    m_content->SetBackgroundColour(*wxWHITE);
+    m_content->SetSizer(new wxBoxSizer(wxVERTICAL));
+    sizer->Add(line, 0, wxEXPAND, 0);
+    sizer->Add(m_content, 1, wxEXPAND | wxALL, FromDIP(18));
+    SetSizer(sizer);
+
+    show_waiting();
+    send(start_gcode);
+    relayout();
+    CenterOnParent();
+}
+
+void AgentPromptDialog::send(const std::string& gcode)
+{
+    if (MachineObject* obj = selected_machine(m_dev_id); obj && !gcode.empty())
+        obj->publish_gcode(gcode);
+}
+
+void AgentPromptDialog::show_waiting()
+{
+    m_content->DestroyChildren();
+    m_content->GetSizer()->Clear();
+    auto* label = new Label(m_content, _L("Waiting for the printer..."));
+    label->SetFont(Label::Body_14);
+    label->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
+    m_content->GetSizer()->Add(label, 0, wxALL, FromDIP(4));
+}
+
+void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
+{
+    m_content->DestroyChildren();
+    wxSizer* sizer = m_content->GetSizer();
+    sizer->Clear();
+    SetTitle(prompt.title.empty() ? _L("Calibration") : from_u8(prompt.title));
+
+    for (const std::string& text : prompt.text) {
+        auto* label = new Label(m_content, from_u8(text), LB_AUTO_WRAP);
+        label->SetFont(Label::Body_14);
+        label->SetMaxSize(wxSize(FromDIP(480), -1));
+        label->SetMinSize(wxSize(FromDIP(480), -1));
+        sizer->Add(label, 0, wxBOTTOM, FromDIP(10));
+    }
+    const auto add_button = [this](wxSizer* row, const MachineObject::AgentPromptButton& item) {
+        auto* button = new Button(m_content, from_u8(item.label));
+        button->SetStyle(item.style == "primary" ? ButtonStyle::Confirm : item.style == "error" ? ButtonStyle::Alert : ButtonStyle::Regular,
+                         ButtonType::Choice);
+        const std::string gcode = item.gcode;
+        button->Bind(wxEVT_BUTTON, [this, gcode](wxCommandEvent&) { send(gcode); });
+        row->Add(button, 1, wxRIGHT, FromDIP(8));
+    };
+    for (const auto& items : prompt.rows) {
+        auto* row = new wxBoxSizer(wxHORIZONTAL);
+        for (const auto& item : items)
+            add_button(row, item);
+        sizer->Add(row, 0, wxEXPAND | wxTOP, FromDIP(8));
+    }
+    if (!prompt.footer.empty()) {
+        auto* row = new wxBoxSizer(wxHORIZONTAL);
+        row->AddStretchSpacer(1);
+        for (const auto& item : prompt.footer)
+            add_button(row, item);
+        sizer->Add(row, 0, wxEXPAND | wxTOP, FromDIP(18));
+    }
+}
+
+void AgentPromptDialog::relayout()
+{
+    m_content->Layout();
+    GetSizer()->SetSizeHints(this);
+    Fit();
+    Layout();
+    wxGetApp().UpdateDlgDarkUI(this);
+    Refresh();
+}
+
+void AgentPromptDialog::update_prompt(MachineObject* obj)
+{
+    if (obj == nullptr || obj->get_dev_id() != m_dev_id || obj->agent_prompt.id == m_shown_id)
+        return;
+    m_shown_id = obj->agent_prompt.id;
+    if (obj->agent_prompt.open) {
+        m_showing = true;
+        show_prompt(obj->agent_prompt);
+        relayout();
+    } else if (m_showing) {
+        // The calibration's last prompt closed: so does the window.
+        CallAfter([this] { if (IsModal()) EndModal(wxID_OK); });
+    }
+}
+
+void AgentPromptDialog::on_dpi_changed(const wxRect& suggested_rect) { relayout(); }
 
 }} // namespace Slic3r::GUI

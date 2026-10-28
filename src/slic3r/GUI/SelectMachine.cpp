@@ -4666,7 +4666,7 @@ void SelectMachineDialog::CheckWarningToolheads(MachineObject* obj_)
     if (!obj_ || !afc || !afc->value || !check || !check->value || m_print_type != PrintFromType::FROM_NORMAL)
         return;
     const std::vector<float>& installed = obj_->toolhead_nozzle_diameters;
-    if (installed.empty())
+    if (installed.empty() && obj_->agent_toolheads.empty())
         return;
 
     PartPlate*  plate     = m_plater->get_partplate_list().get_curr_plate();
@@ -4676,11 +4676,22 @@ void SelectMachineDialog::CheckWarningToolheads(MachineObject* obj_)
 
     // The extruder each used filament prints with is the Klipper extruder of that number on an AFC printer.
     const DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config();
-    std::set<int>        missing;
-    std::map<int, float> sliced; // extruder -> nozzle size the file was sliced for, where the printer's differs
+    const auto*              types       = full_config.option<ConfigOptionStrings>("filament_type");
+    std::set<int>                      missing;
+    std::map<int, float>               sliced;   // extruder -> nozzle size the file was sliced for, where the printer's differs
+    std::map<int, std::set<std::string>> too_hard; // extruder -> filament types harder than its nozzle (Printer Parts' type)
     for (int filament : plate->get_used_filaments()) {
         const int idx = plate->get_logical_extruder_by_filament_id(full_config, filament);
         if (idx < 0)
+            continue;
+        if (idx < int(obj_->agent_toolheads.size()) && types && filament >= 1 && filament <= int(types->size())) {
+            const auto nozzle = NozzleTypeStrToEumn.find(obj_->agent_toolheads[idx].type);
+            const std::string& type = types->get_at(filament - 1);
+            if (nozzle != NozzleTypeStrToEumn.end() && nozzle->second != NozzleType::ntUndefine &&
+                std::abs(wxGetApp().preset_bundle->get_required_hrc_by_filament_type(type)) > std::abs(Print::get_hrc_by_nozzle_type(nozzle->second)))
+                too_hard[idx].insert(type);
+        }
+        if (installed.empty())
             continue;
         if (idx >= int(installed.size())) {
             missing.insert(idx);
@@ -4710,6 +4721,20 @@ void SelectMachineDialog::CheckWarningToolheads(MachineObject* obj_)
         }
         m_nozzle_diameter_mismatch_msg = msg;
         show_status(PrintDialogStatus::PrintStatusNozzleDiameterMismatch, {msg});
+    }
+    if (!too_hard.empty()) {
+        wxString msg;
+        for (const auto& [idx, filaments] : too_hard) {
+            wxString names;
+            for (const std::string& type : filaments)
+                names += (names.empty() ? "" : ", ") + from_u8(type);
+            if (!msg.empty())
+                msg += "\n";
+            // TRN %1%: filament types, "PLA-CF, PA-CF"; %2%: an extruder number, from 1; %3%: a nozzle type, "Brass".
+            msg += format_wxstr(_L("%1% may wear the nozzle of extruder %2%, which Printer Parts says is %3%."), names, idx + 1,
+                                format_steel_name(NozzleTypeStrToEumn.at(obj_->agent_toolheads[idx].type)));
+        }
+        show_status(PrintDialogStatus::PrintStatusToolheadNozzleTooSoft, {msg});
     }
 }
 

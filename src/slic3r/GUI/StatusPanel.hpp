@@ -669,6 +669,7 @@ protected:
     PrintOptionsDialog*  print_options_dlg { nullptr };
     SafetyOptionsDialog* safety_options_dlg { nullptr };
     CalibrationDialog*   calibration_dlg {nullptr};
+    AgentPromptDialog*   agent_prompt_dlg {nullptr}; // Orca: the open Calibration window of a printer agent
     AMSMaterialsSetting *m_filament_setting_dlg{nullptr};
 
     DeviceErrorDialog* m_print_error_dlg = nullptr;

@@ -78,6 +78,52 @@ private:
   };
 
 
+// Orca: Printer Parts for a printer agent that names its toolheads (MachineObject::agent_toolheads): each
+// toolhead's nozzle type and size, which OK saves on the printer through the agent.
+class AgentPartsDialog : public DPIDialog
+{
+public:
+    AgentPartsDialog(wxWindow* parent, MachineObject* obj);
+
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
+private:
+    struct Row
+    {
+        ComboBox*          type {nullptr};
+        ComboBox*          diameter {nullptr};
+        std::vector<float> sizes; // the size box's choices, in order (0 unknown)
+    };
+    std::string      m_dev_id;
+    std::vector<Row> m_rows;
+    void             apply();
+};
+
+// Orca: the Calibration window for a printer agent that runs its own calibration (agent_calibration_gcode):
+// it sends start_gcode, then shows the prompts the printer's console opens (MachineObject::agent_prompt),
+// whose buttons send their G-code, until one closes.
+class AgentPromptDialog : public DPIDialog
+{
+public:
+    AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode);
+    void update_prompt(MachineObject* obj);
+
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
+private:
+    std::string    m_dev_id;
+    wxPanel*       m_content {nullptr};
+    int            m_start_id {0};
+    int            m_shown_id {0};
+    bool           m_showing {false};
+    void           show_waiting();
+    void           show_prompt(const MachineObject::AgentPrompt& prompt);
+    void           send(const std::string& gcode);
+    void           relayout();
+};
+
 class PrintOptionsDialog : public DPIDialog
 {
 protected:
