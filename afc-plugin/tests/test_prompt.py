@@ -27,7 +27,7 @@ class WatchTest(unittest.TestCase):
         watch = prompt.Watch()
         self.assertTrue(watch.feed(lines("echo: hello", *CALIBRATION)))
         self.assertEqual(watch.json(), {
-            "id": 1, "open": True, "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
+            "id": 1, "open": True, "running": False, "errors": [], "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
             "rows": [[{"label": "Turtle_1", "gcode": "UNIT_CALIBRATION UNIT=Turtle_1", "style": "primary"}],
                      [{"label": "Lane 1", "gcode": "CALIBRATE_AFC LANE=lane1", "style": ""},
                       {"label": "Lane 2", "gcode": "Lane 2", "style": ""}]],
@@ -46,7 +46,7 @@ class WatchTest(unittest.TestCase):
         store = lines(*CALIBRATION)
         watch.feed(store)
         self.assertTrue(watch.feed(store + lines("// action:prompt_end", start=20.0)))
-        self.assertEqual(watch.json(), {"id": 2, "open": False})
+        self.assertEqual(watch.json(), {"id": 2, "open": False, "running": False, "errors": []})
 
     def test_a_new_prompt_replaces_the_old(self):
         watch = prompt.Watch()
@@ -58,7 +58,41 @@ class WatchTest(unittest.TestCase):
     def test_unshown_prompt_stays_closed(self):
         watch = prompt.Watch()
         self.assertFalse(watch.feed(lines(*CALIBRATION[:-1])))
-        self.assertEqual(watch.json(), {"id": 0, "open": False})
+        self.assertEqual(watch.json(), {"id": 0, "open": False, "running": False, "errors": []})
+
+    def test_calibration_runs_on_after_its_prompt_ends(self):
+        # CALIBRATE_AFC ends the unit's prompt as it starts; the window waits for its result.
+        watch = prompt.Watch()
+        watch.feed(lines(*CALIBRATION))
+        watch.start()
+        watch.mark(9.0)
+        watch.feed(lines("// action:prompt_end", start=20.0))
+        self.assertEqual((watch.json()["open"], watch.json()["running"]), (False, True))
+        watch.feed(lines("// action:prompt_begin AFC Calibration", "// action:prompt_text Calibration was completed for lane1.",
+                         "// action:prompt_show", start=30.0))
+        watch.finish()
+        shown = watch.json()
+        self.assertEqual((shown["id"], shown["open"], shown["running"], shown["text"]),
+                         (4, True, False, ["Calibration was completed for lane1."]))
+
+    def test_errors_while_gcode_runs(self):
+        watch = prompt.Watch()
+        watch.feed(lines("!! old error", start=1.0))
+        watch.start()
+        watch.mark(5.0)
+        self.assertTrue(watch.feed(lines("!! Tool must be unloaded to calibrate system", "echo: x", start=6.0)))
+        watch.finish()
+        self.assertEqual((watch.json()["errors"], watch.json()["running"]), (["Tool must be unloaded to calibrate system"], False))
+        # The next G-code starts with none.
+        watch.start()
+        self.assertEqual(watch.json()["errors"], [])
+
+    def test_errors_before_the_store_was_first_read_are_old(self):
+        watch = prompt.Watch()
+        watch.start()
+        watch.mark(None)
+        watch.feed(lines("!! old error", start=1.0))
+        self.assertEqual(watch.errors, [])
 
 
 if __name__ == "__main__":

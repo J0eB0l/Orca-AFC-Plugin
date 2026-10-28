@@ -613,7 +613,7 @@ class DeviceTabTest(Case):
 
     def test_calibration_prompt_after_gcode(self):
         self.connect()
-        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False})
+        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False, "running": False, "errors": []})
         self.assertEqual(self.push()["agent_calibration"], "AFC_CALIBRATION")
         self.fake.effects["AFC_CALIBRATION"] = lambda: self.fake.gcode_store.extend(
             {"message": m, "time": 10.0 + i, "type": "response"}
@@ -622,7 +622,7 @@ class DeviceTabTest(Case):
                                    "// action:prompt_show"]))
         self.send({"print": {"command": "gcode_line", "param": "AFC_CALIBRATION"}})
         shown = self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]
-        self.assertEqual((shown["id"], shown["open"], shown["title"]), (1, True, "AFC Calibration"))
+        self.assertEqual((shown["id"], shown["open"], shown["running"], shown["title"]), (2, True, False, "AFC Calibration"))
 
     def test_runout_lanes_are_refill_groups(self):
         afc = self.fake.webhook["status:"]["AFC"]

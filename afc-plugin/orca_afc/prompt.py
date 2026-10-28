@@ -5,13 +5,18 @@ A macro opens a prompt by writing lines to the console: `// action:prompt_begin
 <title>`, then `prompt_text`, `prompt_button <label>|<gcode>|<style>` (in rows
 between `prompt_button_group_start` and `_end`), `prompt_footer_button`, and
 `prompt_show`; `prompt_end` closes it. The agent reads them from Moonraker's
-G-code store."""
+G-code store, with the errors (`!! ` lines) printed while OrcaSlicer's G-code
+runs, so the window can say how a calibration ended when AFC shows no prompt."""
 
 from __future__ import annotations
+
+import threading
 
 PREFIX = "// action:prompt_"
 LINES = 100   # newest G-code store lines read at a time
 WATCH = 600.0  # seconds the store is read after OrcaSlicer sends G-code, for the prompts it opens
+ERROR = "!! "  # Klipper's and AFC's errors in the console
+ERRORS = 5     # errors kept for the window
 
 
 def _button(rest: str) -> dict:
@@ -26,18 +31,50 @@ def _button(rest: str) -> dict:
 
 class Watch:
     """The prompt the console's lines leave open. `id` changes each time one
-    opens or closes, so OrcaSlicer tells a new prompt from one it already showed."""
+    opens or closes, an error shows or OrcaSlicer's G-code ends, so OrcaSlicer
+    tells a new state from one it already showed."""
 
     def __init__(self):
         self.seen = None      # time of the newest line read, None before the first read
         self.prompt = None    # the open prompt: {title, text, rows, footer}
         self.id = 0
+        self.running = 0      # OrcaSlicer's G-code lines still running
+        self.errors = []      # errors printed since the first of them started
+        self._since = None    # store time errors are kept after, None until the G-code starts
         self._building = None
         self._group = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        """OrcaSlicer sent G-code, which runs once the G-code before it ends."""
+        with self._lock:
+            if self.running == 0:
+                self.errors = []
+                self._since = None
+            self.running += 1
+
+    def mark(self, newest) -> None:
+        """The G-code starts now; `newest` is the time of the store's newest line
+        (the printer's clock), None when it could not be read. Errors after it
+        are kept until G-code is next sent with none running."""
+        with self._lock:
+            if self._since is None:
+                since = newest if isinstance(newest, (int, float)) else self.seen
+                self._since = since if since is not None else float("inf")
+
+    def finish(self) -> None:
+        """OrcaSlicer's G-code ended, whether it worked or failed."""
+        with self._lock:
+            self.running = max(0, self.running - 1)
+            self.id += 1
 
     def feed(self, entries) -> bool:
         """Reads the G-code store's entries (oldest first) newer than the last
         read; True when a prompt opened or closed."""
+        with self._lock:
+            return self._feed(entries)
+
+    def _feed(self, entries) -> bool:
         changed = False
         newest = self.seen
         for entry in entries or ():
@@ -50,11 +87,17 @@ class Watch:
             newest = when if newest is None else max(newest, when)
             message = entry.get("message")
             for line in (message.splitlines() if isinstance(message, str) else ()):
-                changed |= self._line(line.strip())
+                changed |= self._line(line.strip(), when)
         self.seen = newest if newest is not None else (self.seen or 0.0)
         return changed
 
-    def _line(self, line: str) -> bool:
+    def _line(self, line: str, when: float) -> bool:
+        if line.startswith(ERROR):
+            if self._since is None or when <= self._since:
+                return False
+            self.errors = (self.errors + [line[len(ERROR):].strip()])[-ERRORS:]
+            self.id += 1
+            return True
         if not line.startswith(PREFIX):
             return False
         word, _, rest = line[len(PREFIX):].partition(" ")
@@ -92,9 +135,11 @@ class Watch:
         return False
 
     def json(self) -> dict:
-        """The agent_prompt the AFC build of OrcaSlicer shows: {id, open} and the
-        open prompt's title, text lines, rows of buttons and footer buttons."""
-        out = {"id": self.id, "open": self.prompt is not None}
+        """The agent_prompt the AFC build of OrcaSlicer shows: {id, open, running,
+        errors} and the open prompt's title, text lines, rows of buttons and
+        footer buttons."""
+        out = {"id": self.id, "open": self.prompt is not None, "running": self.running > 0,
+               "errors": list(self.errors)}
         if self.prompt is not None:
             out.update(self.prompt)
         return out

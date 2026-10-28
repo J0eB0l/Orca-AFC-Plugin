@@ -359,7 +359,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
         "support_chamber": bool(chamber),
         # ... runs AFC's calibration from the Device tab's Calibration and shows its prompts.
-        "agent_calibration": "AFC_CALIBRATION", "agent_prompt": prompt_json or {"id": 0, "open": False},
+        "agent_calibration": "AFC_CALIBRATION", "agent_prompt": prompt_json or prompt.Watch().json(),
     }
     if swap_times:
         # The AFC build of OrcaSlicer puts these in the printer's load, unload and tool change times on a sync.
@@ -1132,6 +1132,14 @@ else:
                 return
             printer.prompt.feed(entries)
 
+        def _store_time(self, printer: _Printer):
+            """Time of the G-code store's newest line, None when it can't be read."""
+            try:
+                entries = printer.client.get("/server/gcode_store", {"count": 1})["gcode_store"]
+                return entries[-1].get("time") if entries and isinstance(entries[-1], dict) else None
+            except (MoonrakerError, KeyError, TypeError):
+                return None
+
         def _kept_k(self, printer: _Printer, snapshot) -> None:
             """Gives each lane with no Spoolman spool the K set for it in the tray
             popup, which sync then puts in its filament slot and a print applies,
@@ -1229,13 +1237,17 @@ else:
                     reply["sequence_id"] = job["sequence_id"]
 
                 printer.prompt_until = time.monotonic() + prompt.WATCH
+                printer.prompt.start()
 
                 def run():
                     try:
+                        printer.prompt.mark(self._store_time(printer))
                         printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT)
                         reply["result"] = "success"
                     except MoonrakerError:
                         reply["result"] = "failed"
+                    finally:
+                        printer.prompt.finish()
                     self._send(printer, {"print": reply})
                     # A prompt the G-code opened shows now, not at the next push.
                     self._worker.submit(lambda: self._push(printer))
