@@ -587,6 +587,43 @@ class DeviceTabTest(Case):
         self.connect()
         self.assertEqual(self.push()["toolhead_nozzles"], [0.4, 0.0, 0.6])
 
+    def test_printer_parts_sets_a_toolheads_nozzle(self):
+        self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},
+                                                        "extruder1": {"nozzle_diameter": 0.4}}}
+        self.connect()
+        self.assertEqual(self.push()["toolhead_parts"], [{"name": "extruder", "diameter": 0.4, "type": ""},
+                                                         {"name": "extruder1", "diameter": 0.4, "type": ""}])
+        self.assertEqual(self.send({"print": {"command": "set_toolhead_nozzle", "extruder_index": 1,
+                                              "nozzle_diameter": 0.6, "nozzle_type": "hardened_steel"}}), 0)
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(self.fake.database["orca_afc"]["nozzles"], {"1": {"diameter": 0.6, "type": "hardened_steel"}})
+        push = self.push()
+        self.assertEqual(push["toolhead_parts"][1], {"name": "extruder1", "diameter": 0.6, "type": "hardened_steel"})
+        self.assertEqual(push["toolhead_nozzles"], [0.4, 0.6])
+        # Size 0 and no type go back to Klipper's.
+        self.send({"print": {"command": "set_toolhead_nozzle", "extruder_index": 1, "nozzle_diameter": 0,
+                             "nozzle_type": ""}})
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(self.fake.database["orca_afc"]["nozzles"], {})
+        self.assertEqual(self.push()["toolhead_nozzles"], [0.4, 0.4])
+        for bad in ({"extruder_index": -1, "nozzle_diameter": 0.4, "nozzle_type": "brass"},
+                    {"extruder_index": 0, "nozzle_diameter": 0.4, "nozzle_type": "glass"},
+                    {"extruder_index": 0, "nozzle_type": "brass"}):
+            self.assertEqual(self.send({"print": dict(bad, command="set_toolhead_nozzle")}), afc_agent.ERR_INVALID_RESULT)
+
+    def test_calibration_prompt_after_gcode(self):
+        self.connect()
+        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False})
+        self.assertEqual(self.push()["agent_calibration"], "AFC_CALIBRATION")
+        self.fake.effects["AFC_CALIBRATION"] = lambda: self.fake.gcode_store.extend(
+            {"message": m, "time": 10.0 + i, "type": "response"}
+            for i, m in enumerate(["// action:prompt_begin AFC Calibration",
+                                   "// action:prompt_button Turtle_1|UNIT_CALIBRATION UNIT=Turtle_1|primary",
+                                   "// action:prompt_show"]))
+        self.send({"print": {"command": "gcode_line", "param": "AFC_CALIBRATION"}})
+        shown = self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]
+        self.assertEqual((shown["id"], shown["open"], shown["title"]), (1, True, "AFC Calibration"))
+
     def test_runout_lanes_are_refill_groups(self):
         afc = self.fake.webhook["status:"]["AFC"]
         afc["Turtle_1"]["lane1"]["runout_lane"] = "lane2"

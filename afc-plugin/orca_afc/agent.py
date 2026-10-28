@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, controls, gcode, layout, presets, protocol, runout, stage, swaptimes, trays, units, upstream
+from . import afclog, controls, gcode, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -56,6 +56,9 @@ CLEAR_MAX = 50       # AFC_CLEAR_MESSAGE sent at most per Clear
 DB_NAMESPACE = protocol.DB_NAMESPACE  # the agent's own items in Moonraker's database
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
 NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in Klipper's config
+NOZZLES_KEY = "nozzles"  # the nozzles set in Printer Parts, in the agent's database items
+# Printer Parts' nozzle types, OrcaSlicer's names for them (NozzleType).
+NOZZLE_TYPES = ("hardened_steel", "stainless_steel", "tungsten_carbide", "brass")
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
 PROBE_LINES = 40       # newest G-code store lines read for bed probing each push while printing
 
@@ -234,6 +237,29 @@ def toolhead_nozzles(settings) -> list:
     return [sizes.get(i, 0.0) for i in range(max(sizes) + 1)] if sizes else []
 
 
+def toolhead_parts(sizes: list, saved: dict, extruders=()) -> list:
+    """Each toolhead's nozzle for Printer Parts, by extruder number: its AFC
+    name, the size and type set there (`saved`, {"<number>": {diameter, type}})
+    or else Klipper's nozzle_diameter (`sizes`, toolhead_nozzles()), 0 and ""
+    when not known. The toolheads are those Klipper's config or AFC names."""
+    names = {}
+    for name in extruders or ():
+        index = protocol.extruder_index_from_name(name)
+        if index >= 0:
+            names.setdefault(index, name)
+    count = max([len(sizes)] + [i + 1 for i in names])
+    parts = []
+    for i in range(count):
+        mine = saved.get(str(i)) if isinstance(saved, dict) else None
+        mine = mine if isinstance(mine, dict) else {}
+        size = _number(mine.get("diameter"))
+        kind = mine.get("type")
+        parts.append({"name": names.get(i, "extruder%s" % (i or "")),
+                      "diameter": float(size) if size and size > 0 else (sizes[i] if i < len(sizes) else 0.0),
+                      "type": kind if kind in NOZZLE_TYPES else ""})
+    return parts
+
+
 def job_info(metadata, filename: str, url: str) -> dict:
     """What the Device tab shows of a print besides Klipper's status, from
     Moonraker's metadata for its file: the slicer's time estimate, the layer
@@ -277,7 +303,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
-                lane_times=None) -> dict:
+                lane_times=None, prompt_json=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -285,14 +311,15 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     shows, `job` the print file's job_info(), `chamber` the Klipper object
     that reads the chamber's temperature (controls.find_chamber()),
     `swap_times` AFC's measured change times (swaptimes.Tracker.times()),
-    `nozzles` each toolhead's nozzle size (toolhead_nozzles()), `files_url`
+    `nozzles` each toolhead's nozzle (toolhead_parts()), `files_url`
     the printer's Moonraker, whose files the Device tab's Storage page lists,
     `timelapse` whether the printer runs moonraker-timelapse, `afc_log`
     AFC.log for the Assistant page (afclog.view()), `latest` AFC's newest
     versions on GitHub (upstream.read()), `toolheads` how many the printer has
     and `probing` whether it probed its bed since the last push
-    (stage.ProbeWatch), for the stage line, and `lane_times` each lane's
-    changes in AFC.log (swaptimes.lane_samples())."""
+    (stage.ProbeWatch), for the stage line, `lane_times` each lane's
+    changes in AFC.log (swaptimes.lane_samples()) and `prompt_json` the
+    console's open prompt (prompt.Watch.json()), for the Calibration window."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -331,13 +358,18 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "nozzle_temp_range": [100, 370], "bed_temp_range": [0, 120],
         # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
         "support_chamber": bool(chamber),
+        # ... runs AFC's calibration from the Device tab's Calibration and shows its prompts.
+        "agent_calibration": "AFC_CALIBRATION", "agent_prompt": prompt_json or {"id": 0, "open": False},
     }
     if swap_times:
         # The AFC build of OrcaSlicer puts these in the printer's load, unload and tool change times on a sync.
         out["swap_times"] = dict(swap_times)
     if nozzles:
-        # ... and its print dialog checks the file's toolheads and nozzle sizes against them.
-        out["toolhead_nozzles"] = list(nozzles)
+        # ... and Printer Parts shows and sets each toolhead's nozzle,
+        out["toolhead_parts"] = [dict(part) for part in nozzles]
+        if any(part["diameter"] > 0 for part in nozzles):
+            # ... which its print dialog checks the file's toolheads and nozzle sizes against.
+            out["toolhead_nozzles"] = [part["diameter"] for part in nozzles]
     if files_url:
         # ... and its Storage page lists the G-code files and moonraker-timelapse videos there,
         # with the printer's access code as the API key.
@@ -574,6 +606,7 @@ class _Printer:
     swap: object = field(default_factory=swaptimes.Tracker)  # AFC's measured change times
     stats_due: float = 0.0                            # when to read them again
     nozzles: list = field(default_factory=list)       # toolhead_nozzles() of Klipper's config
+    saved_nozzles: dict = field(default_factory=dict) # the nozzles set in Printer Parts (toolhead_parts())
     nozzles_due: float = 0.0                          # when to read them again
     timelapse: bool = False                           # moonraker-timelapse runs here (_timelapse())
     timelapse_due: float = 0.0                        # when to look again
@@ -583,6 +616,8 @@ class _Printer:
     log_cleared: str = None                           # its clear mark, None until read from Moonraker
     log_path: str = None                              # its path in Moonraker's logs root, None until looked for
     probes: object = field(default_factory=lambda: stage.ProbeWatch())  # bed probing, for the stage line
+    prompt: object = field(default_factory=lambda: prompt.Watch())  # the console's open prompt
+    prompt_until: float = 0.0                         # when to stop reading it (prompt.WATCH)
 
 
 def spool_key(lane) -> tuple:
@@ -855,14 +890,16 @@ else:
             self._timelapse(printer)
             self._swap_times(printer)
             self._nozzles(printer)
+            self._prompt(printer)
             if snapshot is not None:
                 self._afc_log(printer)
                 self._upstream()
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
-                                  printer.nozzles, printer.client.url, printer.timelapse, printer.afc_log,
+                                  toolhead_parts(printer.nozzles, printer.saved_nozzles, printer.extruders),
+                                  printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
-                                  self._probing(printer, status), printer.swap.lanes)
+                                  self._probing(printer, status), printer.swap.lanes, printer.prompt.json())
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1038,6 +1075,14 @@ else:
                 return
             printer.nozzles_due = time.monotonic() + NOZZLES_EVERY
             try:
+                item = printer.client.get("/server/database/item", {"namespace": DB_NAMESPACE, "key": NOZZLES_KEY})
+                saved = item.get("value") if isinstance(item, dict) else None
+                printer.saved_nozzles = saved if isinstance(saved, dict) else {}
+            except PrinterUnreachable:
+                return
+            except MoonrakerError:  # none set yet
+                printer.saved_nozzles = {}
+            try:
                 answer = printer.client.objects_query({"configfile": ["settings"]})
             except MoonrakerError:
                 return
@@ -1046,6 +1091,46 @@ else:
             except (KeyError, TypeError):
                 return
             printer.nozzles = toolhead_nozzles(settings) or printer.nozzles
+
+        def _set_nozzle(self, printer: _Printer, job: dict) -> int:
+            """Printer Parts' nozzle for one toolhead, kept in Moonraker's database
+            for every OrcaSlicer that shows this printer; size 0 goes back to Klipper's."""
+            index, size, kind = job.get("extruder_index"), _number(job.get("nozzle_diameter")), job.get("nozzle_type")
+            if (not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < 64 or size is None
+                    or not 0 <= size <= 3 or kind not in NOZZLE_TYPES + ("",)):
+                return ERR_INVALID_RESULT
+
+            def save():
+                try:
+                    item = printer.client.get("/server/database/item", {"namespace": DB_NAMESPACE, "key": NOZZLES_KEY})
+                    saved = item.get("value") if isinstance(item, dict) else None
+                except PrinterUnreachable:
+                    return
+                except MoonrakerError:  # none set yet
+                    saved = None
+                saved = dict(saved) if isinstance(saved, dict) else {}
+                if size > 0 or kind:
+                    saved[str(index)] = {"diameter": float(size), "type": kind}
+                else:
+                    saved.pop(str(index), None)
+                printer.client.post("/server/database/item", {"namespace": DB_NAMESPACE, "key": NOZZLES_KEY, "value": saved})
+                printer.saved_nozzles = saved
+                self._push(printer)
+
+            self._worker.submit(lambda: self._quietly(save))
+            return SUCCESS
+
+        def _prompt(self, printer: _Printer) -> None:
+            """The console's prompts, read for a while after OrcaSlicer sends G-code
+            (the Calibration window's) and while one is open."""
+            if printer.prompt.prompt is None and time.monotonic() > printer.prompt_until:
+                return
+            try:
+                answer = printer.client.get("/server/gcode_store", {"count": prompt.LINES})
+                entries = answer["gcode_store"]
+            except (MoonrakerError, KeyError, TypeError):
+                return
+            printer.prompt.feed(entries)
 
         def _kept_k(self, printer: _Printer, snapshot) -> None:
             """Gives each lane with no Spoolman spool the K set for it in the tray
@@ -1143,6 +1228,8 @@ else:
                 if isinstance(job.get("sequence_id"), str):
                     reply["sequence_id"] = job["sequence_id"]
 
+                printer.prompt_until = time.monotonic() + prompt.WATCH
+
                 def run():
                     try:
                         printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT)
@@ -1150,6 +1237,8 @@ else:
                     except MoonrakerError:
                         reply["result"] = "failed"
                     self._send(printer, {"print": reply})
+                    # A prompt the G-code opened shows now, not at the next push.
+                    self._worker.submit(lambda: self._push(printer))
 
                 self._gcode.submit(run)
             elif command in _PRINT_ENDPOINTS:
@@ -1175,6 +1264,8 @@ else:
                 self._backup(printer, job["auto_switch_filament"])
             elif command == "ams_filament_setting":
                 return self._filament_setting(printer, job)
+            elif command == "set_toolhead_nozzle":
+                return self._set_nozzle(printer, job)
             elif command == "extrusion_cali_set":
                 return self._tray_k(printer, job)
             elif command == "ams_filament_drying":
