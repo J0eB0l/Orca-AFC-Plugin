@@ -1830,6 +1830,12 @@ void PluginAuditManager::install_hook()
     // "cert" denied-path keyword seeded below.
     add_global_allowed_root(resources_dir(), /*allow_write=*/false);
 
+    // Orca AFC: the project a print sends is written to the model folder under temporary_dir(),
+    // a new folder per run, and a printer agent plugin reads it from its own worker thread, outside
+    // any scoped root. Read-only, so the agent does not ask for every print.
+    if (!temporary_dir().empty())
+        add_global_allowed_root(boost::filesystem::path(temporary_dir()) / "orcaslicer_model", /*allow_write=*/false);
+
     // The user's app config and cloud credentials live directly inside data_dir(), and plugin
     // install state lives beneath it, so the root just granted would otherwise expose them to
     // plugins. Deny them by name.
