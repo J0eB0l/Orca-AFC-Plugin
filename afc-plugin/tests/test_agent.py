@@ -624,6 +624,24 @@ class DeviceTabTest(Case):
         shown = self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]
         self.assertEqual((shown["id"], shown["open"], shown["running"], shown["title"]), (2, True, False, "AFC Calibration"))
 
+    def test_calibration_runs_past_a_proxy_timeout(self):
+        # nginx in front of Moonraker answers 504 after 60 s while Klipper still calibrates;
+        # the window waits until an M400 sent after it comes back.
+        self.connect()
+        self.fake.gcode_gateway_timeout = True
+        sent = []
+
+        def m400():
+            sent.append(1)
+            if len(sent) == 2:
+                self.fake.gcode_gateway_timeout = False
+
+        self.fake.effects["M400"] = m400
+        self.send({"print": {"command": "gcode_line", "param": "CALIBRATE_AFC BOWDEN=lane1"}})
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["CALIBRATE_AFC BOWDEN=lane1", "M400", "M400"])
+        self.assertEqual(self.calls.messages("print", "gcode_line")[-1]["result"], "success")
+
     def test_runout_lanes_are_refill_groups(self):
         afc = self.fake.webhook["status:"]["AFC"]
         afc["Turtle_1"]["lane1"]["runout_lane"] = "lane2"

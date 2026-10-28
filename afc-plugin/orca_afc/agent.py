@@ -40,7 +40,7 @@ import orca
 
 from . import afclog, controls, gcode, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
-from .moonraker import Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
+from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
 from .worker import Worker
 
@@ -1132,6 +1132,25 @@ else:
                 return
             printer.prompt.feed(entries)
 
+        def _gcode_to_end(self, printer: _Printer, script: str) -> None:
+            """Runs `script` and returns when Klipper has finished it. A proxy in
+            front of Moonraker (nginx gives up after 60 s) answers 504 while Klipper
+            is still at it; Klipper runs G-code in order, so the first M400 sent
+            after it that comes back says it ended."""
+            deadline = time.monotonic() + LANE_MOVE_TIMEOUT
+            try:
+                printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT)
+                return
+            except GatewayTimeout:
+                pass
+            while True:
+                try:
+                    printer.client.gcode("M400", timeout=max(1.0, deadline - time.monotonic()))
+                    return
+                except GatewayTimeout:
+                    if time.monotonic() > deadline:
+                        raise
+
         def _store_time(self, printer: _Printer):
             """Time of the G-code store's newest line, None when it can't be read."""
             try:
@@ -1242,7 +1261,7 @@ else:
                 def run():
                     try:
                         printer.prompt.mark(self._store_time(printer))
-                        printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT)
+                        self._gcode_to_end(printer, script)
                         reply["result"] = "success"
                     except MoonrakerError:
                         reply["result"] = "failed"
