@@ -1475,6 +1475,20 @@ int decide_audited_event(PluginAuditManager&             mgr,
     if (mgr.releasing_frames())
         return report_denied(mgr, event_name, {false, "audit permission required"});
 
+    // Orca AFC: a request is asked for and saved as its scheme://host, the host-wide grant
+    // request_permissions(network=...) records, so a plugin that talks to a printer asks once per
+    // printer rather than once per endpoint. Saved full-URL grants were matched above as before.
+    if (category == AuditEventCategory::Http && !by_event) {
+        std::vector<std::string> hosts;
+        for (const std::string& key : unresolved) {
+            const std::string host  = PluginAuditManager::normalize_network_url(key);
+            const std::string grant = host.empty() ? key : host;
+            if (std::find(hosts.begin(), hosts.end(), grant) == hosts.end())
+                hosts.push_back(grant);
+        }
+        unresolved = std::move(hosts);
+    }
+
     if (!request_permission(category, plugin_key, plugin_name, event_name, by_event, unresolved))
         return report_denied(mgr, event_name, {false, "audit permission required"});
 

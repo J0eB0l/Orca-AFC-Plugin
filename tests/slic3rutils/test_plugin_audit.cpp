@@ -884,10 +884,28 @@ outcomes.append(attempt(lambda: list(netlib.fetch_each([URL_A, URL_B]))))
 )PY");
 
     // The redirect target is asked for inside the approved redirecting request, and a library's
-    // wrapper or generator asks for the second URL as plain code does.
+    // wrapper or generator asks for the second URL as plain code does. The prompt names the host
+    // a Yes would cover.
     CHECK(python.strings("outcomes") == std::vector<std::string>{"ok", "denied", "denied", "ok", "denied", "denied"});
-    const std::string url_b = "urllib.Request: " + python.str("URL_B") + "\n";
+    const std::string url_b = "urllib.Request: http://127.0.0.1\n";
     CHECK(describe(harness.prompts) == url_b + url_b + url_b + url_b);
+}
+
+TEST_CASE("An approved request saves its host, which covers the host's other URLs", "[audit][Python]")
+{
+    AuditHarness harness;
+    if (!harness.initialized)
+        SKIP("Bundled Python interpreter unavailable: " + PythonInterpreter::instance().last_error());
+    harness.add_plugin(PLUGIN);
+    harness.approve = [](const Prompt&) { return true; };
+    py::gil_scoped_acquire gil;
+    PythonSide python(harness);
+
+    python.run_as(PLUGIN, "outcomes = [attempt(lambda: fetch(url)) for url in (URL_A, URL_B)]");
+
+    CHECK(python.strings("outcomes") == std::vector<std::string>{"ok", "ok"});
+    CHECK(describe(harness.prompts) == "urllib.Request: http://127.0.0.1\n");
+    CHECK(harness.saved_permissions(PLUGIN).network_http == std::vector<std::string>{"http://127.0.0.1"});
 }
 
 TEST_CASE("Code an approved operation calls back into is judged on its own", "[audit][Python]")
