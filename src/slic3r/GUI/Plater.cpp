@@ -3417,6 +3417,7 @@ Sidebar::Sidebar(Plater *parent)
 
     /* first filament item */
     init_filament_combo(&p->combos_filament[0], 0);
+    layout_filament_combos();
 
     //bSizer_filament_content->Add(p->sizer_filaments, 1, wxALIGN_CENTER | wxALL);
     wxSizer *sizer_filaments2 = new wxBoxSizer(wxVERTICAL);
@@ -3713,9 +3714,8 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
 
     // BBS:  filament double columns
 
-    // int em = wxGetApp().em_unit();
-    if ((filament_idx % 2) == 0) // Dont add right column item. this one create equal spacing on left, right & middle
-        combo_and_btn_sizer->AddSpacer(FromDIP((filament_idx % 2) == 0 ? 12 : 3)); // Content Margin
+    // Content margin, sized by layout_filament_combos(): left column rows only, which gives equal spacing on left, right & middle
+    combo_and_btn_sizer->AddSpacer(0);
 
     (*combo)->clr_picker->SetLabel(wxString::Format("%d", filament_idx + 1));
     combo_and_btn_sizer->Add((*combo)->clr_picker, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()) - FromDIP(2)); // ElementSpacing - 2 (from combo box))
@@ -3739,7 +3739,8 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
     edit_btn->SetToolTip(_L("Click to edit preset"));
 
     PlaterPresetComboBox* combobox = (*combo);
-    edit_btn->Bind(wxEVT_BUTTON, [this, edit_btn, combobox, filament_idx](wxCommandEvent) {
+    edit_btn->Bind(wxEVT_BUTTON, [this, edit_btn, combobox](wxCommandEvent) {
+        const int filament_idx = combobox->get_filament_idx(); // renumbered when mixed slots move
         bool single_or_bbl     = should_show_SEMM_buttons();
         bool is_multi_material = p->combos_filament.size() > 1;
         if(single_or_bbl && is_multi_material) {
@@ -3763,15 +3764,43 @@ void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filame
 
     combo_and_btn_sizer->AddSpacer(FromDIP(SidebarProps::ContentMargin()));
 
-    // BBS:  filament double columns
-    auto side = filament_idx % 2;
-    auto /***/sizer_filaments = this->p->sizer_filaments->GetItem(side)->GetSizer();
-    if (side == 1 && filament_idx > 1) sizer_filaments->Remove(filament_idx / 2);
-    sizer_filaments->Add(combo_and_btn_sizer, 1, wxEXPAND);
-    if (side == 0 && filament_idx > 0) {
-        sizer_filaments = this->p->sizer_filaments->GetItem(1)->GetSizer();
-        sizer_filaments->AddStretchSpacer(1);
+    // Parked in the left column until layout_filament_combos() places it by its position in the list.
+    this->p->sizer_filaments->GetItem((size_t) 0)->GetSizer()->Add(combo_and_btn_sizer, 1, wxEXPAND);
+}
+
+// Deletes a filament row from whichever column holds it.
+void Sidebar::remove_filament_row(wxSizer *row)
+{
+    if (!p->sizer_filaments->GetItem((size_t) 0)->GetSizer()->Remove(row))
+        p->sizer_filaments->GetItem(1)->GetSizer()->Remove(row);
+}
+
+// BBS: filament double columns. Rows go by their position in combos_filament, not by filament index:
+// mixed slots have no row, so the two differ when a mix sits between physical filaments, and placing
+// rows by index then leaves stray spacers, misaligned rows and rows dropped from the grid.
+void Sidebar::layout_filament_combos()
+{
+    auto col0 = p->sizer_filaments->GetItem((size_t) 0)->GetSizer();
+    auto col1 = p->sizer_filaments->GetItem(1)->GetSizer();
+    for (wxSizer *col : {col0, col1})
+        while (col->GetItemCount() > 0) {
+            if (col->GetItem((size_t) 0)->IsSizer())
+                col->Detach(int(0)); // a row: kept and placed again below
+            else
+                col->Remove(int(0)); // a balancing spacer
+        }
+
+    for (size_t i = 0; i < p->combos_filament.size(); ++i) {
+        PlaterPresetComboBox *combo = p->combos_filament[i];
+        wxSizer              *row   = combo ? combo->GetContainingSizer() : nullptr;
+        if (row == nullptr)
+            continue;
+        if (wxSizerItem *margin = row->GetItem((size_t) 0); margin && margin->IsSpacer())
+            margin->AssignSpacer(FromDIP(i % 2 == 0 ? 12 : 0), 0);
+        (i % 2 == 0 ? col0 : col1)->Add(row, 1, wxEXPAND);
     }
+    if (p->combos_filament.size() > 1 && p->combos_filament.size() % 2 == 1)
+        col1->AddStretchSpacer(1);
 }
 
 void Sidebar::remove_unused_filament_combos(const size_t current_extruder_count)
@@ -3779,25 +3808,13 @@ void Sidebar::remove_unused_filament_combos(const size_t current_extruder_count)
     if (current_extruder_count >= p->combos_filament.size())
         return;
     while (p->combos_filament.size() > current_extruder_count) {
-        const int last = p->combos_filament.size() - 1;
-        auto sizer_filaments = this->p->sizer_filaments->GetItem(last % 2)->GetSizer();
-        sizer_filaments->Remove(last / 2);
-        (*p->combos_filament[last]).Destroy();
+        PlaterPresetComboBox *last = p->combos_filament.back();
+        if (wxSizer *row = last->GetContainingSizer())
+            remove_filament_row(row);
+        last->Destroy();
         p->combos_filament.pop_back();
     }
-    // BBS:  filament double columns
-    auto sizer_filaments0 = this->p->sizer_filaments->GetItem((size_t)0)->GetSizer();
-    auto sizer_filaments1 = this->p->sizer_filaments->GetItem(1)->GetSizer();
-    if (current_extruder_count < 2) {
-        sizer_filaments1->Clear();
-    } else {
-        size_t c0 = sizer_filaments0->GetChildren().GetCount();
-        size_t c1 = sizer_filaments1->GetChildren().GetCount();
-        if (c0 < c1)
-            sizer_filaments1->Remove(c1 - 1);
-        else if (c0 > c1)
-            sizer_filaments1->AddStretchSpacer(1);
-    }
+    layout_filament_combos();
 }
 
 void Sidebar::update_all_preset_comboboxes()
@@ -5809,7 +5826,19 @@ void Sidebar::on_filament_count_change(size_t num_filaments)
 
     auto& choices = combos_filament();
 
+    // A combo keeps the filament index it was made with; mixed slots moving around the list can
+    // leave it bound to another slot, so renumber the ones that drifted.
+    auto renumber_combos = [&choices, &physical_indices]() {
+        for (size_t i = 0; i < choices.size() && i < physical_indices.size(); ++i)
+            if (choices[i]->get_filament_idx() != int(physical_indices[i])) {
+                choices[i]->set_filament_idx(int(physical_indices[i]));
+                choices[i]->clr_picker->SetLabel(wxString::Format("%d", int(physical_indices[i]) + 1));
+                choices[i]->update();
+            }
+    };
+
     if (num_physical == choices.size()) {
+        renumber_combos();
         // The ctor pre-creates one combo, so a single-filament project hits this guard before
         // any layout pass has sized the scroll areas; refresh them here as well.
         // Adding a mixed slot also lands here, since only the virtual count changed, so the
@@ -5838,9 +5867,11 @@ void Sidebar::on_filament_count_change(size_t num_filaments)
         choice->SetSelection(last_selection);
         ++i;
     }
+    layout_filament_combos();
 
     // remove unused choices if any
     remove_unused_filament_combos(num_physical);
+    renumber_combos();
 
     show_SEMM_buttons(); // ORCA
 
@@ -5868,27 +5899,12 @@ void Sidebar::on_filaments_delete(size_t filament_id)
 
         // delete UI item
         {
-            const int last            = p->combos_filament.size() - 1;
-            auto      sizer_filaments = this->p->sizer_filaments->GetItem(last % 2)->GetSizer();
-            sizer_filaments->Remove(last / 2);
-
-            PlaterPresetComboBox* to_delete_combox = p->combos_filament[filament_id];
-            (*p->combos_filament[last]).Destroy();
+            PlaterPresetComboBox *last = p->combos_filament.back();
+            if (wxSizer *row = last->GetContainingSizer())
+                remove_filament_row(row);
+            last->Destroy();
             p->combos_filament.pop_back();
-
-            // BBS:  filament double columns
-            auto sizer_filaments0 = this->p->sizer_filaments->GetItem((size_t) 0)->GetSizer();
-            auto sizer_filaments1 = this->p->sizer_filaments->GetItem(1)->GetSizer();
-            if (p->combos_filament.size() < 2) {
-                sizer_filaments1->Clear();
-            } else {
-                size_t c0 = sizer_filaments0->GetChildren().GetCount();
-                size_t c1 = sizer_filaments1->GetChildren().GetCount();
-                if (c0 < c1)
-                    sizer_filaments1->Remove(c1 - 1);
-                else if (c0 > c1)
-                    sizer_filaments1->AddStretchSpacer(1);
-            }
+            layout_filament_combos();
         }
 
         show_SEMM_buttons(); // ORCA
