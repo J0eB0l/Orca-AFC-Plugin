@@ -116,10 +116,9 @@ private:
     std::string                  m_dev_id;
     wxPanel*                     m_content {nullptr};
     int                          m_shown_id {0};
-    MachineObject::AgentPrompt   m_last;  // the last prompt shown, which the finished view repeats when it had no buttons
     void                         show_waiting(const std::vector<std::string>& errors);
     void                         show_prompt(const MachineObject::AgentPrompt& prompt);
-    void                         show_finished(const std::vector<std::string>& errors);
+    void                         show_finished(const std::vector<std::string>& errors); // what went wrong, with OK
     void                         add_text(const wxString& text, const wxColour& colour = wxNullColour);
     void                         add_errors(const std::vector<std::string>& errors);
     void                         clear_content();

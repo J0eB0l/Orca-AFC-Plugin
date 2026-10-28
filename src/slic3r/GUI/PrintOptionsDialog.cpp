@@ -2147,12 +2147,6 @@ void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
 void AgentPromptDialog::show_finished(const std::vector<std::string>& errors)
 {
     clear_content();
-    // A prompt with no buttons is a status ("Calibration completed"), which the printer ends itself: keep it.
-    if (m_last.open && m_last.rows.empty() && m_last.footer.empty())
-        for (const std::string& text : m_last.text)
-            add_text(from_u8(text));
-    else if (errors.empty())
-        add_text(_L("The printer finished without showing a result."));
     add_errors(errors);
 
     auto* btns = new DialogButtons(m_content, {"OK"});
@@ -2176,13 +2170,17 @@ void AgentPromptDialog::update_prompt(MachineObject* obj)
         return;
     const MachineObject::AgentPrompt& prompt = obj->agent_prompt;
     m_shown_id = prompt.id;
-    if (prompt.open) {
-        m_last = prompt;
+    if (prompt.open)
         show_prompt(prompt);
-    } else if (prompt.running)
+    else if (prompt.running)
         show_waiting(prompt.errors);
-    else
+    else if (!prompt.errors.empty())
         show_finished(prompt.errors);
+    else {
+        // Done with nothing more to show, as after "No" to more calibrations.
+        CallAfter([this] { if (IsModal()) EndModal(wxID_OK); });
+        return;
+    }
     relayout();
 }
 
