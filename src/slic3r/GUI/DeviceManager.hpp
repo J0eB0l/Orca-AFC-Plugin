@@ -666,6 +666,8 @@ public:
     {
         int                                         id {0};
         bool                                        open {false};
+        bool                                        running {false}; // G-code OrcaSlicer sent is still running
+        std::vector<std::string>                    errors;          // errors printed while it ran
         std::string                                 title;
         std::vector<std::string>                    text;
         std::vector<std::vector<AgentPromptButton>> rows;

@@ -2056,7 +2056,7 @@ AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const
     sizer->Add(m_content, 1, wxEXPAND | wxALL, FromDIP(18));
     SetSizer(sizer);
 
-    show_waiting();
+    show_waiting({});
     send(start_gcode);
     relayout();
     CenterOnParent();
@@ -2068,36 +2068,65 @@ void AgentPromptDialog::send(const std::string& gcode)
         obj->publish_gcode(gcode);
 }
 
-void AgentPromptDialog::show_waiting()
+void AgentPromptDialog::clear_content()
 {
     m_content->DestroyChildren();
     m_content->GetSizer()->Clear();
-    auto* label = new Label(m_content, _L("Waiting for the printer..."));
+}
+
+void AgentPromptDialog::add_text(const wxString& text, const wxColour& colour)
+{
+    auto* label = new Label(m_content, text, LB_AUTO_WRAP);
     label->SetFont(Label::Body_14);
-    label->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
-    m_content->GetSizer()->Add(label, 0, wxALL, FromDIP(4));
+    if (colour.IsOk())
+        label->SetForegroundColour(colour);
+    label->SetMaxSize(wxSize(FromDIP(480), -1));
+    label->SetMinSize(wxSize(FromDIP(480), -1));
+    m_content->GetSizer()->Add(label, 0, wxBOTTOM, FromDIP(10));
+}
+
+void AgentPromptDialog::add_errors(const std::vector<std::string>& errors)
+{
+    for (const std::string& error : errors)
+        add_text(from_u8(error), wxColour(255, 0, 0));
+}
+
+void AgentPromptDialog::show_waiting(const std::vector<std::string>& errors)
+{
+    clear_content();
+    add_text(_L("Waiting for the printer..."), STATIC_TEXT_CAPTION_COL);
+    add_errors(errors);
 }
 
 void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
 {
-    m_content->DestroyChildren();
+    clear_content();
     wxSizer* sizer = m_content->GetSizer();
-    sizer->Clear();
     SetTitle(prompt.title.empty() ? _L("Calibration") : from_u8(prompt.title));
 
-    for (const std::string& text : prompt.text) {
-        auto* label = new Label(m_content, from_u8(text), LB_AUTO_WRAP);
-        label->SetFont(Label::Body_14);
-        label->SetMaxSize(wxSize(FromDIP(480), -1));
-        label->SetMinSize(wxSize(FromDIP(480), -1));
-        sizer->Add(label, 0, wxBOTTOM, FromDIP(10));
-    }
+    for (const std::string& text : prompt.text)
+        add_text(from_u8(text));
     const auto add_button = [this](wxSizer* row, const MachineObject::AgentPromptButton& item) {
         auto* button = new Button(m_content, from_u8(item.label));
         button->SetStyle(item.style == "primary" ? ButtonStyle::Confirm : item.style == "error" ? ButtonStyle::Alert : ButtonStyle::Regular,
                          ButtonType::Choice);
         const std::string gcode = item.gcode;
-        button->Bind(wxEVT_BUTTON, [this, gcode](wxCommandEvent&) { send(gcode); });
+        button->Bind(wxEVT_BUTTON, [this, gcode](wxCommandEvent&) {
+            send(gcode);
+            // A Cancel or Done button ends the prompt, and the window with it. Any other runs on the
+            // printer, which may end this prompt as it starts (AFC's calibration does), so the window
+            // waits for the next prompt or for the G-code to finish.
+            const bool ends = gcode.find("prompt_end") != std::string::npos;
+            CallAfter([this, ends] {
+                if (ends) {
+                    if (IsModal())
+                        EndModal(wxID_OK);
+                    return;
+                }
+                show_waiting({});
+                relayout();
+            });
+        });
         row->Add(button, 1, wxRIGHT, FromDIP(8));
     };
     for (const auto& items : prompt.rows) {
@@ -2115,6 +2144,22 @@ void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
     }
 }
 
+void AgentPromptDialog::show_finished(const std::vector<std::string>& errors)
+{
+    clear_content();
+    // A prompt with no buttons is a status ("Calibration completed"), which the printer ends itself: keep it.
+    if (m_last.open && m_last.rows.empty() && m_last.footer.empty())
+        for (const std::string& text : m_last.text)
+            add_text(from_u8(text));
+    else if (errors.empty())
+        add_text(_L("The printer finished without showing a result."));
+    add_errors(errors);
+
+    auto* btns = new DialogButtons(m_content, {"OK"});
+    btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    m_content->GetSizer()->Add(btns, 0, wxEXPAND | wxTOP, FromDIP(8));
+}
+
 void AgentPromptDialog::relayout()
 {
     m_content->Layout();
@@ -2129,15 +2174,16 @@ void AgentPromptDialog::update_prompt(MachineObject* obj)
 {
     if (obj == nullptr || obj->get_dev_id() != m_dev_id || obj->agent_prompt.id == m_shown_id)
         return;
-    m_shown_id = obj->agent_prompt.id;
-    if (obj->agent_prompt.open) {
-        m_showing = true;
-        show_prompt(obj->agent_prompt);
-        relayout();
-    } else if (m_showing) {
-        // The calibration's last prompt closed: so does the window.
-        CallAfter([this] { if (IsModal()) EndModal(wxID_OK); });
-    }
+    const MachineObject::AgentPrompt& prompt = obj->agent_prompt;
+    m_shown_id = prompt.id;
+    if (prompt.open) {
+        m_last = prompt;
+        show_prompt(prompt);
+    } else if (prompt.running)
+        show_waiting(prompt.errors);
+    else
+        show_finished(prompt.errors);
+    relayout();
 }
 
 void AgentPromptDialog::on_dpi_changed(const wxRect& suggested_rect) { relayout(); }

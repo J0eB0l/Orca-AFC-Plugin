@@ -3396,8 +3396,12 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     };
                     agent_prompt       = AgentPrompt();
                     agent_prompt.id    = prompt.value("id", 0);
-                    agent_prompt.open  = prompt.value("open", false);
-                    agent_prompt.title = prompt.value("title", std::string());
+                    agent_prompt.open    = prompt.value("open", false);
+                    agent_prompt.running = prompt.value("running", false);
+                    agent_prompt.title   = prompt.value("title", std::string());
+                    for (const json& line : prompt.value("errors", json::array()))
+                        if (line.is_string())
+                            agent_prompt.errors.push_back(line.get<std::string>());
                     for (const json& line : prompt.value("text", json::array()))
                         if (line.is_string())
                             agent_prompt.text.push_back(line.get<std::string>());
