@@ -115,7 +115,6 @@ protected:
 private:
     std::string    m_dev_id;
     wxPanel*       m_content {nullptr};
-    int            m_start_id {0};
     int            m_shown_id {0};
     bool           m_showing {false};
     void           show_waiting();

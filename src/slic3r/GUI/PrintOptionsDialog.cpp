@@ -2041,7 +2041,6 @@ void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
 AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode)
     : DPIDialog(parent, wxID_ANY, _L("Calibration"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
     , m_dev_id(obj->get_dev_id())
-    , m_start_id(obj->agent_prompt.id)
     , m_shown_id(obj->agent_prompt.id)
 {
     SetBackgroundColour(*wxWHITE);
