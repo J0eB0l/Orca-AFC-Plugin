@@ -622,7 +622,7 @@ class DeviceTabTest(Case):
                                    "// action:prompt_show"]))
         self.send({"print": {"command": "gcode_line", "param": "AFC_CALIBRATION"}})
         shown = self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]
-        self.assertEqual((shown["id"], shown["open"], shown["running"], shown["title"]), (2, True, False, "AFC Calibration"))
+        self.assertEqual((shown["id"], shown["open"], shown["running"], shown["title"]), (3, True, False, "AFC Calibration"))
 
     def test_calibration_runs_past_a_proxy_timeout(self):
         # nginx in front of Moonraker answers 504 after 60 s while Klipper still calibrates;

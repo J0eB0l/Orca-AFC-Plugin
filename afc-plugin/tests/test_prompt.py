@@ -71,9 +71,11 @@ class WatchTest(unittest.TestCase):
         watch.feed(lines("// action:prompt_begin AFC Calibration", "// action:prompt_text Calibration was completed for lane1.",
                          "// action:prompt_show", start=30.0))
         watch.finish()
+        self.assertTrue(watch.json()["running"])  # until the store is read after it ended
+        watch.feed([], watch.token())
         shown = watch.json()
         self.assertEqual((shown["id"], shown["open"], shown["running"], shown["text"]),
-                         (4, True, False, ["Calibration was completed for lane1."]))
+                         (5, True, False, ["Calibration was completed for lane1."]))
 
     def test_errors_while_gcode_runs(self):
         watch = prompt.Watch()
@@ -82,10 +84,22 @@ class WatchTest(unittest.TestCase):
         watch.mark(5.0)
         self.assertTrue(watch.feed(lines("!! Tool must be unloaded to calibrate system", "echo: x", start=6.0)))
         watch.finish()
+        watch.feed([])
         self.assertEqual((watch.json()["errors"], watch.json()["running"]), (["Tool must be unloaded to calibrate system"], False))
         # The next G-code starts with none.
         watch.start()
         self.assertEqual(watch.json()["errors"], [])
+
+    def test_a_read_begun_before_the_end_does_not_settle_it(self):
+        # The G-code's prompt may land in the store after a read began: only a later read counts.
+        watch = prompt.Watch()
+        watch.start()
+        token = watch.token()
+        watch.finish()
+        watch.feed([], token)
+        self.assertTrue(watch.json()["running"])
+        watch.feed(lines(*CALIBRATION, start=40.0), watch.token())
+        self.assertEqual((watch.json()["running"], watch.json()["open"]), (False, True))
 
     def test_errors_before_the_store_was_first_read_are_old(self):
         watch = prompt.Watch()

@@ -41,6 +41,8 @@ class Watch:
         self.running = 0      # OrcaSlicer's G-code lines still running
         self.errors = []      # errors printed since the first of them started
         self._since = None    # store time errors are kept after, None until the G-code starts
+        self._finished = 0    # G-code lines ended so far
+        self._read = 0        # of those, how many ended before a store read that was fed began
         self._building = None
         self._group = None
         self._lock = threading.Lock()
@@ -66,13 +68,32 @@ class Watch:
         """OrcaSlicer's G-code ended, whether it worked or failed."""
         with self._lock:
             self.running = max(0, self.running - 1)
+            self._finished += 1
             self.id += 1
 
-    def feed(self, entries) -> bool:
-        """Reads the G-code store's entries (oldest first) newer than the last
-        read; True when a prompt opened or closed."""
+    def busy(self) -> bool:
+        """A prompt is open or OrcaSlicer's G-code has not been seen to end: keep reading."""
         with self._lock:
-            return self._feed(entries)
+            return self.prompt is not None or self.running > 0 or self._read < self._finished
+
+    def token(self) -> int:
+        """Taken before reading the store and handed to feed(): the G-code is
+        reported running until a read begun after it ended is fed, so the prompt
+        it printed is never missed."""
+        with self._lock:
+            return self._finished
+
+    def feed(self, entries, token=None) -> bool:
+        """Reads the G-code store's entries (oldest first) newer than the last
+        read, which began at `token` (token()); True when a prompt opened or closed."""
+        with self._lock:
+            settled = self._read < self._finished
+            self._read = max(self._read, self._finished if token is None else token)
+            changed = self._feed(entries)
+            if settled and self._read >= self._finished and self.running == 0:
+                self.id += 1
+                changed = True
+            return changed
 
     def _feed(self, entries) -> bool:
         changed = False
@@ -138,7 +159,8 @@ class Watch:
         """The agent_prompt the AFC build of OrcaSlicer shows: {id, open, running,
         errors} and the open prompt's title, text lines, rows of buttons and
         footer buttons."""
-        out = {"id": self.id, "open": self.prompt is not None, "running": self.running > 0,
+        out = {"id": self.id, "open": self.prompt is not None,
+               "running": self.running > 0 or self._read < self._finished,
                "errors": list(self.errors)}
         if self.prompt is not None:
             out.update(self.prompt)

@@ -1122,15 +1122,16 @@ else:
 
         def _prompt(self, printer: _Printer) -> None:
             """The console's prompts, read for a while after OrcaSlicer sends G-code
-            (the Calibration window's) and while one is open."""
-            if printer.prompt.prompt is None and time.monotonic() > printer.prompt_until:
+            (the Calibration window's), while it runs and while a prompt is open."""
+            if not printer.prompt.busy() and time.monotonic() > printer.prompt_until:
                 return
+            token = printer.prompt.token()
             try:
                 answer = printer.client.get("/server/gcode_store", {"count": prompt.LINES})
                 entries = answer["gcode_store"]
             except (MoonrakerError, KeyError, TypeError):
                 return
-            printer.prompt.feed(entries)
+            printer.prompt.feed(entries, token)
 
         def _gcode_to_end(self, printer: _Printer, script: str) -> None:
             """Runs `script` and returns when Klipper has finished it. A proxy in
