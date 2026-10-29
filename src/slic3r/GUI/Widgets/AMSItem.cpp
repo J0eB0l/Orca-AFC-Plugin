@@ -20,6 +20,7 @@
 #include "slic3r/GUI/DeviceCore/DevFilaSwitch.h"
 #include <wx/checklst.h>
 #include <wx/control.h>
+#include <wx/simplebook.h>
 #include <wx/gdicmn.h>
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include <wx/dcclient.h>
@@ -3689,8 +3690,9 @@ void AmsItem::UpdateUnitNameRow()
     const bool has_badge = 1 <= idx && idx <= 5;
     m_humidity->Show(!named || has_badge);
 
-    // Four trays leave room for the name beside the badge; one tray does not, so there the badge stays centered.
-    if (named && m_info.cans.size() > 1) {
+    // A unit with the panel to itself has room for the name beside the badge; a one-tray unit paired with
+    // another in one panel does not, so there the badge stays centered.
+    if (named && HasWideNameRow()) {
         m_humidity_right_gap->SetProportion(0);
         m_humidity_right_gap->AssignSpacer(wxSize(FromDIP(13), 0));
     } else {
@@ -3701,19 +3703,26 @@ void AmsItem::UpdateUnitNameRow()
     Refresh();
 }
 
+// Orca: four trays, or a one-tray unit that is its own page of the AMS book (one nozzle) and so as wide as a
+// four-tray unit. Two one-tray units sharing a page (two nozzles) are each a narrow AmsItem.
+bool AmsItem::HasWideNameRow() const
+{
+    return m_info.cans.size() > 1 || dynamic_cast<wxSimplebook*>(GetParent()) != nullptr;
+}
+
 void AmsItem::RenderUnitName(wxDC& dc)
 {
     if (m_info.unit_name.empty() || !m_humidity) return;
 
     const wxSize size        = GetSize();
-    const bool   single_can  = m_info.cans.size() <= 1;
+    const bool   single_can  = !HasWideNameRow();
     const bool   badge_shown = m_humidity->IsShown();
-    if (single_can && badge_shown) return; // no room beside a badge in a one-tray panel
+    if (single_can && badge_shown) return; // no room beside a badge in a narrow one-tray panel
 
-    // Left edge of the first tray, so the name lines up with A1.
+    // Left edge of the first tray, so the name lines up with A1; a lone tray is centered, so its name starts at the margin.
     int left = FromDIP(13);
     auto first = m_can_refresh_list.find("0");
-    if (!single_can && first != m_can_refresh_list.end() && first->second && first->second->GetParent())
+    if (m_info.cans.size() > 1 && first != m_can_refresh_list.end() && first->second && first->second->GetParent())
         left = first->second->GetParent()->GetPosition().x;
     const int right = badge_shown ? m_humidity->GetPosition().x - FromDIP(6) : size.x - (single_can ? FromDIP(2) : left);
     const int avail = single_can ? size.x - 2 * FromDIP(2) : right - left;

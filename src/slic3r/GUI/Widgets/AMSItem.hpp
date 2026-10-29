@@ -834,6 +834,7 @@ public:
     void     doRender(wxDC& dc);
     void     RenderLiteRoad(wxDC& dc, wxSize size);
     void     RenderUnitName(wxDC& dc);
+    bool     HasWideNameRow() const;
     wxColour GetTagColr(wxString canid);
     std::string GetCurrentCan();
 
