@@ -19,6 +19,7 @@
 #include "slic3r/GUI/DeviceCore/DevDefs.h"
 #include "slic3r/GUI/DeviceCore/DevFilaSwitch.h"
 #include <wx/checklst.h>
+#include <wx/control.h>
 #include <wx/gdicmn.h>
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include <wx/dcclient.h>
@@ -95,6 +96,7 @@ bool AMSinfo::parse_ams_info(MachineObject *obj, DevAms *ams, bool remain_flag, 
     this->current_temperature = ams->GetCurrentTemperature();
     this->ams_type = AMSModel(ams->GetAmsType());
     this->has_dryer = ams->SupportDrying();
+    this->unit_name = ams->GetUnitName();
 
     nozzle_id = ams->GetExtruderId();
     switch_pos = ams->GetSwitcherPos(); // Orca: carry the switch inlet for inlet-aware panel placement
@@ -3183,7 +3185,13 @@ void AmsItem::create(wxWindow *parent)
         //road_panel->SetMinSize(AMS_CAN_ROAD_SIZE);
         if (m_ams_model == AMSModel::GENERIC_AMS || m_ams_model == AMSModel::N3F_AMS || m_ams_model == AMSModel::N3S_AMS){
             m_humidity = new AMSHumidity(this, wxID_ANY, m_info);
-            sizer_item->Add(m_humidity, 0, wxALIGN_CENTER_HORIZONTAL, 0);
+            // Orca: centered between two stretch spacers, as before; UpdateUnitNameRow() moves it right for a unit name
+            auto humidity_row = new wxBoxSizer(wxHORIZONTAL);
+            humidity_row->SetMinSize(wxSize(-1, m_humidity->GetSize().y));
+            humidity_row->AddStretchSpacer(1);
+            humidity_row->Add(m_humidity, 0, wxALIGN_CENTER_VERTICAL, 0);
+            m_humidity_right_gap = humidity_row->AddStretchSpacer(1);
+            sizer_item->Add(humidity_row, 0, wxEXPAND, 0);
         }
         else{
             if (m_ams_model == EXT_AMS){
@@ -3198,6 +3206,7 @@ void AmsItem::create(wxWindow *parent)
         sizer_item->Add(m_panel_road, 1, wxEXPAND);
 
         SetSizer(sizer_item);
+        UpdateUnitNameRow();
     }
     else{
         sizer_can_extra = new wxGridSizer(2, 2, FromDIP(18), FromDIP(20));
@@ -3401,6 +3410,7 @@ void AmsItem::UpdateInfo(AMSinfo info)
     if (m_humidity)
     {
         m_humidity->UpdateInfo(m_info);
+        UpdateUnitNameRow();
     }
 
     for (int i = 0; i < m_can_count; i++) {
@@ -3660,6 +3670,62 @@ void AmsItem::doRender(wxDC& dc)
         dc.SetBrush(wxBrush(*wxTRANSPARENT_BRUSH));
         RenderLiteRoad(dc, size);
     }
+    else {
+        RenderUnitName(dc);
+    }
+}
+
+// Orca: a printer agent names its units (an AFC unit such as Turtle_1). The name sits in the humidity
+// badge's row, left-aligned over the first tray; the badge moves to the right edge. A badge with no
+// humidity reading draws nothing, so it is hidden and the name gets the whole row. Without a name the
+// row is unchanged: the badge stays centered.
+void AmsItem::UpdateUnitNameRow()
+{
+    if (!m_humidity || !m_humidity_right_gap) return;
+
+    const bool named     = !m_info.unit_name.empty();
+    if (!named && m_humidity->IsShown() && m_humidity_right_gap->GetProportion() == 1) return; // stock layout already
+    const int  idx       = m_info.get_humidity_display_idx();
+    const bool has_badge = 1 <= idx && idx <= 5;
+    m_humidity->Show(!named || has_badge);
+
+    // Four trays leave room for the name beside the badge; one tray does not, so there the badge stays centered.
+    if (named && m_info.cans.size() > 1) {
+        m_humidity_right_gap->SetProportion(0);
+        m_humidity_right_gap->AssignSpacer(wxSize(FromDIP(13), 0));
+    } else {
+        m_humidity_right_gap->SetProportion(1);
+        m_humidity_right_gap->AssignSpacer(wxSize(0, 0));
+    }
+    Layout();
+    Refresh();
+}
+
+void AmsItem::RenderUnitName(wxDC& dc)
+{
+    if (m_info.unit_name.empty() || !m_humidity) return;
+
+    const wxSize size        = GetSize();
+    const bool   single_can  = m_info.cans.size() <= 1;
+    const bool   badge_shown = m_humidity->IsShown();
+    if (single_can && badge_shown) return; // no room beside a badge in a one-tray panel
+
+    // Left edge of the first tray, so the name lines up with A1.
+    int left = FromDIP(13);
+    auto first = m_can_refresh_list.find("0");
+    if (!single_can && first != m_can_refresh_list.end() && first->second && first->second->GetParent())
+        left = first->second->GetParent()->GetPosition().x;
+    const int right = badge_shown ? m_humidity->GetPosition().x - FromDIP(6) : size.x - (single_can ? FromDIP(2) : left);
+    const int avail = single_can ? size.x - 2 * FromDIP(2) : right - left;
+    if (avail <= 0) return;
+
+    dc.SetFont(Label::Body_13);
+    dc.SetTextForeground(StateColor::darkModeColorFor(AMS_CONTROL_GRAY800));
+    const wxString name  = wxControl::Ellipsize(m_info.unit_name, dc, wxELLIPSIZE_END, avail);
+    const wxSize   tsize = dc.GetTextExtent(name);
+    const int      row_h = m_humidity->GetSize().y;
+    const int      x     = single_can ? (size.x - tsize.x) / 2 : left;
+    dc.DrawText(name, x, (row_h - tsize.y) / 2);
 }
 
 // Orca: toggle the road segment below the item (m_panel_road). Used to drop the external-spool
@@ -3786,6 +3852,7 @@ void AmsItem::msw_rescale()
         if (lib) lib->msw_rescale();
     }
     if (m_humidity != nullptr) m_humidity->msw_rescale();
+    UpdateUnitNameRow(); // Orca: the name row's right gap is in DIP
     if (m_ext_text != nullptr) m_ext_text->msw_rescale();
     if (m_ext_image != nullptr) m_ext_image->msw_rescale(); //ext image upon the lib
 

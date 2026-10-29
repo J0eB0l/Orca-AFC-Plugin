@@ -218,6 +218,7 @@ public:
 
 public:
     std::string GetAmsId() const { return m_ams_id; }
+    wxString    GetUnitName() const { return m_unit_name; } // Orca: the agent's own unit name, empty for Bambu printers
     wxString    GetDisplayName() const; // display
 
     void     SetAmsType(int type) { m_ams_type = (AmsType)type; }

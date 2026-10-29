@@ -11,6 +11,7 @@
 #include <string>
 #include <wx/anybutton.h>
 #include <wx/colour.h>
+#include <wx/sizer.h>
 #include <vector>
 #include "slic3r/GUI/DeviceCore/DevDefs.h"
 #include <wx/event.h>
@@ -251,6 +252,7 @@ public:
     bool                    has_dryer = true;      // Orca: DevAms::SupportDrying() of an N3F/N3S
     AMSModel                ams_type = AMSModel::GENERIC_AMS;
     AMSModelOriginType      ext_type = AMSModelOriginType::GENERIC_EXT;
+    wxString                unit_name;             // Orca: DevAms::GetUnitName(), shown over the unit's trays
 
     // Orca: switch inlet (POS_IN_A/POS_IN_B) carried from the AMS-level DevAms::GetSwitcherPos(); empty on
     // printers without a Filament Track Switch. Drives inlet-aware panel placement (routes_to_main_extruder).
@@ -273,6 +275,7 @@ public:
             current_temperature == other.current_temperature &&
             ams_type == other.ams_type &&
             ext_type == other.ext_type &&
+            unit_name == other.unit_name &&
             switch_pos == other.switch_pos) // Orca: refresh placement when the switch inlet changes
         {
             return true;
@@ -830,6 +833,7 @@ public:
     void     render(wxDC& dc);
     void     doRender(wxDC& dc);
     void     RenderLiteRoad(wxDC& dc, wxSize size);
+    void     RenderUnitName(wxDC& dc);
     wxColour GetTagColr(wxString canid);
     std::string GetCurrentCan();
 
@@ -871,6 +875,9 @@ private:
     AMSRoadUpPart* m_panel_road = { nullptr };
     std::map<std::string, AMSrefresh*>  m_can_refresh_list;
     AMSHumidity* m_humidity = { nullptr };
+    // Orca: the humidity badge's row. With a unit name the badge moves right and the name takes the left.
+    wxSizerItem*    m_humidity_right_gap = { nullptr };
+    void            UpdateUnitNameRow();
 
     AMSinfo         m_info;
     wxBoxSizer *    sizer_can = {nullptr};
