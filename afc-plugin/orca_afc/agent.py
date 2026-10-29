@@ -554,6 +554,21 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
     return text
 
 
+def u1_start(name: str, text: str, job: PrintJob, snapshot) -> str:
+    """On a U1 with AFC, the command that starts `name` (whose content is
+    `text`) with the print dialog's switches and each printed T number's
+    toolhead, as Snapmaker's own app starts it. Empty for a plain start."""
+    if snapshot is None or not snapshot.present or not snapshot.u1_print.present:
+        return ""
+    toolheads = {}
+    for tool in gcode.tools_printed(text):
+        lane = snapshot.lane_for_tool(tool)
+        if lane is not None and lane.extruder_index >= 0:
+            toolheads[tool] = lane.extruder_index
+    options = protocol.U1PrintOptions(True, job.bed_level, job.flow_calibrate, job.time_lapse)
+    return protocol.u1_start_print_gcode(name, options, toolheads, gcode.tool_usage(text))
+
+
 class _Progress:
     """The latest print stage, set on the worker and shown from the job's thread."""
 
@@ -1641,8 +1656,17 @@ else:
                     pass  # the print goes on, with moonraker-timelapse as it was
             self._backups(printer, snapshot, text, True)
             progress.set(STAGE_SENDING, 0, "Starting print...")
+            start = u1_start(name, text, job, snapshot)
             try:
-                printer.client.post("/printer/print/start", {"filename": name}, timeout=30)
+                if start:
+                    try:
+                        printer.client.gcode(start, timeout=30)
+                    except MoonrakerError as error:
+                        if "Unknown command" not in str(error):
+                            raise
+                        start = ""  # a U1 firmware without it starts the plain way
+                if not start:
+                    printer.client.post("/printer/print/start", {"filename": name}, timeout=30)
             except MoonrakerError:
                 return ERR_START_FAILED
             self._worker.submit(lambda: self._push(printer))

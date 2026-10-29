@@ -211,6 +211,14 @@ class RenumberTest(unittest.TestCase):
         self.assertEqual(g.tools_printed(text), [2, 6])  # filament 0 has no length
         self.assertEqual(g.tools_printed("T3\nT1\nT3\n"), [1, 3])
 
+    def test_what_each_tool_prints(self):
+        # Two filaments on one T number add up.
+        text = g.transform("T0\nT1\n; filament used [mm] = 0.00, 120.50, 3.20\n"
+                           "; filament used [g] = 0.00, 2.40, 0.10\n" + config_block(),
+                           g.Plan(tools={0: 4, 1: 2, 2: 2})).text
+        self.assertEqual(g.tool_usage(text), {2: [2.5, 123.7]})
+        self.assertEqual(g.tool_usage("T0\n"), {})
+
     def test_renumbered_again_for_other_tools(self):
         # A file already on the printer, printing filaments 0 and 1 as T4 and T2, goes to T0 and T4.
         body = "PRINT_START TOOL=4\nT4\nG1 X1 E1\nT2\nG1 X2 E1\n"

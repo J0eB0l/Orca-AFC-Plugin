@@ -976,6 +976,41 @@ class PrintTest(Case):
         self.assertEqual(lines[4], "SET_PRINT_PREFERENCES BED_LEVEL=0 FLOW_CALIBRATE=1 TIME_LAPSE_CAMERA=1 FORCE=1")
         self.assertTrue(lines[5].startswith("PRINT_START"))
 
+    def u1_project(self):
+        self.fake.objects["print_task_config"] = {"auto_bed_leveling": True, "flow_calibrate": False,
+                                                  "time_lapse_camera": False}
+        used = "; filament used [mm] = 100.00, 50.00\n; filament used [g] = 3.10, 1.50\n"
+        return self.project(HEADER + BODY + used + CONFIG)
+
+    def test_u1_starts_with_the_toolheads_it_prints_on(self):
+        # Snapmaker's own start, so the U1 knows which toolheads to flow calibrate.
+        filename = self.u1_project()
+        self.connect()
+        code, _ = self.start(self.print_params(filename=filename, task_flow_cali=True))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.fake.started, [])
+        # Filament 1 prints as T4 on lane5's extruder1, filament 2 as T0 on extruder.
+        self.assertEqual(self.fake.scripts[-1],
+                         'SDCARD_PRINT_FILE_WITH_PARAMETERS FILENAME="Cube_box_plate_1.gcode" '
+                         'MAP_TABLE="[[0,0],[4,1]]" BED_LEVEL="0" FLOW_CALIBRATE="1" TIME_LAPSE_CAMERA="0" '
+                         'FILAMENT_USED_G="[1.5,0,0,0,3.1]" FILAMENT_USED_MM="[50,0,0,0,100]"')
+
+    def test_u1_firmware_without_it_starts_plainly(self):
+        filename = self.u1_project()
+        self.connect()
+        self.fake.gcode_error = 'Unknown command:"SDCARD_PRINT_FILE_WITH_PARAMETERS"'
+        code, _ = self.start(self.print_params(filename=filename))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.fake.started, ["Cube_box_plate_1.gcode"])
+
+    def test_u1_start_refused(self):
+        filename = self.u1_project()
+        self.connect()
+        self.fake.gcode_error = "Printer is busy"
+        code, _ = self.start(self.print_params(filename=filename))
+        self.assertEqual(code, afc_agent.ERR_START_FAILED)
+        self.assertEqual(self.fake.started, [])
+
     def test_send_only_uploads(self):
         self.connect()
         code = self.agent.start_send_gcode_to_sdcard(self.print_params(ams_mapping="", ams_mapping2=""),

@@ -908,6 +908,35 @@ def u1_file_print_options_gcode(options: U1PrintOptions) -> str:
         flag(options.bed_level), flag(options.flow_calibrate), flag(options.time_lapse))
 
 
+# The U1 numbers filaments T0-T31 (print_task_config's LOGICAL_EXTRUDER_NUM).
+U1_TOOLS = 32
+
+
+def u1_start_print_gcode(filename: str, options: U1PrintOptions, toolheads: dict, usage: dict) -> str:
+    """The command that starts a print on a U1 the way Snapmaker's own app
+    does: its MAP_TABLE (T number -> toolhead) and FILAMENT_USED_G tell the U1
+    which toolheads print, and its start-of-print flow calibration runs only
+    on those. A plain SDCARD_PRINT_FILE leaves every toolhead unused.
+    `toolheads` is T number -> toolhead index, `usage` T number -> [grams, mm]
+    (gcode.tool_usage()). Empty when no T number fits the U1's map."""
+    tools = sorted(tool for tool in toolheads if 0 <= tool < U1_TOOLS)
+    if not tools:
+        return ""
+    grams, lengths = [0.0] * (tools[-1] + 1), [0.0] * (tools[-1] + 1)
+    for tool in tools:
+        g, mm = usage.get(tool, (0.0, 0.0))
+        # The U1 counts a toolhead as used only for grams above zero.
+        grams[tool], lengths[tool] = max(g, 0.01), mm
+
+    def numbers(values):
+        return "[%s]" % ",".join("%g" % round(value, 2) for value in values)
+    map_table = "[%s]" % ",".join("[%d,%d]" % (tool, toolheads[tool]) for tool in tools)
+    return ('SDCARD_PRINT_FILE_WITH_PARAMETERS FILENAME="%s" MAP_TABLE="%s" BED_LEVEL="%d" FLOW_CALIBRATE="%d" '
+            'TIME_LAPSE_CAMERA="%d" FILAMENT_USED_G="%s" FILAMENT_USED_MM="%s"' % (
+                filename, map_table, options.bed_level, options.flow_calibrate, options.time_lapse,
+                numbers(grams), numbers(lengths)))
+
+
 def spoolman_for_printer(spoolman_url: str, printer_url: str) -> str:
     """Spoolman's address as this computer reaches it. AFC reports it as the
     printer sees it, so a Spoolman on the printer itself ("localhost",

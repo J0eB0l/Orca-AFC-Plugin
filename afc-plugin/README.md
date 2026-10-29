@@ -220,7 +220,10 @@ Then:
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds
   (and drops a U1's chamber lines), uploads the file to Moonraker and starts it.
   On a Snapmaker U1, the dialog's bed leveling, flow calibration and timelapse
-  switches go into the file. On a printer running moonraker-timelapse (its
+  switches go into the file, and the print starts the way Snapmaker's own app
+  starts it (`SDCARD_PRINT_FILE_WITH_PARAMETERS` with each T number's toolhead
+  and grams), so the U1 knows which toolheads print and its flow calibration
+  runs on them. A U1 firmware without that command gets the plain start. On a printer running moonraker-timelapse (its
   Moonraker component and its `TIMELAPSE_TAKE_FRAME` macro), the dialog's
   **Timelapse** switch turns moonraker-timelapse on or off for the print, and a
   file whose printer preset has no Time lapse G-code takes a frame before each

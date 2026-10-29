@@ -88,6 +88,7 @@ _TAKES_FRAMES = re.compile(r"^[ \t]*TIMELAPSE_TAKE_FRAME(?=[ \t;\r\n]|$)", re.I 
 _LAYER_CHANGE = re.compile(r"^;LAYER_CHANGE(\r?\n)", re.M)
 _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | re.M)
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
+_FILAMENT_GRAMS = re.compile(r"^; filament used \[g\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
 _CHAMBER_LINE = re.compile(r"^[ \t]*M1([49])1(?=[ \t;\r\n]|$)", re.I)
 # The cavity fan OrcaSlicer runs around M191 when the printer has an auxiliary fan.
@@ -271,6 +272,24 @@ def tools_printed(text: str) -> list:
         return filaments_used(text)
     tools = printed_tools(text)
     return sorted({tools.get(filament, filament) for filament in filaments_used(text)})
+
+
+def tool_usage(text: str) -> dict:
+    """T number -> [grams, mm] a file prints with it, from its `filament used`
+    lines, its filaments counted at their (renumbered) tools."""
+    mm_match, g_match = _FILAMENT_USED.search(text), _FILAMENT_GRAMS.search(text)
+    lengths = _floats(mm_match.group(1)) if mm_match else []
+    grams = _floats(g_match.group(1)) if g_match else []
+    tools = printed_tools(text)
+    usage = {}
+    for filament in range(max(len(lengths), len(grams))):
+        g = grams[filament] if filament < len(grams) else 0.0
+        mm = lengths[filament] if filament < len(lengths) else 0.0
+        if g > 0 or mm > 0:
+            total = usage.setdefault(tools.get(filament, filament), [0.0, 0.0])
+            total[0] += g
+            total[1] += mm
+    return usage
 
 
 def top_cover_mode(settings: FileSettings, used: list) -> str:
