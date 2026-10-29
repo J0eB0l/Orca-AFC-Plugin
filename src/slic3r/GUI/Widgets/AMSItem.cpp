@@ -3721,7 +3721,9 @@ void AmsItem::RenderUnitName(wxDC& dc)
 
     dc.SetFont(Label::Body_13);
     dc.SetTextForeground(StateColor::darkModeColorFor(AMS_CONTROL_GRAY800));
-    const wxString name  = wxControl::Ellipsize(m_info.unit_name, dc, wxELLIPSIZE_END, avail);
+    wxString label = m_info.unit_name;
+    label.Replace("_", " "); // AFC names are config section names: Turtle_1 reads as Turtle 1
+    const wxString name  = wxControl::Ellipsize(label, dc, wxELLIPSIZE_END, avail);
     const wxSize   tsize = dc.GetTextExtent(name);
     const int      row_h = m_humidity->GetSize().y;
     const int      x     = single_can ? (size.x - tsize.x) / 2 : left;
