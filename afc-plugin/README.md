@@ -182,6 +182,13 @@ Then:
   objects named with main, chamber, cavity, case, cabinet, enclosure, light or
   lamp (`[led main_led]`, `[output_pin caselight]`, the Snapmaker U1's
   `[led cavity_led]`), full white on or off.
+- The Device tab's fan popup shows every Klipper fan by its name in the AFC
+  build: the part fan (`[fan]`, as Parts) and each `[fan_generic]`, which the
+  popup sets (M106 and SET_FAN_SPEED), and the `[heater_fan]`,
+  `[controller_fan]` and `[temperature_fan]` fans Klipper runs itself, shown as
+  Auto with their speed. The speed popup's Silent, Standard, Sport and
+  Ludicrous set Klipper's speed factor to 50, 100, 124 and 166% (M220), and
+  the speed button shows the factor.
 - The Device tab's camera plays the first enabled webcam Moonraker lists (from
   `moonraker.conf` or Fluidd's and Mainsail's settings): an MJPEG stream
   (`mjpegstreamer`, `mjpegstreamer-adaptive`), else the webcam's snapshot,

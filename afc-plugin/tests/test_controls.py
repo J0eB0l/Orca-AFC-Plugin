@@ -12,6 +12,45 @@ def lane(name, tool, unit="Turtle_1", unit_type="Box_Turtle", **values):
     return Lane(name=name, unit=unit, unit_type=unit_type, maps=["T%d" % tool], **values)
 
 
+class FanTest(unittest.TestCase):
+    OBJECTS = ["heater_fan hotend_fan", "fan_generic aux_fan", "fan", "controller_fan mcu_fan",
+               "temperature_fan chamber", "led main_led", "fan_generic bad name"]
+    FANS = ["fan", "fan_generic aux_fan", "heater_fan hotend_fan", "controller_fan mcu_fan", "temperature_fan chamber"]
+
+    def test_finds_every_fan_the_part_fan_first(self):
+        self.assertEqual(controls.find_fans(self.OBJECTS), self.FANS)
+        self.assertEqual(controls.fan_ids(self.FANS), {"fan": 1, "fan_generic aux_fan": 16, "heater_fan hotend_fan": 17,
+                                                      "controller_fan mcu_fan": 18, "temperature_fan chamber": 19})
+
+    def test_airduct(self):
+        duct = controls.airduct({"fan": {"speed": 0.3}, "heater_fan hotend_fan": {"speed": 1.0}}, self.FANS[:3])
+        self.assertEqual((duct["modeCur"], duct["modeList"], duct["agent_fans"]), (-1, [], True))
+        self.assertEqual(duct["parts"], [
+            {"id": 16, "func": 1, "state": 30, "range": 100 << 16, "name": "", "auto": False},
+            {"id": 256, "func": 16, "state": 0, "range": 100 << 16, "name": "Aux fan", "auto": False},
+            {"id": 272, "func": 17, "state": 100, "range": 100 << 16, "name": "Hotend fan", "auto": True}])
+
+    def test_the_popups_m106_sets_its_fan(self):
+        self.assertEqual(controls.fan_gcode(self.FANS, "M106 P1 S128 \n"), "M106 S128")
+        self.assertEqual(controls.fan_gcode(self.FANS, "M106 P16 S255"), "SET_FAN_SPEED FAN=aux_fan SPEED=1.00")
+        self.assertEqual(controls.fan_gcode(self.FANS, "M106 P17 S0"), "")    # Klipper runs it
+        self.assertEqual(controls.fan_gcode(self.FANS, "M106 P99 S0"), "")    # no such fan
+        self.assertIsNone(controls.fan_gcode(self.FANS, "M106 S128"))         # typed G-code runs as it is
+        self.assertIsNone(controls.fan_gcode([], "M106 P1 S128"))
+
+
+class SpeedTest(unittest.TestCase):
+    def test_levels(self):
+        self.assertEqual([controls.speed_gcode(str(n)) for n in range(6)],
+                         ["", "M220 S50", "M220 S100", "M220 S124", "M220 S166", ""])
+        self.assertEqual(controls.speed_gcode(None), "")
+
+    def test_report(self):
+        self.assertEqual(controls.speed_report(1.0), {"spd_mag": 100, "spd_lvl": 2})
+        self.assertEqual(controls.speed_report(1.24), {"spd_mag": 124, "spd_lvl": 3})
+        self.assertEqual(controls.speed_report(0.6), {"spd_mag": 60, "spd_lvl": 1})
+        self.assertEqual(controls.speed_report(None), {})
+
 class LightTest(unittest.TestCase):
     def test_finds_the_printers_lights(self):
         objects = ["led main_led", "neopixel chamber", "output_pin caselight", "neopixel sb_leds",

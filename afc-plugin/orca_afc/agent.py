@@ -205,11 +205,11 @@ def announcement(dev_id: str, name: str, dev_type: str) -> str:
 # ------------------------------------------------------------------ messages
 
 
-def status_query(extruders: list, lights=(), chamber: str = "") -> dict:
+def status_query(extruders: list, lights=(), chamber: str = "", fans=()) -> dict:
     # display_status holds the slicer's M73 progress, print_stats.info the layers SET_PRINT_STATS_INFO sets.
     query = {"print_stats": ["state", "filename", "print_duration", "info"], "toolhead": ["homed_axes", "extruder"],
              "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"],
-             "display_status": ["progress", "message"], "gcode_move": ["gcode_position"],
+             "display_status": ["progress", "message"], "gcode_move": ["gcode_position", "speed_factor"],
              # What AFC is doing, for the Device tab's stage line (stage.describe()).
              "AFC": stage.AFC_FIELDS}
     for name in extruders or ["extruder"]:
@@ -217,6 +217,7 @@ def status_query(extruders: list, lights=(), chamber: str = "") -> dict:
     if chamber:
         query[chamber] = ["temperature", "target"]
     query.update(controls.light_query(list(lights)))
+    query.update(controls.fan_query(list(fans)))
     query.update(controls.reader_query())
     return query
 
@@ -303,7 +304,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
-                lane_times=None, prompt_json=None) -> dict:
+                lane_times=None, prompt_json=None, fans=()) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -319,7 +320,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     and `probing` whether it probed its bed since the last push
     (stage.ProbeWatch), for the stage line, `lane_times` each lane's
     changes in AFC.log (swaptimes.lane_samples()) and `prompt_json` the
-    console's open prompt (prompt.Watch.json()), for the Calibration window."""
+    console's open prompt (prompt.Watch.json()), for the Calibration window,
+    and `fans` the printer's fans (controls.find_fans()), for the fan popup."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -396,6 +398,11 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     speed = _number(obj("fan").get("speed"))
     if speed is not None:
         out["fan_gear"] = max(0, min(255, int(round(speed * 255))))
+    if fans:
+        # The AFC build of OrcaSlicer's fan popup shows every fan, by its name.
+        out["device"] = {"airduct": controls.airduct(objects, list(fans))}
+    # The speed popup's level and the speed in percent beside it.
+    out.update(controls.speed_report(obj("gcode_move").get("speed_factor")))
     if isinstance(stats.get("filename"), str):
         out["subtask_name"] = out["gcode_file"] = stats["filename"]
     out["thumbnail_url"] = job.get("thumbnail_url", "")
@@ -604,6 +611,7 @@ class _Printer:
     failures: int = 0
     extruders: list = field(default_factory=lambda: ["extruder"])
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
+    fans: list = field(default_factory=list)          # Klipper fans, for the fan popup (controls.find_fans())
     chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
@@ -828,6 +836,7 @@ else:
                 objects = listed.get("objects") if isinstance(listed, dict) else listed
                 printer.lights = controls.find_lights(objects if isinstance(objects, list) else [])
                 printer.chamber = controls.find_chamber(objects if isinstance(objects, list) else [])
+                printer.fans = controls.find_fans(objects if isinstance(objects, list) else [])
             except MoonrakerError:
                 pass
             if not printer.model_id:
@@ -876,7 +885,7 @@ else:
             if snapshot is not None and snapshot.extruders:
                 printer.extruders = list(snapshot.extruders)
             try:
-                objects = printer.client.objects_query(status_query(printer.extruders, printer.lights, printer.chamber))
+                objects = printer.client.objects_query(status_query(printer.extruders, printer.lights, printer.chamber, printer.fans))
             except MoonrakerError:
                 printer.failures += 1
                 if printer.failures >= LOST_AFTER:
@@ -914,7 +923,8 @@ else:
                                   toolhead_parts(printer.nozzles, printer.saved_nozzles, printer.extruders),
                                   printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
-                                  self._probing(printer, status), printer.swap.lanes, printer.prompt.json())
+                                  self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
+                                  printer.fans)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1268,6 +1278,12 @@ else:
                 if not isinstance(script, str):
                     return ERR_INVALID_RESULT
                 reply = {"command": "gcode_line", "param": script}
+                # The fan popup sends M106 P<its fan id>, which Klipper's M106 reads as the part fan.
+                fan = controls.fan_gcode(printer.fans, script)
+                if fan is not None:
+                    if not fan:
+                        return ERR_CAP_NOT_AVAILABLE
+                    script = fan
                 if isinstance(job.get("sequence_id"), str):
                     reply["sequence_id"] = job["sequence_id"]
 
@@ -1297,6 +1313,11 @@ else:
                 index = job.get("extruder_index")
                 heater = "extruder%d" % index if isinstance(index, int) and index > 0 else "extruder"
                 self._run(printer, "SET_HEATER_TEMPERATURE HEATER=%s TARGET=%d" % (heater, job["target_temp"]))
+            elif command == "print_speed":
+                script = controls.speed_gcode(job.get("param"))
+                if not script:
+                    return ERR_INVALID_RESULT
+                self._run(printer, script, push=True)
             elif command == "home":
                 self._run(printer, "G28")
             elif command == "clear_agent_message":

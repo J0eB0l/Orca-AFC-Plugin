@@ -11,6 +11,10 @@ the printer's own G-code:
 - The tray edit popup sets the lane's color and material.
 - Load and Unload swap a lane into its toolhead and pull it back out.
 - The camera plays the printer's first webcam that Moonraker lists.
+- The fan popup shows every Klipper fan: the part fan and the fan_generic
+  fans it sets, and those Klipper runs itself (heater, controller and
+  temperature fans) as Auto.
+- The speed popup's four levels set Klipper's speed factor (M220).
 """
 
 from __future__ import annotations
@@ -98,6 +102,107 @@ def light_gcode(lights: list, on: bool) -> list:
         else:
             out.append("SET_LED LED=%s RED=%d GREEN=%d BLUE=%d WHITE=%d" % (name, v, v, v, v))
     return out
+
+
+# ------------------------------------------------------------------ fans
+
+# Fans G-code sets, then those Klipper runs itself, which the fan popup shows as Auto.
+SET_FAN_KINDS = ("fan", "fan_generic")
+AUTO_FAN_KINDS = ("heater_fan", "controller_fan", "temperature_fan")
+PART_FAN_ID = 1      # Bambu's part cooling fan, which OrcaSlicer names Parts
+FIRST_FAN_ID = 16    # the others, past Bambu's fan ids
+_M106 = re.compile(r"^\s*M106 P(\d+) S(\d+)\s*$")
+
+
+def find_fans(objects) -> list:
+    """The printer's fans ("fan", "fan_generic aux", "heater_fan hotend_fan",
+    ...) from Moonraker's object list: the part fan, the fans G-code sets,
+    then those Klipper runs itself."""
+    found = [str(o) for o in objects or []]
+    out = ["fan"] if "fan" in found else []
+    for kind in SET_FAN_KINDS[1:] + AUTO_FAN_KINDS:
+        for obj in found:
+            k, _, name = obj.partition(" ")
+            if k == kind and _NAME.match(name):
+                out.append(obj)
+    return out
+
+
+def fan_ids(fans: list) -> dict:
+    """Each fan's id in the fan popup: the part fan Bambu's, the others from FIRST_FAN_ID."""
+    ids, n = {}, FIRST_FAN_ID
+    for obj in fans:
+        if obj == "fan":
+            ids[obj] = PART_FAN_ID
+        else:
+            ids[obj], n = n, n + 1
+    return ids
+
+
+def fan_query(fans: list) -> dict:
+    return {obj: ["speed"] for obj in fans}
+
+
+def _fan_name(obj: str) -> str:
+    """"heater_fan hotend_fan" is "Hotend fan"; the part fan has none, so OrcaSlicer names it Parts."""
+    name = obj.partition(" ")[2].replace("_", " ").strip()
+    return name[:1].upper() + name[1:]
+
+
+def airduct(status: dict, fans: list) -> dict:
+    """The fans as the new protocol's airduct (print.device.airduct) with the
+    AFC build of OrcaSlicer's agent_fans, so the fan popup shows each by its
+    name with its speed, the ones Klipper runs itself as Auto."""
+    parts = []
+    for obj, fan_id in fan_ids(fans).items():
+        st = status.get(obj) if isinstance(status, dict) else None
+        speed = st.get("speed") if isinstance(st, dict) else None
+        speed = speed if isinstance(speed, (int, float)) and not isinstance(speed, bool) else 0
+        parts.append({"id": fan_id << 4, "func": fan_id, "state": max(0, min(100, int(round(speed * 100)))),
+                      "range": 100 << 16, "name": _fan_name(obj),
+                      "auto": obj.partition(" ")[0] in AUTO_FAN_KINDS})
+    return {"modeCur": -1, "subMode": -1, "modeList": [], "parts": parts, "agent_fans": True}
+
+
+def fan_gcode(fans: list, script: str) -> str:
+    """The fan popup's "M106 P<id> S<0-255>" as Klipper's command for that
+    fan; None when the line is not one of the popup's (Klipper's M106 has no P
+    and would set the part fan), "" for a fan G-code cannot set."""
+    match = _M106.match(script)
+    if not match or not fans:
+        return None
+    fan_id, value = int(match.group(1)), min(255, int(match.group(2)))
+    obj = next((o for o, i in fan_ids(fans).items() if i == fan_id), None)
+    if obj == "fan":
+        return "M106 S%d" % value
+    if obj and obj.startswith("fan_generic "):
+        return "SET_FAN_SPEED FAN=%s SPEED=%.2f" % (obj.partition(" ")[2], value / 255.0)
+    return ""
+
+
+# ------------------------------------------------------------------ speed
+
+# The speed popup's levels (Silent, Standard, Sport, Ludicrous) as Bambu's speed percents.
+SPEED_LEVELS = {1: 50, 2: 100, 3: 124, 4: 166}
+
+
+def speed_gcode(level) -> str:
+    """The speed popup's level ("1" to "4") as Klipper's speed factor; "" for another."""
+    try:
+        percent = SPEED_LEVELS.get(int(level))
+    except (TypeError, ValueError):
+        percent = None
+    return "M220 S%d" % percent if percent else ""
+
+
+def speed_report(factor) -> dict:
+    """spd_mag (the speed in percent) and spd_lvl (the nearest level) from
+    gcode_move's speed_factor; {} when Klipper did not report it."""
+    if not isinstance(factor, (int, float)) or isinstance(factor, bool) or factor <= 0:
+        return {}
+    percent = int(round(factor * 100))
+    level = min(SPEED_LEVELS, key=lambda lvl: abs(SPEED_LEVELS[lvl] - percent))
+    return {"spd_mag": percent, "spd_lvl": level}
 
 
 # ------------------------------------------------------------------ RFID

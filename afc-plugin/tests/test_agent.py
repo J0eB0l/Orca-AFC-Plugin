@@ -826,6 +826,30 @@ class DeviceTabTest(Case):
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["SET_LED LED=main_led RED=0 GREEN=0 BLUE=0 WHITE=0"])
 
+    def test_fans(self):
+        self.fake.objects["heater_fan hotend_fan"] = {"speed": 1.0}
+        self.fake.objects["fan_generic aux_fan"] = {"speed": 0.0}
+        self.connect()
+        parts = self.push()["device"]["airduct"]["parts"]
+        self.assertEqual([(p["name"], p["state"], p["auto"]) for p in parts],
+                         [("", 50, False), ("Aux fan", 0, False), ("Hotend fan", 100, True)])
+        self.send({"print": {"command": "gcode_line", "param": "M106 P16 S255 \n"}})
+        self.send({"print": {"command": "gcode_line", "param": "M106 P1 S0 \n"}})
+        self.assertEqual(self.send({"print": {"command": "gcode_line", "param": "M106 P17 S0 \n"}}),
+                         afc_agent.ERR_CAP_NOT_AVAILABLE)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["SET_FAN_SPEED FAN=aux_fan SPEED=1.00", "M106 S0"])
+
+    def test_print_speed(self):
+        self.fake.objects["gcode_move"] = {"speed_factor": 1.24}
+        self.connect()
+        push = self.push()
+        self.assertEqual((push["spd_lvl"], push["spd_mag"]), (3, 124))
+        self.send({"print": {"command": "print_speed", "param": "4"}})
+        self.assertEqual(self.send({"print": {"command": "print_speed", "param": "9"}}), afc_agent.ERR_INVALID_RESULT)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["M220 S166"])
+
     def test_chamber_temperature(self):
         self.fake.objects["temperature_sensor chamber"] = {"temperature": 38.6}
         self.connect()
