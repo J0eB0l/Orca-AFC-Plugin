@@ -46,11 +46,15 @@ struct AirParts
     int state{0};       // 100%
     int range_start{0}; // 100%
     int range_end{0};   // 100%
+    // Orca: a printer agent's fan carries its own name, and automatic when the printer runs it itself
+    std::string name;
+    bool        automatic{false};
 
 public:
     bool operator ==(const AirParts& other) const
     {
-        return (type == other.type) && (id == other.id) && (func == other.func) && (state == other.state) && (range_start == other.range_start) && (range_end == other.range_end);
+        return (type == other.type) && (id == other.id) && (func == other.func) && (state == other.state) && (range_start == other.range_start) && (range_end == other.range_end) &&
+            (name == other.name) && (automatic == other.automatic);
     };
 };
 
@@ -77,12 +81,15 @@ struct AirDuctData
 
     int  m_sub_mode = -1;// the submode of airduct, for cooling: 0-filter, 1-cooling
     bool m_support_cooling_filter = false;// support switch filter on cooling mode or not
+    // Orca: the parts are a printer agent's fans (all of a Klipper printer's), with no modes
+    bool m_agent_fans = false;
 
 public:
     bool operator ==(const AirDuctData& other) const
     {
         return (curren_mode == other.curren_mode) && (modes == other.modes) && (parts == other.parts) &&
-            (m_sub_mode == other.m_sub_mode) && (m_support_cooling_filter == other.m_support_cooling_filter);
+            (m_sub_mode == other.m_sub_mode) && (m_support_cooling_filter == other.m_support_cooling_filter) &&
+            (m_agent_fans == other.m_agent_fans);
     };
 
     bool operator !=(const AirDuctData& other) const
@@ -92,6 +99,7 @@ public:
 
     bool IsSupportCoolingFilter() const { return m_support_cooling_filter; }
     bool IsCoolingFilerOn() const { return m_sub_mode == 1; }
+    bool IsAgentFans() const { return m_agent_fans; }
     bool IsExaustFanExit() const
     {
         for (auto &p : parts) {

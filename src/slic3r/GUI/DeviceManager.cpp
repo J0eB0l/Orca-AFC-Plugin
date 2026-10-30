@@ -3934,6 +3934,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
 
                         /* cooling */
                         m_fan->ParseV1_0(jj);
+                        // Orca: a printer agent on the old protocol sends its fans as the new protocol's airduct,
+                        // which parse_new_info() reads only for the new protocol.
+                        if (jj.contains("device") && jj["device"].is_object() && jj["device"].contains("airduct") && !check_enable_np(jj))
+                            m_fan->ParseV3_0(jj["device"]);
 
                         /* parse speed */
                         DevPrintOptionsParser::Parse(m_print_options, jj);

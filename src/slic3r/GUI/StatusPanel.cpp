@@ -5060,7 +5060,7 @@ void StatusPanel::on_nozzle_fan_switch(wxCommandEvent &event)
     }
 
     if (!obj) { return; }
-    if (obj->GetFan()->GetAirDuctData().modes.empty())
+    if (obj->GetFan()->GetAirDuctData().modes.empty() && !obj->GetFan()->GetAirDuctData().IsAgentFans())
     {
         obj->GetFan()->converse_to_duct(true, obj->GetFan()->GetSupportAuxFanData(), obj->GetFan()->GetSupportChamberFan());
     }

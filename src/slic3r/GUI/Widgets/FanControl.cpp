@@ -3,6 +3,8 @@
 #include "../I18N.hpp"
 #include "../GUI_App.hpp"
 #include "../MsgDialog.hpp"
+#include "../GUI.hpp"
+#include "../format.hpp"
 #include <nlohmann/json.hpp>
 
 #include <wx/anybutton.h>
@@ -444,6 +446,7 @@ FanControlNew::FanControlNew(wxWindow *parent, const AirDuctData &fan_data, int 
 
 void FanControlNew::on_left_down(wxMouseEvent& evt)
 {
+    if (m_automatic) { return; }
     //auto mouse_pos = GetParent()->ClientToScreen(evt.GetPosition());
     //auto tag_pos = m_fan_operate->ScreenToClient(mouse_pos);
     //evt.SetPosition(tag_pos);
@@ -501,7 +504,7 @@ bool FanControlNew::check_printing_state()
 
 void FanControlNew::on_swith_fan(wxMouseEvent& evt)
 {
-    if (!check_printing_state()) {
+    if (m_automatic || !check_printing_state()) {
         return;
     }
 
@@ -534,8 +537,15 @@ void FanControlNew::on_swith_fan(bool on)
 void FanControlNew::update_mode()
 {
     int cur_mode = m_mode_id;
-    if (cur_mode < 0) {
+    if (cur_mode < 0 && m_automatic) {
+        // TRN The speed of a fan the printer runs itself, %1% is the speed in percent, as 40%
+        m_static_status_name->SetLabelText(format_wxstr(_L("Auto %1%"), wxString::Format("%d%%", m_automatic_percent)));
+        m_static_status_name->Show();
+        m_switch_button->Hide();
+        m_fan_operate->Hide();
+    } else if (cur_mode < 0) {
         m_static_status_name->Hide();
+        m_switch_button->Show();
         m_fan_operate->Show();
     } else {
         auto mode = m_fan_data.modes[cur_mode];
@@ -726,7 +736,7 @@ void FanControlPopupNew::CreateDuct()
     UpdateParts();
 
     //update data
-    if (!m_data.modes.empty())
+    if (!m_data.modes.empty() || m_data.IsAgentFans())
     {
         for (const auto& part : m_data.parts)
         {
@@ -768,7 +778,7 @@ void FanControlPopupNew::UpdateParts()
     for (const auto& part : m_data.parts) {
 
         auto part_id = part.id;
-        auto part_name = get_fan_func_name(m_data.curren_mode, m_data.m_sub_mode, AIR_FUN(part_id));
+        auto part_name = part.name.empty() ? get_fan_func_name(m_data.curren_mode, m_data.m_sub_mode, AIR_FUN(part_id)) : from_u8(part.name);
 
         auto fan_control = m_fan_control_list[part_id];
         if (!fan_control)
@@ -782,6 +792,7 @@ void FanControlPopupNew::UpdateParts()
         fan_control->set_name(part_name);
         fan_control->update_fan_data(m_data);
         fan_control->set_mode_id(m_data.curren_mode);
+        fan_control->set_automatic(part.automatic, part.state);
         fan_control->update_mode();
     }
 
@@ -845,7 +856,7 @@ void FanControlPopupNew::update_fan_data(MachineObject *obj)
         return;
     }
 
-    if (!obj->GetFan()->GetAirDuctData().modes.empty()) {
+    if (!obj->GetFan()->GetAirDuctData().modes.empty() || obj->GetFan()->GetAirDuctData().IsAgentFans()) {
         update_fan_data(obj->GetFan()->GetAirDuctData());
     } else {
         int cooling_fan_speed = round(obj->GetFan()->GetCoolingFanSpeed() / float(25.5));

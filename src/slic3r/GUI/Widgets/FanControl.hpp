@@ -160,6 +160,8 @@ protected:
     wxBoxSizer *m_sizer_control_bottom{ nullptr };
     wxStaticText *m_static_status_name{nullptr};
     int           m_show_mode{0};// 0 - ctrl, 1 - auto, 2 - off
+    bool          m_automatic{false};   // Orca: a printer agent's fan the printer runs itself, shown as Auto
+    int           m_automatic_percent{0};
 
     //Fan and door may use the same mode_id, but they are different, they need to be distinguished by the m_type field
     AirDuctData m_fan_data;
@@ -177,6 +179,7 @@ public:
     void set_machine_obj(MachineObject *obj);
     void set_name(wxString name);
     void set_mode_id(int id) { m_mode_id = id;}
+    void set_automatic(bool automatic, int percent) { m_automatic = automatic; m_automatic_percent = percent; }
     void set_part_id(int id){m_part_id = id;};
     void set_fan_speed(int g);
     void set_fan_speed_percent(int speed);

@@ -162,6 +162,7 @@ void Slic3r::DevFan::ParseV3_0(const json &device)
         const json &airduct = device["airduct"];
         if (airduct.contains("modeCur")) { m_air_duct_data.curren_mode = airduct["modeCur"].get<int>(); }
         if (airduct.contains("subMode")) { m_air_duct_data.m_sub_mode = airduct["subMode"].get<int>(); }
+        m_air_duct_data.m_agent_fans = airduct.contains("agent_fans") && airduct["agent_fans"].is_boolean() && airduct["agent_fans"].get<bool>();
         if (airduct.contains("modeList") && airduct["modeList"].is_array()) {
             auto list = airduct["modeList"].get<std::vector<json>>();
 
@@ -201,6 +202,8 @@ void Slic3r::DevFan::ParseV3_0(const json &device)
                 part.state       = m_owner->get_flag_bits(state, 0, 8);
                 part.range_start = m_owner->get_flag_bits(range, 0, 16);
                 part.range_end   = m_owner->get_flag_bits(range, 16, 16);
+                if (it_part->contains("name") && (*it_part)["name"].is_string()) { part.name = (*it_part)["name"].get<std::string>(); }
+                if (it_part->contains("auto") && (*it_part)["auto"].is_boolean()) { part.automatic = (*it_part)["auto"].get<bool>(); }
 
                 m_air_duct_data.parts.push_back(part);
             }
