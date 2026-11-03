@@ -11,7 +11,9 @@
 #include <map>
 #include <cassert>
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/SpoolPreset.hpp"
 #include <cstdlib>
+#include <cmath>
 #include <regex>
 #include <wx/event.h>
 #include <wx/gdicmn.h>
@@ -40,6 +42,7 @@
 #include "CalibUtils.hpp"
 #include "GUI.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include "I18N.hpp"
 #include "Widgets/Label.hpp"
 #include "MsgDialog.hpp"
@@ -2284,9 +2287,19 @@ void CalibrationPresetPage::sync_ams_info(MachineObject* obj)
                     ;
                 }
             }
-            auto filament_ams = full_filament_ams_list.find(tray_id);
+            // Orca: the sidebar list keys a printer agent's tray by its tool, the page by unit and slot.
+            auto filament_ams = full_filament_ams_list.find(tray_item.second->tool >= 0 ? tray_item.second->tool : tray_id);
             if (filament_ams != full_filament_ams_list.end()) {
                 filament_ams_list[tray_id] = filament_ams->second;
+                // Orca: a printer agent's tray offers the preset a filament sync gives it (the one the agent
+                // names, else the spool's own when one exists), which load_tray() picks over a filament id.
+                const DevAmsTray &tray = *tray_item.second;
+                if (tray.tool >= 0 || tray.spool || !tray.filament_preset.empty()) {
+                    std::string preset = tray.filament_preset;
+                    if (preset.empty() && tray.spool)
+                        preset = existing_spool_preset(*wxGetApp().preset_bundle, *tray.spool);
+                    filament_ams_list[tray_id].set_key_value("filament_preset", new ConfigOptionStrings{preset});
+                }
             }
         }
     }
@@ -2752,6 +2765,17 @@ Preset* CalibrationPresetPage::get_printer_preset(MachineObject* obj, float nozz
 
     Preset* printer_preset = nullptr;
     PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    // Orca: a printer agent's printer calibrates with the selected printer preset, the one it connects
+    // through, when it is that model with that nozzle: its own start G-code and the filament presets made
+    // for it then apply, and a printer with no system preset can calibrate at all.
+    if (!obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID) {
+        Preset &selected = preset_bundle->printers.get_selected_preset();
+        const auto *nozzles = selected.config.option<ConfigOptionFloats>("nozzle_diameter");
+        const std::string model_id = selected.get_current_printer_type(preset_bundle);
+        if (nozzles && !nozzles->values.empty() && std::abs(nozzles->get_at(0) - nozzle_value) < 1e-3 &&
+            (obj->printer_type.empty() || model_id == obj->printer_type))
+            return &selected;
+    }
     for (auto printer_it = preset_bundle->printers.begin(); printer_it != preset_bundle->printers.end(); printer_it++) {
         // only use system printer preset
         if (!printer_it->is_system) continue;

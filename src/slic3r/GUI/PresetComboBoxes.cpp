@@ -2015,7 +2015,18 @@ void GUI::CalibrateFilamentComboBox::load_tray(DynamicPrintConfig &config)
         clr_picker->SetBitmap(*get_extruder_color_icon("#F0F0F0FF", m_tray_name, FromDIP(20), FromDIP(20)));
     } else {
         auto &filaments = m_collection->get_presets();
-        auto  iter      = std::find_if(filaments.begin(), filaments.end(), [this](auto &f) {
+        auto is_calibrate_filament = [this](const Preset &f) {
+            return m_preset_bundle->calibrate_filaments.find(&f) != m_preset_bundle->calibrate_filaments.end();
+        };
+        // Orca: a printer agent's tray carries filament_preset (maybe empty): the preset its filament
+        // sync gives the tray, before any filament id match.
+        const bool        agent_tray  = config.has("filament_preset");
+        const std::string tray_preset = agent_tray ? config.opt_string("filament_preset", 0u) : std::string();
+        auto iter = tray_preset.empty() ? filaments.end() : std::find_if(filaments.begin(), filaments.end(), [&](const Preset &f) {
+            return f.name == tray_preset && is_calibrate_filament(f);
+        });
+        if (iter == filaments.end())
+            iter = std::find_if(filaments.begin(), filaments.end(), [this](auto &f) {
             if (!f.is_system) // Only match system preset
                 return false;
             bool is_compatible = m_preset_bundle->calibrate_filaments.find(&f) != m_preset_bundle->calibrate_filaments.end();
@@ -2030,6 +2041,20 @@ void GUI::CalibrateFilamentComboBox::load_tray(DynamicPrintConfig &config)
                 bool is_compatible = m_preset_bundle->calibrate_filaments.find(&f) != m_preset_bundle->calibrate_filaments.end();
                 return is_compatible && f.filament_id == m_filament_id;
             });
+        }
+        // Orca: an agent's tray with no preset of its filament id takes one of its material, a system
+        // Generic one first, so a spool not synced yet can still be calibrated.
+        if (agent_tray && iter == filaments.end() && !m_filament_type.empty()) {
+            const std::string generic = "Generic " + m_filament_type;
+            for (int rank = 0; rank < 3 && iter == filaments.end(); ++rank)
+                iter = std::find_if(filaments.begin(), filaments.end(), [&](const Preset &f) {
+                    if (!is_calibrate_filament(f) || f.is_default)
+                        return false;
+                    const ConfigOptionStrings *type = f.config.option<ConfigOptionStrings>("filament_type");
+                    if (type == nullptr || type->values.empty() || !boost::iequals(type->values.front(), m_filament_type))
+                        return false;
+                    return rank == 0 ? f.is_system && boost::istarts_with(f.name, generic) : rank == 1 ? f.is_system : true;
+                });
         }
         //if (iter == filaments.end() && !m_filament_type.empty()) {
         //    auto filament_type = "Generic " + m_filament_type;
