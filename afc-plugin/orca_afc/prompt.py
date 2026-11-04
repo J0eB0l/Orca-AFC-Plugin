@@ -17,6 +17,7 @@ LINES = 100   # newest G-code store lines read at a time
 WATCH = 600.0  # seconds the store is read after OrcaSlicer sends G-code, for the prompts it opens
 ERROR = "!! "  # Klipper's and AFC's errors in the console
 ERRORS = 5     # errors kept for the window
+NOTE = "// "   # Klipper's answers in the console, kept as notes when the G-code asks for them (Watch.start())
 
 
 def _button(rest: str) -> dict:
@@ -40,6 +41,8 @@ class Watch:
         self.id = 0
         self.running = 0      # OrcaSlicer's G-code lines still running
         self.errors = []      # errors printed since the first of them started
+        self.notes = []       # answers starting with the G-code's note prefix, printed since it started
+        self._note = ""       # that prefix ("AFC_autocal: "), "" to keep none
         self._since = None    # store time errors are kept after, None until the G-code starts
         self._finished = 0    # G-code lines ended so far
         self._read = 0        # of those, how many ended before a store read that was fed began
@@ -47,12 +50,17 @@ class Watch:
         self._group = None
         self._lock = threading.Lock()
 
-    def start(self) -> None:
-        """OrcaSlicer sent G-code, which runs once the G-code before it ends."""
+    def start(self, note: str = "") -> None:
+        """OrcaSlicer sent G-code, which runs once the G-code before it ends.
+        Klipper's answers that start with `note` are kept for the window, as
+        the result of a command that reports one that way."""
         with self._lock:
             if self.running == 0:
                 self.errors = []
+                self.notes = []
+                self._note = ""
                 self._since = None
+            self._note = note or self._note
             self.running += 1
 
     def mark(self, newest) -> None:
@@ -119,6 +127,10 @@ class Watch:
             self.errors = (self.errors + [line[len(ERROR):].strip()])[-ERRORS:]
             self.id += 1
             return True
+        if self._note and line.startswith(NOTE + self._note):
+            if self._since is not None and when > self._since:
+                self.notes = (self.notes + [line[len(NOTE):].strip()])[-ERRORS:]
+            return False
         if not line.startswith(PREFIX):
             return False
         word, _, rest = line[len(PREFIX):].partition(" ")
@@ -157,11 +169,11 @@ class Watch:
 
     def json(self) -> dict:
         """The agent_prompt the AFC build of OrcaSlicer shows: {id, open, running,
-        errors} and the open prompt's title, text lines, rows of buttons and
-        footer buttons."""
+        errors, notes} and the open prompt's title, text lines, rows of buttons
+        and footer buttons."""
         out = {"id": self.id, "open": self.prompt is not None,
                "running": self.running > 0 or self._read < self._finished,
-               "errors": list(self.errors)}
+               "errors": list(self.errors), "notes": list(self.notes)}
         if self.prompt is not None:
             out.update(self.prompt)
         return out

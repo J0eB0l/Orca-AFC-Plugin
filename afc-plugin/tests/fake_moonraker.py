@@ -62,6 +62,7 @@ class FakeMoonraker:
         self.timelapse = None
         self.offline = False
         self.gcode_store = []
+        self.gcode_help = {}  # /printer/gcode/help: command -> description
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(self))
@@ -89,6 +90,8 @@ class FakeMoonraker:
         if method == "GET" and path == "/printer/afc/status":
             return (404, {"error": {"code": 404, "message": "Not Found"}}) if self.webhook is None else (
                 200, {"result": self.webhook})
+        if method == "GET" and path == "/printer/gcode/help":
+            return 200, {"result": dict(self.gcode_help)}
         if method == "GET" and path == "/printer/objects/list":
             return 200, {"result": {"objects": list(self.objects)}}
         if method == "POST" and path == "/printer/objects/query":

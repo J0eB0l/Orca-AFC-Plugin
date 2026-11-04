@@ -367,7 +367,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
-                lane_times=None, prompt_json=None, fans=()) -> dict:
+                lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -384,7 +384,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     (stage.ProbeWatch), for the stage line, `lane_times` each lane's
     changes in AFC.log (swaptimes.lane_samples()) and `prompt_json` the
     console's open prompt (prompt.Watch.json()), for the Calibration window,
-    and `fans` the printer's fans (controls.find_fans()), for the fan popup."""
+    `fans` the printer's fans (controls.find_fans()), for the fan popup, and
+    `flow_calibration` whether AFC autocal can measure a lane's K here
+    (FLOW_K_CALIBRATION)."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -425,6 +427,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_chamber": bool(chamber),
         # ... runs AFC's calibration from the Device tab's Calibration and shows its prompts.
         "agent_calibration": "AFC_CALIBRATION", "agent_prompt": prompt_json or prompt.Watch().json(),
+        # ... and on a U1 with AFC autocal, offers U1 Flow Calibration as a Flow Dynamics method
+        # (agent_flow_calibration command).
+        "agent_flow_calibration": u1 and flow_calibration,
     }
     if swap_times:
         # The AFC build of OrcaSlicer puts these in the printer's load, unload and tool change times on a sync.
@@ -629,6 +634,17 @@ def auto_lanes(extra_options: str) -> bool:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
+FLOW_K_CALIBRATION = "AFC_CALIBRATE_LANE_FLOW_K"  # AFC autocal: measure the current lane's K and save it
+FLOW_K_NOTE = "AFC_autocal: "                     # how autocal answers it in the console
+
+
+def flow_calibration_gcode(lane, current_lane: str) -> str:
+    """U1 Flow Calibration of `lane`: loaded into its toolhead first unless it
+    is the lane there now (`current_lane`), as autocal measures the current lane."""
+    load = "" if lane.name == current_lane and lane.tool_loaded else "CHANGE_TOOL LANE=%s\n" % lane.name
+    return load + FLOW_K_CALIBRATION
+
+
 def is_pa_calibration(project: str) -> bool:
     """Whether a print is one of the Calibration tab's Flow Dynamics tests,
     which OrcaSlicer names after its mode ("pa_line_calib_mode",
@@ -720,6 +736,7 @@ class _Printer:
     extruders: list = field(default_factory=lambda: ["extruder"])
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
     fans: list = field(default_factory=list)          # Klipper fans, for the fan popup (controls.find_fans())
+    flow_calibration: bool = False                    # AFC autocal's FLOW_K_CALIBRATION command is there
     chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
@@ -988,6 +1005,11 @@ else:
                 printer.fans = controls.find_fans(objects if isinstance(objects, list) else [])
             except MoonrakerError:
                 pass
+            try:
+                commands = printer.client.get("/printer/gcode/help")
+                printer.flow_calibration = isinstance(commands, dict) and FLOW_K_CALIBRATION in commands
+            except MoonrakerError:
+                pass
             if not printer.model_id:
                 printer.model_id = model_id(printer.model, printer.model_file)
             printer.connected, printer.failures = True, 0
@@ -1092,7 +1114,7 @@ else:
                                   printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
                                   self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
-                                  printer.fans)
+                                  printer.fans, printer.flow_calibration)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1452,26 +1474,9 @@ else:
                     if not fan:
                         return ERR_CAP_NOT_AVAILABLE
                     script = fan
-                if isinstance(job.get("sequence_id"), str):
-                    reply["sequence_id"] = job["sequence_id"]
-
-                printer.prompt_until = time.monotonic() + prompt.WATCH
-                printer.prompt.start()
-
-                def run():
-                    try:
-                        printer.prompt.mark(self._store_time(printer))
-                        self._gcode_to_end(printer, script)
-                        reply["result"] = "success"
-                    except MoonrakerError:
-                        reply["result"] = "failed"
-                    finally:
-                        printer.prompt.finish()
-                    self._send(printer, {"print": reply})
-                    # A prompt the G-code opened shows now, not at the next push.
-                    self._work(printer).submit(lambda: self._push(printer))
-
-                self._gcode.submit(run)
+                self._watched_gcode(printer, script, job, reply)
+            elif command == "agent_flow_calibration":
+                return self._flow_calibration(printer, job)
             elif command in _PRINT_ENDPOINTS:
                 self._gcode.submit(lambda: self._quietly(lambda: printer.client.post(_PRINT_ENDPOINTS[command], {},
                                                                                      timeout=LANE_MOVE_TIMEOUT)))
@@ -1514,6 +1519,46 @@ else:
                 if not script:
                     return FAILED
                 self._run(printer, script, push=True)
+            return SUCCESS
+
+        def _watched_gcode(self, printer: _Printer, script: str, job: dict, reply: dict, note: str = "") -> None:
+            """Runs G-code OrcaSlicer's Calibration window waits on: the prompts
+            it opens, the errors it prints and Klipper's answers starting with
+            `note` go to agent_prompt, and `reply` back when it ends."""
+            if isinstance(job.get("sequence_id"), str):
+                reply["sequence_id"] = job["sequence_id"]
+            printer.prompt_until = time.monotonic() + prompt.WATCH
+            printer.prompt.start(note)
+
+            def run():
+                try:
+                    printer.prompt.mark(self._store_time(printer))
+                    self._gcode_to_end(printer, script)
+                    reply["result"] = "success"
+                except MoonrakerError:
+                    reply["result"] = "failed"
+                finally:
+                    printer.prompt.finish()
+                self._send(printer, {"print": reply})
+                # A prompt the G-code opened shows now, not at the next push.
+                self._work(printer).submit(lambda: self._push(printer))
+
+            self._gcode.submit(run)
+
+        def _flow_calibration(self, printer: _Printer, job: dict) -> int:
+            """The Calibration tab's U1 Flow Calibration: loads the tray's lane
+            and has AFC autocal measure its K with the U1's flow calibration,
+            which autocal saves on the lane's Spoolman spool. The window shows
+            autocal's answer (the K it stored) when it ends."""
+            tray = job.get("tray_id")
+            # The page names the tray unit * 4 + slot, as the tray popup does (_tray_k()).
+            tool = self._layout(printer).tool(tray // 4, tray % 4) if isinstance(tray, int) and tray >= 0 else -1
+            lane = controls.lane_of(printer.snapshot, tool)
+            if lane is None or not printer.flow_calibration:
+                return ERR_INVALID_RESULT
+            script = flow_calibration_gcode(lane, printer.snapshot.current_lane)
+            self._watched_gcode(printer, script, job, {"command": "agent_flow_calibration", "tray_id": tray},
+                                FLOW_K_NOTE)
             return SUCCESS
 
         def _run(self, printer: _Printer, script: str, push: bool = False) -> None:

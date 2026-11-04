@@ -14,6 +14,7 @@ import fake_orca
 from fake_moonraker import FakeMoonraker
 from fake_orca import Preset, PresetBundle, PrinterConnectionParams, PrintParams
 from orca_afc import agent as afc_agent
+from orca_afc.protocol import Lane
 from orca_afc.agent import AFCAgent
 from orca_afc.protocol import Snapshot
 from test_protocol import lane_status, webhook_fixture
@@ -624,7 +625,7 @@ class DeviceTabTest(Case):
 
     def test_calibration_prompt_after_gcode(self):
         self.connect()
-        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False, "running": False, "errors": []})
+        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False, "running": False, "errors": [], "notes": []})
         self.assertEqual(self.push()["agent_calibration"], "AFC_CALIBRATION")
         self.fake.effects["AFC_CALIBRATION"] = lambda: self.fake.gcode_store.extend(
             {"message": m, "time": 10.0 + i, "type": "response"}
@@ -652,6 +653,45 @@ class DeviceTabTest(Case):
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.fake.scripts, ["CALIBRATE_AFC BOWDEN=lane1", "M400", "M400"])
         self.assertEqual(self.calls.messages("print", "gcode_line")[-1]["result"], "success")
+
+    def u1_autocal(self, autocal=True):
+        self.fake.objects["print_task_config"] = {"auto_bed_leveling": True, "flow_calibrate": False,
+                                                  "time_lapse_camera": False}
+        if autocal:
+            self.fake.gcode_help[afc_agent.FLOW_K_CALIBRATION] = "Run flow calibration on the current lane and store K"
+        self.fake.gcode_store.append({"message": "ok", "time": 1.0, "type": "response"})
+
+    def test_u1_flow_calibration_loads_the_lane_and_reports_its_k(self):
+        self.u1_autocal()
+        self.connect()
+        self.assertIs(self.push()["agent_flow_calibration"], True)
+        self.fake.effects["CHANGE_TOOL LANE=lane2\n" + afc_agent.FLOW_K_CALIBRATION] = lambda: self.fake.gcode_store.extend([
+            {"message": "// AFC_autocal: applied K=0.017000 to lane2", "time": 0.5, "type": "response"},
+            {"message": "// AFC_autocal: stored K=0.021300 for lane2", "time": 20.0, "type": "response"}])
+        self.assertEqual(self.send({"print": {"command": "agent_flow_calibration", "tray_id": 1}}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane2\n" + afc_agent.FLOW_K_CALIBRATION])
+        shown = self.calls.messages("print", "push_status", 2)[-1]["agent_prompt"]
+        self.assertEqual((shown["running"], shown["errors"], shown["notes"]),
+                         (False, [], ["AFC_autocal: stored K=0.021300 for lane2"]))
+        self.assertEqual(self.calls.messages("print", "agent_flow_calibration")[-1]["result"], "success")
+        # The next G-code the window sends starts with no notes.
+        self.send({"print": {"command": "gcode_line", "param": "M400"}})
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]["notes"], [])
+
+    def test_u1_flow_calibration_of_the_lane_in_the_toolhead(self):
+        self.assertEqual(afc_agent.flow_calibration_gcode(Lane(name="lane2", tool_loaded=True), "lane2"),
+                         afc_agent.FLOW_K_CALIBRATION)
+        self.assertEqual(afc_agent.flow_calibration_gcode(Lane(name="lane2", tool_loaded=True), "lane1"),
+                         "CHANGE_TOOL LANE=lane2\n" + afc_agent.FLOW_K_CALIBRATION)
+
+    def test_u1_flow_calibration_needs_autocal(self):
+        self.u1_autocal(autocal=False)
+        self.connect()
+        self.assertIs(self.push()["agent_flow_calibration"], False)
+        self.assertEqual(self.send({"print": {"command": "agent_flow_calibration", "tray_id": 1}}),
+                         afc_agent.ERR_INVALID_RESULT)
 
     def test_runout_lanes_are_refill_groups(self):
         afc = self.fake.webhook["status:"]["AFC"]

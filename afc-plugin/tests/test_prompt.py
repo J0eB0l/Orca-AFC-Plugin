@@ -27,7 +27,7 @@ class WatchTest(unittest.TestCase):
         watch = prompt.Watch()
         self.assertTrue(watch.feed(lines("echo: hello", *CALIBRATION)))
         self.assertEqual(watch.json(), {
-            "id": 1, "open": True, "running": False, "errors": [], "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
+            "id": 1, "open": True, "running": False, "errors": [], "notes": [], "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
             "rows": [[{"label": "Turtle_1", "gcode": "UNIT_CALIBRATION UNIT=Turtle_1", "style": "primary"}],
                      [{"label": "Lane 1", "gcode": "CALIBRATE_AFC LANE=lane1", "style": ""},
                       {"label": "Lane 2", "gcode": "Lane 2", "style": ""}]],
@@ -46,7 +46,7 @@ class WatchTest(unittest.TestCase):
         store = lines(*CALIBRATION)
         watch.feed(store)
         self.assertTrue(watch.feed(store + lines("// action:prompt_end", start=20.0)))
-        self.assertEqual(watch.json(), {"id": 2, "open": False, "running": False, "errors": []})
+        self.assertEqual(watch.json(), {"id": 2, "open": False, "running": False, "errors": [], "notes": []})
 
     def test_a_new_prompt_replaces_the_old(self):
         watch = prompt.Watch()
@@ -58,7 +58,7 @@ class WatchTest(unittest.TestCase):
     def test_unshown_prompt_stays_closed(self):
         watch = prompt.Watch()
         self.assertFalse(watch.feed(lines(*CALIBRATION[:-1])))
-        self.assertEqual(watch.json(), {"id": 0, "open": False, "running": False, "errors": []})
+        self.assertEqual(watch.json(), {"id": 0, "open": False, "running": False, "errors": [], "notes": []})
 
     def test_calibration_runs_on_after_its_prompt_ends(self):
         # CALIBRATE_AFC ends the unit's prompt as it starts; the window waits for its result.
