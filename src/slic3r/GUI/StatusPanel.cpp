@@ -3738,10 +3738,19 @@ void StatusPanel::update_cali(MachineObject *obj)
 {
     if (!obj) return;
 
+    // Orca: an agent that runs its own calibration (AFC's, AgentPromptDialog) names the button after it.
+    const wxString idle_label = obj->agent_calibration_gcode.empty() ? _L("Calibration") : _L("AFC Calibration");
+    auto set_label = [this](const wxString &label) {
+        if (m_calibration_btn->GetLabel() == label)
+            return;
+        m_calibration_btn->SetLabel(label);
+        m_panel_control_title->Layout();
+    };
+
     // disable calibration button in 2D
     if (!obj->is_fdm_type()) {
         m_calibration_btn->SetToolTip(_L("Printer 2D mode does not support 3D calibration"));
-        m_calibration_btn->SetLabel(_L("Calibration"));
+        set_label(idle_label);
         m_calibration_btn->Disable();
         return;
     } else if (!m_calibration_btn->IsEnabled()) {
@@ -3750,7 +3759,7 @@ void StatusPanel::update_cali(MachineObject *obj)
     }
 
     if (obj->is_calibration_running()) {
-        m_calibration_btn->SetLabel(_L("Calibrating"));
+        set_label(_L("Calibrating"));
         if (calibration_dlg && calibration_dlg->IsShown()) {
             m_calibration_btn->Disable();
         } else {
@@ -3758,7 +3767,7 @@ void StatusPanel::update_cali(MachineObject *obj)
         }
     } else {
         // IDLE
-        m_calibration_btn->SetLabel(_L("Calibration"));
+        set_label(idle_label);
         // disable in printing
         if (obj->is_in_printing()) {
             m_calibration_btn->Disable();
