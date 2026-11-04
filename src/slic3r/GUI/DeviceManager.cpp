@@ -2021,6 +2021,15 @@ int MachineObject::command_extrusion_cali_set(int tray_index, std::string settin
 }
 
 
+int MachineObject::command_agent_flow_calibration(int tray_index)
+{
+    json j;
+    j["print"]["command"]     = "agent_flow_calibration";
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    j["print"]["tray_id"]     = tray_index;
+    return this->publish_json(j);
+}
+
 int MachineObject::command_set_printing_speed(DevPrintingSpeedLevel lvl)
 {
     json j;
@@ -3383,6 +3392,8 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 }
                 if (jj.contains("agent_calibration") && jj["agent_calibration"].is_string())
                     agent_calibration_gcode = jj["agent_calibration"].get<std::string>();
+                if (jj.contains("agent_flow_calibration") && jj["agent_flow_calibration"].is_boolean())
+                    agent_flow_calibration = jj["agent_flow_calibration"].get<bool>();
                 if (jj.contains("agent_prompt") && jj["agent_prompt"].is_object()) {
                     const json& prompt = jj["agent_prompt"];
                     const auto  button = [](const json& item) {
@@ -3402,6 +3413,9 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     for (const json& line : prompt.value("errors", json::array()))
                         if (line.is_string())
                             agent_prompt.errors.push_back(line.get<std::string>());
+                    for (const json& line : prompt.value("notes", json::array()))
+                        if (line.is_string())
+                            agent_prompt.notes.push_back(line.get<std::string>());
                     for (const json& line : prompt.value("text", json::array()))
                         if (line.is_string())
                             agent_prompt.text.push_back(line.get<std::string>());

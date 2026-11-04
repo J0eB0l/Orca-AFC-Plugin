@@ -2038,8 +2038,8 @@ void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
     Refresh();
 }
 
-AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode)
-    : DPIDialog(parent, wxID_ANY, _L("Calibration"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode, const wxString& title)
+    : DPIDialog(parent, wxID_ANY, title.empty() ? _L("Calibration") : title, wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
     , m_dev_id(obj->get_dev_id())
     , m_shown_id(obj->agent_prompt.id)
 {
@@ -2144,9 +2144,11 @@ void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
     }
 }
 
-void AgentPromptDialog::show_finished(const std::vector<std::string>& errors)
+void AgentPromptDialog::show_finished(const std::vector<std::string>& errors, const std::vector<std::string>& notes)
 {
     clear_content();
+    for (const std::string& note : notes)
+        add_text(from_u8(note));
     add_errors(errors);
 
     auto* btns = new DialogButtons(m_content, {"OK"});
@@ -2174,8 +2176,8 @@ void AgentPromptDialog::update_prompt(MachineObject* obj)
         show_prompt(prompt);
     else if (prompt.running)
         show_waiting(prompt.errors);
-    else if (!prompt.errors.empty())
-        show_finished(prompt.errors);
+    else if (!prompt.errors.empty() || !prompt.notes.empty())
+        show_finished(prompt.errors, prompt.notes);
     else {
         // Done with nothing more to show, as after "No" to more calibrations.
         CallAfter([this] { if (IsModal()) EndModal(wxID_OK); });

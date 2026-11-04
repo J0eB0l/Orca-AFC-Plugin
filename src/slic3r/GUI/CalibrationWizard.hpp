@@ -27,6 +27,8 @@
 
 namespace Slic3r { namespace GUI {
 
+class AgentPromptDialog;
+
 
 class CalibrationWizardPageStep
 {
@@ -151,6 +153,7 @@ protected:
     bool                       m_show_result_dialog = false;
     std::vector<PACalibResult> m_calib_results_history;
     int                        cali_version = -1;
+    AgentPromptDialog*         m_agent_prompt_dlg {nullptr}; // Orca: the open U1 Flow Calibration window
 };
 
 class FlowRateWizard : public CalibrationWizard {

@@ -668,6 +668,7 @@ public:
         bool                                        open {false};
         bool                                        running {false}; // G-code OrcaSlicer sent is still running
         std::vector<std::string>                    errors;          // errors printed while it ran
+        std::vector<std::string>                    notes;           // what the command it ran answered (the K autocal stored)
         std::string                                 title;
         std::vector<std::string>                    text;
         std::vector<std::vector<AgentPromptButton>> rows;
@@ -675,6 +676,9 @@ public:
     };
     std::string agent_calibration_gcode;
     AgentPrompt agent_prompt;
+    // Orca: the agent measures a tray's K with the printer's own flow calibration (a U1 with AFC autocal):
+    // the Flow Dynamics page offers it as a method, command_agent_flow_calibration() runs it.
+    bool        agent_flow_calibration {false};
     // Orca: a printer agent's own error or warning, shown on the Device tab until cleared (clear_agent_message)
     std::string agent_message;
     bool        agent_message_is_error {false};
@@ -947,6 +951,8 @@ public:
     int command_start_extrusion_cali(int tray_index, int nozzle_temp, int bed_temp, float max_volumetric_speed, std::string setting_id = "");
     int command_stop_extrusion_cali();
     int command_extrusion_cali_set(int tray_index, std::string setting_id, std::string name, float k, float n, int bed_temp = -1, int nozzle_temp = -1, float max_volumetric_speed = -1);
+    // Orca: measures the tray's K with the agent's flow calibration (agent_flow_calibration); agent_prompt follows it
+    int command_agent_flow_calibration(int tray_index);
 
     // set printing speed
     int command_set_printing_speed(DevPrintingSpeedLevel lvl);

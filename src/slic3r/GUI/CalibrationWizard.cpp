@@ -8,6 +8,7 @@
 #include "../../libslic3r/calib.hpp"
 #include "Tabbook.hpp"
 #include "CaliHistoryDialog.hpp"
+#include "PrintOptionsDialog.hpp"
 #include <wx/event.h>
 #include <wx/string.h>
 #include <map>
@@ -634,6 +635,9 @@ void PressureAdvanceWizard::update(MachineObject* obj)
     if (!obj)
         return;
 
+    if (m_agent_prompt_dlg)
+        m_agent_prompt_dlg->update_prompt(obj);
+
     if (!m_show_result_dialog) {
         if (obj->cali_version != -1 && obj->cali_version != cali_version) {
             cali_version = obj->cali_version;
@@ -725,6 +729,18 @@ void PressureAdvanceWizard::on_cali_start()
     if (selected_filaments.empty()) {
         MessageDialog msg_dlg(nullptr, _L("Please select filament to calibrate."), wxEmptyString, wxICON_WARNING | wxOK);
         msg_dlg.ShowModal();
+        return;
+    }
+
+    // Orca: U1 Flow Calibration has the printer measure the tray's K (AFC autocal saves it on the spool):
+    // no test print and nothing to record, so the window shows what it measured and the page stays here.
+    if (m_cali_method == CalibrationMethod::CALI_METHOD_MANUAL && preset_page->is_agent_flow_calibration()) {
+        if (curr_obj->command_agent_flow_calibration(selected_filaments.begin()->first) != 0)
+            return;
+        AgentPromptDialog dlg(this, curr_obj, std::string(), _L("U1 Flow Calibration"));
+        m_agent_prompt_dlg = &dlg;
+        dlg.ShowModal();
+        m_agent_prompt_dlg = nullptr;
         return;
     }
 

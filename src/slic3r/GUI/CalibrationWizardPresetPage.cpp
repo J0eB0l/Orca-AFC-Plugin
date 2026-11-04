@@ -268,6 +268,7 @@ wxString CaliComboBox::get_value() const
 void CaliComboBox::set_values(const wxArrayString &values)
 {
     if (m_combo_box) {
+        m_combo_box->Clear();
         for (int i = 0; i < values.size(); ++i) {
             m_combo_box->AppendString(values[i]);
         }
@@ -1268,7 +1269,10 @@ void CalibrationPresetPage::create_page(wxWindow* parent)
         wxArrayString pa_cali_modes;
         pa_cali_modes.push_back(_L_CONTEXT("Line", "PA calibration method"));
         pa_cali_modes.push_back(_L("Pattern"));
-        m_pa_cali_method_combox = new CaliComboBox(parent, _L("Method"), pa_cali_modes);
+        m_pa_cali_method_combox = new CaliComboBox(parent, _L("Method"), pa_cali_modes, 0, [this](wxCommandEvent& event) {
+            on_pa_cali_method_changed();
+            event.Skip();
+        });
     }
     
     m_warning_panel = new CaliPresetWarningPanel(parent);
@@ -1992,6 +1996,7 @@ float CalibrationPresetPage::get_nozzle_value()
 void CalibrationPresetPage::update(MachineObject* obj)
 {
     curr_obj = obj;
+    update_pa_cali_methods(obj);
     
     //update printer status
     update_show_status();
@@ -2001,6 +2006,7 @@ void CalibrationPresetPage::update(MachineObject* obj)
 
 void CalibrationPresetPage::on_device_connected(MachineObject* obj)
 {
+    update_pa_cali_methods(obj);
     init_selection_values();
     init_with_machine(obj);
     update_combobox_filaments(obj);
@@ -2064,7 +2070,7 @@ void CalibrationPresetPage::set_cali_method(CalibrationMethod method)
                 m_custom_range_panel->set_values(values);
 
                 m_custom_range_panel->set_unit("");
-                m_custom_range_panel->Show();
+                m_custom_range_panel->Show(!is_agent_flow_calibration());
             }
         }
     }
@@ -2838,6 +2844,39 @@ wxArrayString CalibrationPresetPage::get_custom_range_values()
         return m_custom_range_panel->get_values();
     }
     return wxArrayString();
+}
+
+// Orca: the Method entry after Line and Pattern, on a printer whose agent measures K itself.
+static constexpr int AGENT_FLOW_CALI_METHOD = 2;
+
+void CalibrationPresetPage::update_pa_cali_methods(MachineObject* obj)
+{
+    const bool agent = obj && obj->agent_flow_calibration;
+    if (!m_pa_cali_method_combox || agent == m_agent_flow_cali)
+        return;
+    m_agent_flow_cali = agent;
+    wxArrayString modes;
+    modes.push_back(_L_CONTEXT("Line", "PA calibration method"));
+    modes.push_back(_L("Pattern"));
+    if (agent)
+        // TRN Flow Dynamics method on a Snapmaker U1 with AFC: the printer measures K itself, no test print.
+        modes.push_back(_L("U1 Flow Calibration"));
+    m_pa_cali_method_combox->set_values(modes);
+    on_pa_cali_method_changed();
+}
+
+bool CalibrationPresetPage::is_agent_flow_calibration() const
+{
+    return m_agent_flow_cali && m_pa_cali_method_combox && m_pa_cali_method_combox->get_selection() == AGENT_FLOW_CALI_METHOD;
+}
+
+void CalibrationPresetPage::on_pa_cali_method_changed()
+{
+    // U1 Flow Calibration prints no test, so it has no K range.
+    if (m_custom_range_panel && m_pa_cali_method_combox && m_pa_cali_method_combox->IsShown()) {
+        m_custom_range_panel->Show(!is_agent_flow_calibration());
+        Layout();
+    }
 }
 
 CalibMode CalibrationPresetPage::get_pa_cali_method()

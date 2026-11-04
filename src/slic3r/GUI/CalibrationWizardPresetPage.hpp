@@ -245,6 +245,8 @@ public:
 
     wxArrayString get_custom_range_values();
     CalibMode     get_pa_cali_method();
+    // Orca: Method is U1 Flow Calibration, which the printer's agent runs (MachineObject::agent_flow_calibration)
+    bool          is_agent_flow_calibration() const;
 
     CaliPresetPageStatus get_page_status() { return m_page_status; }
     MachineObject* get_current_object() { return curr_obj; }
@@ -299,6 +301,9 @@ protected:
 
     CaliPageStepGuide* m_step_panel{ nullptr };
     CaliComboBox *            m_pa_cali_method_combox{nullptr};
+    bool                      m_agent_flow_cali{false}; // Orca: m_pa_cali_method_combox offers U1 Flow Calibration
+    void                      update_pa_cali_methods(MachineObject* obj);
+    void                      on_pa_cali_method_changed();
     CaliPresetCaliStagePanel* m_cali_stage_panel { nullptr };
     wxPanel*                  m_selection_panel { nullptr };
     wxPanel*                  m_filament_from_panel { nullptr };

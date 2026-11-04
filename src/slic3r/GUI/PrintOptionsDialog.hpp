@@ -106,7 +106,8 @@ private:
 class AgentPromptDialog : public DPIDialog
 {
 public:
-    AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode);
+    // start_gcode "" when the command it follows was sent another way (command_agent_flow_calibration())
+    AgentPromptDialog(wxWindow* parent, MachineObject* obj, const std::string& start_gcode, const wxString& title = wxEmptyString);
     void update_prompt(MachineObject* obj);
 
 protected:
@@ -118,7 +119,8 @@ private:
     int                          m_shown_id {0};
     void                         show_waiting(const std::vector<std::string>& errors);
     void                         show_prompt(const MachineObject::AgentPrompt& prompt);
-    void                         show_finished(const std::vector<std::string>& errors); // what went wrong, with OK
+    void                         show_finished(const std::vector<std::string>& errors,
+                                               const std::vector<std::string>& notes); // what the printer answered and what went wrong, with OK
     void                         add_text(const wxString& text, const wxColour& colour = wxNullColour);
     void                         add_errors(const std::vector<std::string>& errors);
     void                         clear_content();
