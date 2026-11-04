@@ -48,6 +48,7 @@ AGENT_ID = "afc"
 POLL = 5.0            # seconds between status pushes
 PRESETS_EVERY = 60.0  # seconds between reads of OrcaSlicer's filament presets
 LOST_AFTER = 3        # failed reads in a row before OrcaSlicer hears the printer is gone
+WATCH_RETRY = 30.0    # seconds between tries of a watched printer that is off (Multi-device)
 JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for again while Moonraker has none
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
 TIMELAPSE_MACRO = "gcode_macro " + gcode.TIMELAPSE_FRAME  # moonraker-timelapse's macro in Klipper
@@ -105,11 +106,13 @@ def _first(value) -> str:
 # ------------------------------------------------------------------ the printer's model
 
 
-def printer_model(bundle) -> tuple:
+def printer_model(bundle, preset=None) -> tuple:
     """(printer_model, the file of a system printer preset: the one the
-    printer preset comes from, else any, which shows where the vendors'
-    profiles are), read on OrcaSlicer's UI thread."""
-    preset = bundle.current_printer_preset() if bundle is not None else None
+    printer preset (the selected one unless given) comes from, else any,
+    which shows where the vendors' profiles are), read on OrcaSlicer's UI
+    thread."""
+    if preset is None:
+        preset = bundle.current_printer_preset() if bundle is not None else None
     if preset is None:
         return "", ""
     model = _first(preset.config_value("printer_model"))
@@ -140,6 +143,66 @@ def preset_name(bundle, dev_id: str) -> str:
         if host and dev_id_from_address(host, _first(preset.config_value("printhost_port"))) == dev_id:
             return str(preset.name or "")
     return ""
+
+
+@dataclass
+class Watched:
+    """A printer preset's printer the agent watches for the Multi-device tab."""
+    dev_id: str
+    url: str
+    access_code: str
+    name: str
+    model: str
+    model_file: str
+
+
+def printer_url(host: str, port: str, https: bool = False) -> str:
+    """Moonraker's address from a print host and port, as OrcaSlicer gives them."""
+    if "://" not in host:
+        host = ("https://" if https else "http://") + host
+    return base_url(host + (":" + port if port and not re.search(r":\d+$", host) else ""))
+
+
+def is_afc_preset(preset) -> bool:
+    """Whether a printer preset prints through this agent: picked as its
+    printer agent, or AFC ticked with no agent picked (OrcaSlicer's
+    GUI_App::resolve_printer_agent_id())."""
+    agent = _first(preset.config_value("printer_agent"))
+    return agent == AGENT_ID if agent else _first(preset.config_value("afc_enabled")).lower() in ("true", "1")
+
+
+def printer_presets(bundle) -> list:
+    """Watched() of each printer preset OrcaSlicer puts in this agent's
+    device list for the Multi-device tab (GUI_App::add_afc_preset_printers()):
+    a visible AFC preset with a print host, one per printer, the first
+    preset of a printer naming it. UI thread."""
+    out, seen = [], set()
+    printers = bundle.printers if bundle is not None else None
+    for index in range(printers.size() if printers is not None else 0):
+        preset = printers.preset(index)
+        if preset is None or preset.is_default or not preset.is_visible or not is_afc_preset(preset):
+            continue
+        host = _first(preset.config_value("print_host"))
+        if not host:
+            continue
+        port = _first(preset.config_value("printhost_port"))
+        dev_id = dev_id_from_address(host, port)
+        if dev_id in seen:
+            continue
+        seen.add(dev_id)
+        model, model_file = printer_model(bundle, preset)
+        out.append(Watched(dev_id, printer_url(host, port, host.lower().startswith("https://")),
+                           _first(preset.config_value("printhost_apikey")) or NO_ACCESS_CODE,
+                           str(preset.name or ""), model, model_file))
+    return out
+
+
+def multi_device() -> bool:
+    """Whether Preferences' Multi-device management is on. UI thread."""
+    try:
+        return bool(orca.host.app_info().get("multi_device"))
+    except Exception:  # an OrcaSlicer without it, or starting up or closing
+        return False
 
 
 def _https(bundle) -> bool:
@@ -524,6 +587,8 @@ class PrintJob:
     time_lapse: bool = False
     start: bool = True
     stored: str = ""  # a file already on the printer (start_sdcard_print), by its path in the gcodes root
+    dev_id: str = ""  # the printer to print on, "" for the selected one
+    auto_lanes: bool = False  # the printer picks its lanes (trays.auto_mapping()): a Multi-device send
 
     @classmethod
     def from_params(cls, params, start: bool = True) -> "PrintJob":
@@ -531,7 +596,20 @@ class PrintJob:
                    project=str(params.project_name or params.task_name or ""),
                    ams_mapping=str(params.ams_mapping or ""), ams_mapping2=str(params.ams_mapping2 or ""),
                    bed_level=bool(params.task_bed_leveling), flow_calibrate=bool(params.task_flow_cali),
-                   time_lapse=bool(params.task_record_timelapse), start=start)
+                   time_lapse=bool(params.task_record_timelapse), start=start,
+                   dev_id=str(getattr(params, "dev_id", "") or ""),
+                   auto_lanes=auto_lanes(str(getattr(params, "extra_options", "") or "")))
+
+
+def auto_lanes(extra_options: str) -> bool:
+    """Whether a print's extra options ask the printer to pick its own lanes:
+    the AFC build's Multi-device tab sends {"lanes": "auto"}, its trays being
+    one set for every printer."""
+    try:
+        options = json.loads(extra_options) if extra_options else {}
+    except ValueError:
+        return False
+    return isinstance(options, dict) and options.get("lanes") == "auto"
 
 
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
@@ -547,14 +625,19 @@ def is_pa_calibration(project: str) -> bool:
 def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse: bool = False,
             wide: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
-    filaments (laid out by AFC unit when `by_unit`), AFC's purges and spool
+    filaments (laid out by AFC unit when `by_unit`; picked by the printer for a
+    Multi-device send, trays.auto_mapping()), AFC's purges and spool
     flow K, on a U1 its print switches, and with the Timelapse switch on and
     moonraker-timelapse running (`timelapse`) the frames it takes. A printer
     without AFC gets the file as it was sliced, apart from those switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
     if settings.klipper and snapshot is not None and snapshot.present:
-        shown = trays.layout(snapshot, by_unit, wide)
-        mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
+        if job.auto_lanes:
+            mapping = trays.auto_mapping(snapshot, gcode.filaments_used(text), settings.types, settings.colors,
+                                         settings.sliced_toolheads)
+        else:
+            shown = trays.layout(snapshot, by_unit, wide)
+            mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
         plan = gcode.plan_for(snapshot, settings.filaments, mapping, settings)
         if is_pa_calibration(job.project):
             plan.flow_k.clear()  # a Flow Dynamics test prints its own K on every line
@@ -607,7 +690,8 @@ class _Progress:
 
 @dataclass
 class _Printer:
-    """The printer OrcaSlicer connected the agent to."""
+    """The printer OrcaSlicer connected the agent to, or one it watches for the
+    Multi-device tab (printer_presets())."""
     dev_id: str
     client: Moonraker
     access_code: str
@@ -651,6 +735,8 @@ class _Printer:
     probes: object = field(default_factory=lambda: stage.ProbeWatch())  # bed probing, for the stage line
     prompt: object = field(default_factory=lambda: prompt.Watch())  # the console's open prompt
     prompt_until: float = 0.0                         # when to stop reading it (prompt.WATCH)
+    manager: AFCManager = field(default_factory=AFCManager)  # its AFC reads, flow K and lane moves
+    retry_at: float = 0.0                             # when to try a watched printer that is off again
 
 
 def spool_key(lane) -> tuple:
@@ -695,8 +781,10 @@ else:
             self._presets_due = 0.0
             self._match = {}          # (material, sub type, vendor, product) -> filament id
             self._ids = presets.FilamentIds()
-            self._manager = AFCManager()
+            self._watched = {}        # dev_id -> _Printer of the other AFC printer presets (Multi-device)
             self._worker = Worker("AFC printer agent", tick=self._poll, every=poll)
+            # The watched printers' own thread, so one that is off never holds up the selected printer's pushes.
+            self._watcher = Worker("AFC printer agent watch", tick=self._poll_watched, every=poll)
             self._gcode = Worker("AFC printer agent G-code")  # long commands, so pushes keep coming
             self._web = Worker("AFC printer agent GitHub")  # so a slow GitHub never holds up pushes
             self._latest = {}         # upstream.read(): AFC's newest versions on GitHub
@@ -716,8 +804,9 @@ else:
 
         def on_unload(self):
             with self._lock:
-                self._printer = None
+                self._printer, self._watched = None, {}
             self._worker.stop()
+            self._watcher.stop()
             self._gcode.stop()
             self._web.stop()
 
@@ -775,12 +864,29 @@ else:
 
         def _send(self, printer: _Printer, payload: dict) -> None:
             fn = self._fn("local_message") or self._fn("message")
-            if fn is not None and self._current() is printer:
+            if fn is not None and self._live(printer):
                 fn(printer.dev_id, json.dumps(payload))
 
         def _current(self):
             with self._lock:
                 return self._printer
+
+        def _live(self, printer: _Printer) -> bool:
+            """Whether `printer` is still the selected one or a watched one."""
+            with self._lock:
+                return printer is self._printer or self._watched.get(printer.dev_id) is printer
+
+        def _find(self, dev_id: str):
+            """The printer OrcaSlicer names: the selected one for "", else the
+            selected or a watched one with that dev_id; None for none."""
+            with self._lock:
+                if self._printer is not None and dev_id in ("", self._printer.dev_id):
+                    return self._printer
+                return self._watched.get(dev_id) if dev_id else None
+
+        def _printers(self) -> list:
+            with self._lock:
+                return ([self._printer] if self._printer is not None else []) + list(self._watched.values())
 
         # -------------------------------------------------------- connecting (UI thread)
 
@@ -791,16 +897,13 @@ else:
                 name = preset_name(bundle, str(params.dev_id or ""))
             except Exception:  # OrcaSlicer is starting up or closing
                 bundle, model, model_file, name = None, "", "", ""
-            host = str(params.host or "")
-            if "://" not in host:
-                host = ("https://" if params.use_ssl or _https(bundle) else "http://") + host
-            port = str(params.port or "")
-            url = base_url(host + (":" + port if port and not re.search(r":\d+$", host) else ""))
+            url = printer_url(str(params.host or ""), str(params.port or ""), bool(params.use_ssl) or _https(bundle))
             access_code = str(params.password or "") or NO_ACCESS_CODE
             key = "" if access_code == NO_ACCESS_CODE else access_code
             printer = _Printer(str(params.dev_id or ""), Moonraker(url, key), access_code, model, model_file, name=name)
             with self._lock:
                 self._printer = printer
+                self._watched.pop(printer.dev_id, None)
             if bundle is not None:
                 self._read_presets(bundle)
             with self._lock:
@@ -810,6 +913,7 @@ else:
             # OrcaSlicer lets a plugin start threads on its UI thread only, so they all start here.
             self._gcode.submit(lambda: None)
             self._web.submit(lambda: None)
+            self._watcher.submit(lambda: None)
             self._worker.submit(lambda: self._connect(printer))
             return SUCCESS
 
@@ -819,19 +923,40 @@ else:
             return SUCCESS
 
         def _read_presets(self, bundle=None) -> None:
-            """OrcaSlicer's filament presets for this printer. UI thread."""
+            """OrcaSlicer's filament presets for this printer, and the printers
+            to watch for the Multi-device tab. UI thread."""
             try:
-                candidates = presets.collect(bundle if bundle is not None else orca.host.preset_bundle())
+                bundle = bundle if bundle is not None else orca.host.preset_bundle()
+                candidates = presets.collect(bundle)
+                watched = printer_presets(bundle) if multi_device() else []
             except Exception:  # starting up or closing
                 return
             with self._lock:
                 self._candidates, self._match = candidates, {}
                 self._presets_due = time.monotonic() + PRESETS_EVERY
+                self._watch(watched)
+
+        def _watch(self, watched: list) -> None:
+            """Watch these printers besides the selected one; a printer whose
+            address or key changed starts over. Holds the lock."""
+            selected = self._printer.dev_id if self._printer is not None else None
+            kept = {}
+            for spec in watched:
+                if spec.dev_id == selected:
+                    continue
+                old = self._watched.get(spec.dev_id)
+                if old is not None and old.client.url == spec.url and old.access_code == spec.access_code:
+                    kept[spec.dev_id] = old
+                else:
+                    key = "" if spec.access_code == NO_ACCESS_CODE else spec.access_code
+                    kept[spec.dev_id] = _Printer(spec.dev_id, Moonraker(spec.url, key), spec.access_code, spec.model,
+                                                 spec.model_file, name=spec.name)
+            self._watched = kept
 
         # -------------------------------------------------------- the worker
 
         def _connect(self, printer: _Printer) -> None:
-            if self._current() is not printer or printer.connected:
+            if not self._live(printer) or printer.connected:
                 return
             try:
                 info = printer.client.get("/printer/info")
@@ -860,17 +985,36 @@ else:
                 announce = announcement(printer.dev_id, printer.name, printer.model_id)
 
             def connected():
-                if self._current() is not printer:
+                if not self._live(printer):
                     return
                 ssdp, local, done = self._fn("ssdp"), self._fn("local_connect"), self._fn("printer_connected")
                 if announce and ssdp is not None:
                     ssdp(announce)
                 if local is not None:
                     local(CONNECT_OK, printer.dev_id, "0")
-                if done is not None:
+                # A watched printer is not the one OrcaSlicer connected the agent to.
+                if done is not None and self._current() is printer:
                     done(printer.dev_id)
 
             self._on_main(connected)
+
+        def _work(self, printer: _Printer) -> Worker:
+            """The thread that talks to `printer`: a watched printer's own, so
+            the selected printer's pushes keep coming meanwhile."""
+            with self._lock:
+                return self._watcher if self._watched.get(printer.dev_id) is printer else self._worker
+
+        def _poll_watched(self) -> None:
+            with self._lock:
+                watched = list(self._watched.values())
+            now = time.monotonic()
+            for printer in watched:
+                if printer.connected:
+                    self._push(printer)
+                elif now >= printer.retry_at:
+                    # One that is off is asked again every WATCH_RETRY s, so the others' pushes keep coming.
+                    printer.retry_at = now + WATCH_RETRY
+                    self._connect(printer)
 
         def _poll(self) -> None:
             printer = self._current()
@@ -878,8 +1022,8 @@ else:
                 return
             if not printer.connected:
                 self._connect(printer)
-                return
-            self._push(printer)
+            else:
+                self._push(printer)
             with self._lock:
                 due = time.monotonic() >= self._presets_due
                 if due:
@@ -888,10 +1032,10 @@ else:
                 self._on_main(self._read_presets)
 
         def _push(self, printer: _Printer) -> None:
-            if self._current() is not printer or not printer.connected:
+            if not self._live(printer) or not printer.connected:
                 return
             # AFC first: it names the toolheads, whose temperatures come next.
-            snapshot = self._manager.read(printer.client)
+            snapshot = printer.manager.read(printer.client)
             if snapshot is not None and snapshot.extruders:
                 printer.extruders = list(snapshot.extruders)
             try:
@@ -903,7 +1047,7 @@ else:
 
                     def lost():
                         local = self._fn("local_connect")
-                        if local is not None and self._current() is printer:
+                        if local is not None and self._live(printer):
                             local(CONNECT_LOST, printer.dev_id, "lost")
 
                     self._on_main(lost)
@@ -1068,7 +1212,7 @@ else:
                     printer.log_due = 0.0
                     self._push(printer)
 
-                self._worker.submit(show)
+                self._work(printer).submit(show)
 
             self._gcode.submit(lambda: self._quietly(clear))
 
@@ -1152,7 +1296,7 @@ else:
                 printer.saved_nozzles = saved
                 self._push(printer)
 
-            self._worker.submit(lambda: self._quietly(save))
+            self._work(printer).submit(lambda: self._quietly(save))
             return SUCCESS
 
         def _prompt(self, printer: _Printer) -> None:
@@ -1250,8 +1394,8 @@ else:
                 return ERR_INVALID_RESULT
             if not isinstance(data, dict):
                 return ERR_INVALID_RESULT
-            printer = self._current()
-            if printer is None or (dev_id and dev_id != printer.dev_id):
+            printer = self._find(str(dev_id or ""))
+            if printer is None:
                 return FAILED
 
             def part(key):
@@ -1264,19 +1408,19 @@ else:
                                   "result": "success",
                                   "module": [{"name": "ota", "sw_ver": printer.version or "1.0.0",
                                               "product_name": "Klipper"}]}}
-                self._worker.submit(lambda: self._send(printer, reply))
+                self._work(printer).submit(lambda: self._send(printer, reply))
             elif system.get("command") == "ledctrl":
                 return self._lamp(printer, system)
             elif system.get("command") == "get_access_code":
                 reply = {"system": {"command": "get_access_code", "sequence_id": system.get("sequence_id", ""),
                                     "access_code": printer.access_code}}
-                self._worker.submit(lambda: self._send(printer, reply))
+                self._work(printer).submit(lambda: self._send(printer, reply))
             elif pushing.get("command") == "pushall":
                 if pushing.get("tray_tool") is True:
                     printer.by_unit = True
                 if pushing.get("tray_bits64") is True:
                     printer.wide = True
-                self._worker.submit(lambda: self._push(printer))
+                self._work(printer).submit(lambda: self._push(printer))
             elif job.get("command"):
                 return self._print_command(printer, job)
             return SUCCESS
@@ -1311,7 +1455,7 @@ else:
                         printer.prompt.finish()
                     self._send(printer, {"print": reply})
                     # A prompt the G-code opened shows now, not at the next push.
-                    self._worker.submit(lambda: self._push(printer))
+                    self._work(printer).submit(lambda: self._push(printer))
 
                 self._gcode.submit(run)
             elif command in _PRINT_ENDPOINTS:
@@ -1362,7 +1506,7 @@ else:
             def run():
                 self._quietly(lambda: printer.client.gcode(script, timeout=LANE_MOVE_TIMEOUT))
                 if push:
-                    self._worker.submit(lambda: self._push(printer))
+                    self._work(printer).submit(lambda: self._push(printer))
 
             self._gcode.submit(run)
 
@@ -1389,7 +1533,7 @@ else:
                 except MoonrakerError:
                     reply["result"] = "failed"
                 self._send(printer, {"print": reply})
-                self._worker.submit(lambda: self._push(printer))
+                self._work(printer).submit(lambda: self._push(printer))
 
             self._gcode.submit(run)
             return SUCCESS
@@ -1422,12 +1566,12 @@ else:
             """AMS Settings' AMS filament backup switch (manager.set_backup())."""
             def run():
                 try:
-                    self._manager.set_backup(printer.client, {"on": on})
+                    printer.manager.set_backup(printer.client, {"on": on})
                 except MoonrakerError:
                     pass
                 self._push(printer)
 
-            self._worker.submit(run)
+            self._work(printer).submit(run)
 
         def _backups(self, printer: _Printer, snapshot, text: str, start: bool) -> None:
             """AMS filament backup for a print sent to the printer: matching
@@ -1440,7 +1584,7 @@ else:
                     return
                 used = [lane.name for lane in map(snapshot.lane_for_tool, gcode.tools_printed(text)) if lane]
                 if used:
-                    self._manager.link_backups(printer.client, snapshot, used)
+                    printer.manager.link_backups(printer.client, snapshot, used)
             except MoonrakerError:
                 pass  # the print goes on with the runout lanes it has
 
@@ -1466,11 +1610,11 @@ else:
                 # Echoed as a Bambu printer does: OrcaSlicer shows the tray's new filament from the
                 # echo and holds it through the next three pushes, which would otherwise keep it.
                 reply = filament_setting_reply(job, lane)
-                self._worker.submit(lambda: self._send(printer, {"print": reply}))
+                self._work(printer).submit(lambda: self._send(printer, {"print": reply}))
             if script:
                 self._run(printer, "\n".join(script), push=True)
             else:
-                self._worker.submit(lambda: self._push(printer))
+                self._work(printer).submit(lambda: self._push(printer))
             return SUCCESS
 
         def _tray_k(self, printer: _Printer, job: dict) -> int:
@@ -1490,15 +1634,15 @@ else:
             if lane.spool_id <= 0:
                 with self._lock:
                     printer.lane_k[lane.name] = (k, spool_key(lane))
-                self._worker.submit(lambda: self._push(printer))
+                self._work(printer).submit(lambda: self._push(printer))
                 return SUCCESS
             spoolman = protocol.spoolman_for_printer(printer.snapshot.spoolman_url, printer.client.url)
 
             def run():
-                self._manager.save_flow_k(printer.client, lane.spool_id, k, spoolman)
+                printer.manager.save_flow_k(printer.client, lane.spool_id, k, spoolman)
                 self._push(printer)
 
-            self._worker.submit(run)
+            self._work(printer).submit(run)
             return SUCCESS
 
         def _layout(self, printer: _Printer) -> trays.Layout:
@@ -1548,7 +1692,7 @@ else:
         def command_ams_refresh_rfid(self, dev_id, ams_id, slot_id, sequence_id, lan_mode):
             """A tray's refresh button: the lane's unit reads the spool's tag
             again (controls.rfid_scan_gcode()), the tray spinning meanwhile."""
-            printer = self._current()
+            printer = self._find(str(dev_id or ""))
             if printer is None or not printer.connected:
                 return FAILED
             # OrcaSlicer names the tray (ams_id -1) or the unit and slot.
@@ -1567,9 +1711,9 @@ else:
                 finally:
                     with self._lock:
                         printer.reading.discard(tool)
-                    self._worker.submit(lambda: self._push(printer))
+                    self._work(printer).submit(lambda: self._push(printer))
 
-            self._worker.submit(lambda: self._push(printer))
+            self._work(printer).submit(lambda: self._push(printer))
             self._gcode.submit(run)
             return SUCCESS
 
@@ -1585,7 +1729,7 @@ else:
         def start_send_gcode_to_sdcard(self, params, update_fn, cancel_fn, wait_fn):
             if params.project_name == "verify_job":
                 # The print dialog's LAN check: the agent reaches the printer, or the dialog asks for its address.
-                printer = self._current()
+                printer = self._find(str(params.dev_id or ""))
                 return SUCCESS if printer is not None and printer.connected else FAILED
             return self._print(PrintJob.from_params(params, start=False), update_fn, cancel_fn)
 
@@ -1609,7 +1753,8 @@ else:
         def _print(self, job: PrintJob, update_fn, cancel_fn) -> int:
             """Hand the print to the worker and wait here, on OrcaSlicer's job
             thread, showing its stages and passing on a cancel."""
-            printer = self._current()
+            # The print dialog prints on the selected printer, the Multi-device tab on the one it names.
+            printer = self._find(job.dev_id) if job.auto_lanes else self._current()
             if printer is None:
                 return FAILED
             progress, canceled, done, result = _Progress(), threading.Event(), threading.Event(), {}
@@ -1624,7 +1769,7 @@ else:
                     done.set()
 
             try:
-                self._worker.submit(work)
+                self._work(printer).submit(work)
             except Exception:  # its thread is gone, and OrcaSlicer refuses a new one here
                 traceback.print_exc()
                 return FAILED
@@ -1649,7 +1794,7 @@ else:
             if data is None:
                 return ERR_FILE_NOT_EXIST
             # surrogateescape gives back the file byte for byte where nothing changed.
-            snapshot = self._manager.read(printer.client)
+            snapshot = printer.manager.read(printer.client)
             if snapshot is not None:
                 self._kept_k(printer, snapshot)
             original = data.decode("utf-8", "surrogateescape")
@@ -1700,7 +1845,7 @@ else:
                     printer.client.post("/printer/print/start", {"filename": name}, timeout=30)
             except MoonrakerError:
                 return ERR_START_FAILED
-            self._worker.submit(lambda: self._push(printer))
+            self._work(printer).submit(lambda: self._push(printer))
             return SUCCESS
 
         # -------------------------------------------------------- the rest
@@ -1723,11 +1868,11 @@ else:
             return orca.printer_agent.FilamentSyncMode.Subscription
 
         def fetch_filament_info(self, dev_id, sync_mode):
-            printer = self._current()
+            printer = self._find(str(dev_id or ""))
             if printer is None:
                 return False
             self._read_presets()  # filaments made visible since the last read count now
-            self._worker.submit(lambda: self._push(printer))
+            self._work(printer).submit(lambda: self._push(printer))
             return True
 
         def start_discovery(self, start, sending):

@@ -1291,3 +1291,91 @@ class FileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiDeviceTest(Case):
+    """With Multi-device on, the agent watches each AFC printer preset's printer
+    besides the selected one, and prints on it from the Multi-device tab."""
+    poll = 0.05
+
+    def setUp(self):
+        super().setUp()
+        self.other = FakeMoonraker()
+        self.addCleanup(self.other.close)
+        self.other.webhook = webhook_fixture()
+        afc = self.other.webhook["status:"]["AFC"]
+        afc["Bambu_AMS_1"]["lane5"] = lane_status("lane5", "Bambu_AMS_1", 1, ["T4"], "extruder1", "00FF00", "PLA", True)
+        self.other.objects = json.loads(json.dumps(self.fake.objects))
+        self.other_id = self.other.url[len("http://"):]
+        selected = orca.bundle.printer
+        selected.values.update({"print_host": self.fake.url, "afc_enabled": True})
+        orca.bundle.printers.presets += [
+            selected,
+            Preset({"printer_model": "Voron 2.4 300", "inherits": "Voron 2.4 300 0.4 nozzle",
+                    "print_host": self.other.url, "afc_enabled": True}, name="Second Voron"),
+            Preset({"printer_model": "Voron 2.4 300", "print_host": "http://10.9.9.9", "afc_enabled": False},
+                   name="Not AFC"),
+        ]
+        orca.multi_device = True
+        self.addCleanup(setattr, orca, "multi_device", False)
+
+    def other_events(self, kind):
+        return self.calls.wait_for(lambda e: e[0] == kind and self.other_id in (e[1:3] if kind != "ssdp" else
+                                                                             (e[1]["dev_id"],)))
+
+    def test_watches_the_other_preset(self):
+        self.connect()
+        announced = self.other_events("ssdp")[0][1]
+        self.assertEqual((announced["dev_name"], announced["dev_type"]), ("Second Voron", "Voron2_300"))
+        self.assertEqual(self.other_events("local_connect")[0][1:], (afc_agent.CONNECT_OK, self.other_id, "0"))
+        push = self.calls.wait_for(lambda e: e[0] == "message" and e[1] == self.other_id
+                                   and e[2].get("print", {}).get("command") == "push_status")[0][2]["print"]
+        self.assertIn("ams", push)
+        # It is not the printer OrcaSlicer connected the agent to, and nothing of the not-AFC preset is watched.
+        self.assertEqual([e[1] for e in self.calls.events if e[0] == "printer_connected"], [self.dev_id])
+        self.assertFalse([e for e in self.calls.events if e[0] == "ssdp" and e[1]["dev_id"] == "10.9.9.9"])
+        self.assertEqual(self.agent.send_message_to_printer(self.other_id, json.dumps(
+            {"info": {"command": "get_version"}}), 0, 0), 0)
+
+    def test_off_watches_none(self):
+        orca.multi_device = False
+        self.connect()
+        self.push()
+        self.assertEqual(self.agent.send_message_to_printer(self.other_id, json.dumps(
+            {"pushing": {"command": "pushall"}}), 0, 0), afc_agent.FAILED)
+        self.assertFalse([e for e in self.calls.events if e[0] == "ssdp" and e[1]["dev_id"] == self.other_id])
+
+    def test_prints_on_its_own_lanes(self):
+        self.connect()
+        self.other_events("local_connect")
+        path = os.path.join(self.folder, "multi.3mf")
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("3D/3dmodel.model", "<model/>")
+            z.writestr("Metadata/plate_1.gcode", PLATE.replace("; filament_diameter", "; filament_type = PLA;PLA\n"
+                                                                                       "; filament_diameter"))
+        params = PrintParams(dev_id=self.other_id, project_name="Cube box", plate_index=1, filename=path,
+                             ams_mapping="", ams_mapping2="", extra_options='{"lanes":"auto"}')
+        self.assertEqual(self.agent.start_print(params, None, lambda: False, None), 0)
+        self.assertEqual((self.fake.started, self.other.started), ([], ["Cube_box_plate_1.gcode"]))
+        text = self.other.uploads["Cube_box_plate_1.gcode"].decode()
+        # Red PLA on lane1's T0, green PLA on lane5's T4 (lane2's green is PETG).
+        self.assertEqual([line.split(" ")[0] for line in text.splitlines() if line[:1] == "T"], ["T0", "T4"])
+
+    def test_dialog_prints_on_the_selected_printer(self):
+        self.connect()
+        path = os.path.join(self.folder, "plain.3mf")
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("3D/3dmodel.model", "<model/>")
+            z.writestr("Metadata/plate_1.gcode", PLATE)
+        params = PrintParams(dev_id=self.dev_id, project_name="Cube box", plate_index=1, filename=path,
+                             ams_mapping="[4,0]")
+        self.assertEqual(self.agent.start_local_print(params, None, lambda: False), 0)
+        self.assertEqual((self.fake.started, self.other.started), (["Cube_box_plate_1.gcode"], []))
+
+
+class AutoLanesTest(unittest.TestCase):
+    def test_extra_options(self):
+        self.assertTrue(afc_agent.auto_lanes('{"lanes":"auto"}'))
+        self.assertFalse(afc_agent.auto_lanes(""))
+        self.assertFalse(afc_agent.auto_lanes("{"))
+        self.assertFalse(afc_agent.auto_lanes('["lanes"]'))

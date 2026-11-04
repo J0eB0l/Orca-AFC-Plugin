@@ -270,3 +270,57 @@ class MappingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def lane(name, tool, material, color, head=0, filament=True):
+    return Lane(name=name, maps=["T%d" % tool], material=material, color=color, extruder_index=head,
+                prep=filament, load=filament)
+
+
+class AutoMappingTest(unittest.TestCase):
+    """A Multi-device send: each printer picks its own lanes."""
+
+    def mapping(self, lanes, types, colors, heads=(), used=None):
+        snapshot = Snapshot(present=True, lanes=lanes)
+        return trays.auto_mapping(snapshot, used if used is not None else list(range(len(types))),
+                                  list(types), list(colors), list(heads))
+
+    def test_material_and_color(self):
+        lanes = [lane("lane1", 0, "PLA", "#FFFFFF"), lane("lane2", 1, "PLA", "#FF0000"),
+                 lane("lane3", 2, "PETG", "#FF0000")]
+        # Red PETG and red PLA: each to the lane of its material, though the file numbers them otherwise.
+        self.assertEqual(self.mapping(lanes, ["PETG", "PLA"], ["#FF0000", "#FF0000"]), {0: 2, 1: 1})
+
+    def test_closest_color_when_none_is_the_same(self):
+        lanes = [lane("lane1", 0, "PLA", "#000000"), lane("lane2", 1, "PLA", "#C00000")]
+        self.assertEqual(self.mapping(lanes, ["PLA"], ["#FF0000"]), {0: 1})
+
+    def test_same_color_before_the_sliced_toolhead(self):
+        lanes = [lane("lane1", 0, "PLA", "#FFFFFF", head=0), lane("lane2", 1, "PLA", "#FF0000", head=1)]
+        self.assertEqual(self.mapping(lanes, ["PLA"], ["#FF0000"], heads=[0]), {0: 1})
+
+    def test_sliced_toolhead_between_two_of_the_same_color(self):
+        lanes = [lane("lane1", 0, "PLA", "#FF0000", head=0), lane("lane2", 1, "PLA", "#FF0000", head=1)]
+        self.assertEqual(self.mapping(lanes, ["PLA"], ["#FF0000"], heads=[1]), {0: 1})
+
+    def test_own_number_between_equals(self):
+        lanes = [lane("lane1", 0, "PLA", "#FF0000"), lane("lane2", 1, "PLA", "#FF0000")]
+        self.assertEqual(self.mapping(lanes, ["PLA", "PLA"], ["#FF0000", "#FF0000"]), {0: 0, 1: 1})
+
+    def test_a_lane_once_while_others_are_free(self):
+        lanes = [lane("lane1", 0, "PLA", "#FF0000"), lane("lane2", 1, "PLA", "#FFFFFF")]
+        self.assertEqual(self.mapping(lanes, ["PLA", "PLA"], ["#FF0000", "#FF1010"]), {0: 0, 1: 1})
+        # With one lane of the material, both filaments print from it.
+        self.assertEqual(self.mapping(lanes[:1], ["PLA", "PLA"], ["#FF0000", "#FF1010"]), {0: 0, 1: 0})
+
+    def test_material_family(self):
+        lanes = [lane("lane1", 3, "PLA+", "#FF0000"), lane("lane2", 4, "PETG", "#FF0000")]
+        self.assertEqual(self.mapping(lanes, ["PLA-CF"], ["#FF0000"]), {0: 3})
+
+    def test_no_match_keeps_its_number(self):
+        lanes = [lane("lane1", 0, "PLA", "#FF0000"), lane("lane2", 1, "ABS", "#FF0000", filament=False)]
+        self.assertEqual(self.mapping(lanes, ["PLA", "ABS"], ["#FF0000", "#FF0000"]), {0: 0})
+
+    def test_only_the_filaments_printed(self):
+        lanes = [lane("lane1", 0, "PLA", "#FF0000"), lane("lane2", 1, "PLA", "#00FF00")]
+        self.assertEqual(self.mapping(lanes, ["PLA", "PLA"], ["#FF0000", "#00FF00"], used=[1]), {1: 1})

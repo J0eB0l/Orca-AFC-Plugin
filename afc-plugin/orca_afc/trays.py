@@ -443,3 +443,59 @@ def mapping_from_print(ams_mapping: str, ams_mapping2: str, filaments: int, show
         if tool >= 0:
             out[filament] = tool
     return out
+
+
+# A color this close (RGB distance, 0-441) counts as the same color.
+SAME_COLOR = 60.0
+
+
+def _rgb(color: str):
+    text = (color or "").lstrip("#")
+    if len(text) not in (6, 8):
+        return None
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return None
+
+
+def color_distance(a: str, b: str) -> float:
+    """How far apart two "#RRGGBB[AA]" colors are, 999 when one is unknown."""
+    first, second = _rgb(a), _rgb(b)
+    if first is None or second is None:
+        return 999.0
+    return sum((x - y) ** 2 for x, y in zip(first, second)) ** 0.5
+
+
+def auto_mapping(snapshot: Snapshot, filaments: list, types: list, colors: list, toolheads: list) -> dict:
+    """File filament -> AFC T number for a print the Multi-device tab sends to
+    several printers at once, which picks no trays for any one printer. Each
+    filament the file prints (`filaments`) goes to a loaded lane of the same
+    material (`types`), else of the same material family (PLA for PLA-CF), of
+    the same color (`colors`) first, then on the toolhead it was sliced for
+    (`toolheads`), then of the closest color, then its own T number; a lane
+    takes a second filament only when no other matches. A filament no lane
+    matches keeps its own T number."""
+    lanes = [(lane, tool_number(lane.maps[0])) for lane in snapshot.lanes
+             if lane.has_filament and lane.maps and tool_number(lane.maps[0]) >= 0]
+    taken, out = set(), {}
+    for filament in filaments:
+        kind = (types[filament] if filament < len(types) else "") or ""
+        color = colors[filament] if filament < len(colors) else ""
+        head = toolheads[filament] if filament < len(toolheads) else -1
+        candidates = [pair for pair in lanes if (pair[0].material or "").strip().upper() == kind.strip().upper()]
+        if not candidates:
+            candidates = [pair for pair in lanes if material_key(pair[0].material) == material_key(kind)]
+        if not kind or not candidates:
+            continue
+
+        def rank(pair):
+            lane, tool = pair
+            distance = color_distance(lane.color, color)
+            return (tool in taken, distance > SAME_COLOR, head >= 0 and lane.extruder_index != head, distance,
+                    tool != filament)
+
+        _, tool = min(candidates, key=rank)
+        out[filament] = tool
+        taken.add(tool)
+    return out

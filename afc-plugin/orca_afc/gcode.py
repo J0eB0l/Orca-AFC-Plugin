@@ -176,6 +176,7 @@ class FileSettings:
     top_cover: bool = False  # a Snapmaker U1 with "Support air filtration" on
     softening: list = field(default_factory=list)  # temperature_vitrification per filament, °C
     types: list = field(default_factory=list)  # filament_type per filament
+    colors: list = field(default_factory=list)  # filament_colour per filament, "#RRGGBB"
     chamber_control: bool = False  # "Support controlling chamber temperature"
     chamber_on: list = field(default_factory=list)  # activate_chamber_temp_control per filament
     chamber_temps: list = field(default_factory=list)  # chamber_temperature per filament, °C
@@ -205,6 +206,7 @@ class FileSettings:
             top_cover=u1 and _on(config, "support_air_filtration"),
             softening=_floats(config.get("temperature_vitrification", "")),
             types=[t.strip().strip('"') for t in config.get("filament_type", "").split(";")],
+            colors=[c.strip().strip('"') for c in config.get("filament_colour", "").split(";")],
             chamber_control=_on(config, "support_chamber_temp_control"),
             chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
             chamber_temps=_ints(config.get("chamber_temperature", "")),

@@ -209,7 +209,11 @@ def _preset_bundle():
 orca.selected = None  # what host.selected_printer() answers: None, or the selected printer's dict
 
 
-orca.host = types.SimpleNamespace(preset_bundle=_preset_bundle, selected_printer=lambda: orca.selected)
+orca.multi_device = False  # Preferences' Multi-device management, as host.app_info() answers it
+
+
+orca.host = types.SimpleNamespace(preset_bundle=_preset_bundle, selected_printer=lambda: orca.selected,
+                                  app_info=lambda: {"version": "2.5.0", "multi_device": orca.multi_device})
 
 
 def _plugin(cls):
