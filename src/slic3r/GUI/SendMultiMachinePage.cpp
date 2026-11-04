@@ -4,6 +4,7 @@
 
 #include "GUI_App.hpp"
 #include "slic3r/Utils/bambu_networking.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include "MainFrame.hpp"
 #include "Widgets/RadioBox.hpp"
 #include <wx/event.h>
@@ -441,7 +442,8 @@ void SendMultiMachinePage::refresh_user_device()
         return;
     }
 
-    auto all_machine = dev->get_my_cloud_machine_list();
+    wxGetApp().add_afc_preset_printers(); // Orca: lists each AFC printer preset's printer
+    auto all_machine = dev->get_multi_device_machine_list();
     auto user_machine = std::map<std::string, MachineObject*>();
 
     //selected machine
@@ -614,6 +616,16 @@ PrintParams SendMultiMachinePage::request_params(MachineObject* obj)
 
     params.connection_type = obj->connection_type();
     params.task_use_ams = use_ams;
+
+    // Orca: the trays picked here are one set for every printer, and a printer agent's trays are
+    // each printer's own lanes, so it gets no trays and picks its own lanes for each filament
+    // (the AFC printer agent matches material and color, orca_afc/agent.py).
+    if (!obj->printer_agent_id.empty() && obj->printer_agent_id != BBL_PRINTER_AGENT_ID) {
+        params.ams_mapping.clear();
+        params.ams_mapping2.clear();
+        params.ams_mapping_info.clear();
+        params.extra_options = R"({"lanes":"auto"})";
+    }
 
     PartPlate* curr_plate = m_plater->get_partplate_list().get_curr_plate();
     if (curr_plate) {

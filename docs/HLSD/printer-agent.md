@@ -230,6 +230,23 @@ provider and other agents map to the Orca cloud provider. The generation check p
 selection from races; it does not make cloud-provider ownership intrinsic to an agent. Cloud-printer
 ownership and the broader Orca cloud services are therefore still separate architectural concerns.
 
+## Multi-device with a printer agent
+
+The Multi-device tab lists cloud printers and, when the live agent is not Bambu's, that agent's LAN
+printers (`DeviceManager::get_multi_device_machine_list()`). An agent connects to one printer through
+`connect_printer()`, so the others must reach `DeviceManager` some other way: the AFC agent watches
+every AFC printer preset's printer while Multi-device management is on (the plugin reads it from
+`app_info()["multi_device"]`), and `GUI_App::add_afc_preset_printers()` gives each one a LAN device
+record with the preset's access code so its messages are accepted. The agent announces each watched
+printer, reports it connected or lost with `local_connect`, and pushes its state under its own
+`dev_id`. A lost report for a printer other than the selected one marks it offline without ending
+the selection.
+
+A Multi-device send picks one set of trays for every printer, which means nothing on a printer whose
+trays are its own lanes. A non-Bambu agent's job therefore carries no tray mapping and
+`extra_options` `{"lanes":"auto"}`, and the AFC agent matches each filament to that printer's lanes
+by material and color.
+
 ## Python printer agents
 
 `PrinterAgentPluginCapability` implements `IPrinterAgent` directly. The live capability object is

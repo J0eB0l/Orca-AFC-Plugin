@@ -445,7 +445,8 @@ void MultiMachinePickPage::refresh_user_device()
         return;
     }
 
-    auto user_machine = dev->get_my_cloud_machine_list();
+    wxGetApp().add_afc_preset_printers(); // Orca: lists each AFC printer preset's printer
+    auto user_machine = dev->get_multi_device_machine_list();
     auto task_manager = wxGetApp().getTaskManager();
 
     std::vector<std::string> subscribe_list;

@@ -2481,7 +2481,10 @@ void GUI_App::init_networking_callbacks()
 
                                 obj->set_online_state(false);
                             } else if (state == ConnectStatus::ConnectStatusLost) {
-                                m_device_manager->set_selected_machine("");
+                                // Orca: a printer agent that watches several printers (Multi-device) reports
+                                // each one lost; only the selected printer's loss ends the selection.
+                                if (m_device_manager->selected_machine == dev_id)
+                                    m_device_manager->set_selected_machine("");
                                 event.SetInt(-1);
                                 BOOST_LOG_TRIVIAL(info) << "set_on_local_connect_fn: state = lost";
 
@@ -4816,6 +4819,52 @@ void GUI_App::select_machine(const std::string& agent_id)
     }
     existing->local_use_ssl = boost::istarts_with(print_host, "https://");
     select_dev(dev_id);
+    if (agent_id == AFC_PRINTER_AGENT_ID)
+        add_afc_preset_printers();
+}
+
+// Orca: with Multi-device on, each printer preset the AFC printer agent prints to puts its printer in
+// the agent's device list, not only the selected preset's, so the Multi-device tab lists them and
+// prints to each. The agent watches the same presets' printers (orca_afc/agent.py) and pushes their
+// state. Only the AFC agent does: the other agents talk to their selected printer alone.
+void GUI_App::add_afc_preset_printers()
+{
+    if (!m_device_manager || !preset_bundle || !is_enable_multi_machine() ||
+        m_device_manager->get_current_printer_agent_id() != AFC_PRINTER_AGENT_ID)
+        return;
+    for (const Preset& preset : preset_bundle->printers.get_presets()) {
+        const DynamicPrintConfig& config = preset.config;
+        if (preset.is_default || !preset.is_visible || !config.has("print_host"))
+            continue;
+        const std::string stored_agent = config.opt_string("printer_agent");
+        const std::string print_host   = config.opt_string("print_host");
+        if (print_host.empty() || (stored_agent.empty() ? !printer_has_afc(config) : stored_agent != AFC_PRINTER_AGENT_ID))
+            continue;
+        const std::string dev_id      = MachineObject::dev_id_from_address(print_host, config.opt_string("printhost_port"));
+        std::string       access_code = config.opt_string("printhost_apikey");
+        if (access_code.empty())
+            access_code = "88888888";
+        MachineObject* machine = m_device_manager->get_local_machine(dev_id);
+        if (!machine) {
+            BBLocalMachine local;
+            local.dev_id = dev_id;
+            local.dev_ip = dev_id; // the address (host:port), as select_machine() keeps it
+            local.dev_name = preset.name;
+            const std::string& model = config.opt_string("printer_model");
+            for (const auto& vendor : preset_bundle->vendors)
+                for (const auto& vendor_model : vendor.second.models)
+                    if (vendor_model.name == model && local.printer_type.empty())
+                        local.printer_type = vendor_model.model_id;
+            machine = m_device_manager->insert_local_device(local, "lan", "free", "", access_code);
+            if (!machine)
+                continue;
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": added dev_id=" << dev_id << " for preset " << preset.name;
+        } else if (machine->printer_agent_id != AFC_PRINTER_AGENT_ID || machine->get_access_code() != access_code) {
+            machine->printer_agent_id = AFC_PRINTER_AGENT_ID;
+            machine->set_access_code(access_code);
+        }
+        machine->local_use_ssl = boost::istarts_with(print_host, "https://");
+    }
 }
 
 bool GUI_App::dark_mode()

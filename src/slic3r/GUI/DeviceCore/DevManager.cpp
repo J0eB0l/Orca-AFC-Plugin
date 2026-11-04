@@ -895,6 +895,18 @@ namespace Slic3r
         return result;
     }
 
+    std::map<std::string, MachineObject*> DeviceManager::get_multi_device_machine_list()
+    {
+        std::map<std::string, MachineObject*> result = get_my_cloud_machine_list();
+        const std::string agent_id = get_current_printer_agent_id();
+        if (agent_id.empty() || agent_id == BBL_PRINTER_AGENT_ID)
+            return result;
+        for (auto& [dev_id, machine] : get_my_machine_list(agent_id))
+            if (machine && machine->is_lan_mode_printer())
+                result.emplace(dev_id, machine);
+        return result;
+    }
+
     std::string DeviceManager::get_first_online_user_machine() const
     {
         for (auto it = userMachineList.begin(); it != userMachineList.end(); it++)

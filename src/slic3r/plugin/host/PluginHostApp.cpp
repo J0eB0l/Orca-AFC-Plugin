@@ -120,6 +120,7 @@ py::dict app_info()
     const boost::optional<Semver>& config_version = app.last_config_version();
     out["app_config_version"] = config_version && config_version->valid() ? config_version->to_string_sf() : std::string();
     out["stealth_mode"]       = app.app_config != nullptr && app.app_config->get_stealth_mode();
+    out["multi_device"]       = app.is_enable_multi_machine();
     out["is_signed_in"]       = app.is_user_login(ORCA_CLOUD_PROVIDER);
     out["is_bambu_signed_in"] = app.is_user_login(BBL_CLOUD_PROVIDER);
     out["network_plugin_version"] = NetworkAgent::is_network_module_loaded() ? NetworkAgent::get_version() : std::string();
@@ -177,7 +178,7 @@ void host_bindings::register_app(py::module_& host)
     host.def("preset_bundle", &current_preset_bundle, py::return_value_policy::reference);
     host.def("app_info", &app_info,
              "The running app: version, build, mode, language, app_config_version (the version that wrote the app config "
-             "before this run, empty when there was none), stealth_mode, is_signed_in (Orca Cloud), is_bambu_signed_in (Bambu Cloud), network_plugin_version (empty "
+             "before this run, empty when there was none), stealth_mode, multi_device (Preferences' Multi-device management), is_signed_in (Orca Cloud), is_bambu_signed_in (Bambu Cloud), network_plugin_version (empty "
              "when the Bambu network plugin is not loaded) and network_plugin_error (empty unless it failed to load).");
     host.def("gl_info", &gl_info,
              "OpenGL vendor, renderer, version, glsl_version and core_profile of the 3D view; None before it has been created.");

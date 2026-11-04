@@ -427,6 +427,8 @@ public:
     void switch_printer_agent_if_pending();
 
     std::string resolve_printer_agent_id(const std::string& stored_id) const;
+    // Orca: with Multi-device on, puts the printer of every AFC printer preset in the AFC agent's device list.
+    void add_afc_preset_printers();
     // ORCA TODO: in the future, bbl presets should specify "bbl" printer agent id
     // then, all resolve and canonical would just be ORCA<->""
     std::string canonical_printer_agent_id(const std::string& picked_id);
