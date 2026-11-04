@@ -4,6 +4,7 @@
 #include "../GUI/DeviceCore/DevStorage.h"
 #include "../GUI/DeviceManager.hpp"
 #include "NetworkAgent.hpp"
+#include "NetworkAgentFactory.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
 #include <nlohmann/json.hpp>
@@ -1684,7 +1685,12 @@ bool CalibUtils::process_and_store_3mf(Model *model, const DynamicPrintConfig &f
 
     Print *fff_print = dynamic_cast<Print *>(print);
     fff_print->set_calib_params(params);
-    fff_print->is_BBL_printer() = true;
+    // Orca: a printer agent's printer of another vendor (a Klipper printer) gets its own firmware's
+    // commands, as the plater slices for it (SET_PRESSURE_ADVANCE, not Bambu's M900 and jerk line).
+    DeviceManager       *dev_manager = wxGetApp().getDeviceManager();
+    const MachineObject *machine     = dev_manager ? dev_manager->get_selected_machine() : nullptr;
+    const bool agent_printer = machine && !machine->printer_agent_id.empty() && machine->printer_agent_id != BBL_PRINTER_AGENT_ID;
+    fff_print->is_BBL_printer() = !agent_printer || wxGetApp().preset_bundle->is_bbl_vendor();
 
     //StringObjectException warning;
     //auto err = print->validate(&warning);
