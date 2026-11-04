@@ -675,10 +675,26 @@ class DeviceTabTest(Case):
         self.assertEqual((shown["running"], shown["errors"], shown["notes"]),
                          (False, [], ["AFC_autocal: stored K=0.021300 for lane2"]))
         self.assertEqual(self.calls.messages("print", "agent_flow_calibration")[-1]["result"], "success")
+        # The Device tab shows the K autocal saved on the lane's spool at once.
+        self.assertEqual(self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][1]["k"], 0.0213)
         # The next G-code the window sends starts with no notes.
         self.send({"print": {"command": "gcode_line", "param": "M400"}})
         self.agent._gcode.call(lambda: None, 5)
         self.assertEqual(self.calls.messages("print", "push_status", 3)[-1]["agent_prompt"]["notes"], [])
+
+    def test_u1_flow_calibration_of_a_lane_without_a_spool(self):
+        # Autocal keeps the K of a lane with no Spoolman spool in Klipper only; the agent keeps it too.
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane2"]["spool_id"] = None
+        self.u1_autocal()
+        self.connect()
+        self.push()
+        self.fake.effects["CHANGE_TOOL LANE=lane2\n" + afc_agent.FLOW_K_CALIBRATION] = lambda: self.fake.gcode_store.append(
+            {"message": "// AFC_autocal: stored K=0.023685 for lane2", "time": 20.0, "type": "response"})
+        self.send({"print": {"command": "agent_flow_calibration", "tray_id": 1}})
+        self.agent._gcode.call(lambda: None, 5)
+        tray = self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][1]
+        self.assertEqual(tray["k"], 0.023685)
+        self.assertEqual(afc_agent.stored_flow_k([{"message": "// AFC_autocal: stored K=0.02 for lane20"}], "lane2"), None)
 
     def test_u1_flow_calibration_of_the_lane_in_the_toolhead(self):
         self.assertEqual(afc_agent.flow_calibration_gcode(Lane(name="lane2", tool_loaded=True), "lane2"),

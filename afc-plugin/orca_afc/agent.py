@@ -636,6 +636,23 @@ _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)",
 
 FLOW_K_CALIBRATION = "AFC_CALIBRATE_LANE_FLOW_K"  # AFC autocal: measure the current lane's K and save it
 FLOW_K_NOTE = "AFC_autocal: "                     # how autocal answers it in the console
+_FLOW_K_STORED = re.compile(r"AFC_autocal: stored K=([0-9.]+) for (\S+)")
+
+
+def stored_flow_k(entries, lane: str):
+    """The K autocal's answer in G-code store `entries` says it stored for
+    `lane` last, None when there is none."""
+    found = None
+    for entry in entries or ():
+        message = entry.get("message") if isinstance(entry, dict) else None
+        for line in (message.splitlines() if isinstance(message, str) else ()):
+            match = _FLOW_K_STORED.search(line)
+            if match and match.group(2) == lane:
+                try:
+                    found = float(match.group(1))
+                except ValueError:
+                    pass
+    return found
 
 
 def flow_calibration_gcode(lane, current_lane: str) -> str:
@@ -1521,10 +1538,12 @@ else:
                 self._run(printer, script, push=True)
             return SUCCESS
 
-        def _watched_gcode(self, printer: _Printer, script: str, job: dict, reply: dict, note: str = "") -> None:
+        def _watched_gcode(self, printer: _Printer, script: str, job: dict, reply: dict, note: str = "",
+                           after=None) -> None:
             """Runs G-code OrcaSlicer's Calibration window waits on: the prompts
             it opens, the errors it prints and Klipper's answers starting with
-            `note` go to agent_prompt, and `reply` back when it ends."""
+            `note` go to agent_prompt, and `reply` back when it ends, after
+            `after()` when it worked."""
             if isinstance(job.get("sequence_id"), str):
                 reply["sequence_id"] = job["sequence_id"]
             printer.prompt_until = time.monotonic() + prompt.WATCH
@@ -1535,6 +1554,8 @@ else:
                     printer.prompt.mark(self._store_time(printer))
                     self._gcode_to_end(printer, script)
                     reply["result"] = "success"
+                    if after is not None:
+                        after()
                 except MoonrakerError:
                     reply["result"] = "failed"
                 finally:
@@ -1557,8 +1578,25 @@ else:
             if lane is None or not printer.flow_calibration:
                 return ERR_INVALID_RESULT
             script = flow_calibration_gcode(lane, printer.snapshot.current_lane)
+
+            def measured():
+                # Autocal saves K on the lane's spool; a lane with no spool keeps it in Klipper only,
+                # so the agent keeps it too (_kept_k()), as for the tray popup's Factor K.
+                try:
+                    entries = printer.client.get("/server/gcode_store", {"count": prompt.LINES})["gcode_store"]
+                except (MoonrakerError, KeyError, TypeError):
+                    return
+                k = stored_flow_k(entries, lane.name)
+                if k is None or not 0 < k < 2:
+                    return
+                with self._lock:
+                    if lane.spool_id > 0:
+                        printer.manager.saved_flow_k(lane.spool_id, k)
+                    else:
+                        printer.lane_k[lane.name] = (k, spool_key(lane))
+
             self._watched_gcode(printer, script, job, {"command": "agent_flow_calibration", "tray_id": tray},
-                                FLOW_K_NOTE)
+                                FLOW_K_NOTE, measured)
             return SUCCESS
 
         def _run(self, printer: _Printer, script: str, push: bool = False) -> None:

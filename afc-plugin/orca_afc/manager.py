@@ -154,6 +154,11 @@ class AFCManager:
             return k
         return -1.0  # counts as "no K" until it is due again
 
+    def saved_flow_k(self, spool: int, k: float) -> None:
+        """A spool's K someone else just saved in Spoolman (AFC autocal), shown
+        now instead of after the cached read is due."""
+        self._flow_k[spool] = (float(k), self._clock())
+
     def save_flow_k(self, client: Moonraker, spool: int, k: float, spoolman_url: str = "") -> str:
         """Save a spool's pressure advance in its "flow_k" Spoolman field, as AFC
         autocal does, through the way K was read last first. Returns an error
