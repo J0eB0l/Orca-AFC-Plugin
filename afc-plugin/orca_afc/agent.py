@@ -762,7 +762,7 @@ class _Printer:
     wide: bool = False                                # ... and reads the tray masks as 64 bits (trays.WIDE)
     dry_filaments: dict = field(default_factory=dict) # unit -> the filament the drying popup started it for
     lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
-    lane_k: dict = field(default_factory=dict)        # lane with no Spoolman spool -> (K set in the tray popup, spool_key())
+    lane_k: dict = field(default_factory=dict)        # lane with no Spoolman spool -> (K set in the tray popup, spool_key(), autocal's K then)
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
     camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
     camera_due: float = 0.0                           # when to read the webcam list again
@@ -1395,11 +1395,13 @@ else:
         def _kept_k(self, printer: _Printer, snapshot) -> None:
             """Gives each lane with no Spoolman spool the K set for it in the tray
             popup, which sync then puts in its filament slot and a print applies,
-            until the lane gets a spool or another filament."""
+            until the lane gets a spool or another filament, or AFC autocal
+            measures it again."""
             with self._lock:
-                for name, (k, key) in list(printer.lane_k.items()):
+                for name, (k, key, autocal) in list(printer.lane_k.items()):
                     lane = snapshot.find_lane(name)
-                    if lane is None or not lane.has_filament or lane.spool_id > 0 or spool_key(lane) != key:
+                    if lane is None or not lane.has_filament or lane.spool_id > 0 or spool_key(lane) != key \
+                            or snapshot.autocal_k.get(name) != autocal:
                         del printer.lane_k[name]
                     else:
                         lane.flow_k = k
@@ -1593,7 +1595,7 @@ else:
                     if lane.spool_id > 0:
                         printer.manager.saved_flow_k(lane.spool_id, k)
                     else:
-                        printer.lane_k[lane.name] = (k, spool_key(lane))
+                        printer.lane_k[lane.name] = (k, spool_key(lane), printer.snapshot.autocal_k.get(lane.name))
 
             self._watched_gcode(printer, script, job, {"command": "agent_flow_calibration", "tray_id": tray},
                                 FLOW_K_NOTE, measured)
@@ -1730,7 +1732,7 @@ else:
                 return SUCCESS
             if lane.spool_id <= 0:
                 with self._lock:
-                    printer.lane_k[lane.name] = (k, spool_key(lane))
+                    printer.lane_k[lane.name] = (k, spool_key(lane), printer.snapshot.autocal_k.get(lane.name))
                 self._work(printer).submit(lambda: self._push(printer))
                 return SUCCESS
             spoolman = protocol.spoolman_for_printer(printer.snapshot.spoolman_url, printer.client.url)

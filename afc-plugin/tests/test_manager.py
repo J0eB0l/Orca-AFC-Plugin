@@ -56,6 +56,14 @@ class ReadTest(Case):
         self.fake.objects["AFC"] = {"units": [], "lanes": [], "spoolman": None}
         self.assertTrue(self.manager.read(self.client).top_cover)  # the objects fallback asks too
 
+    def test_autocal_k_for_a_lane_without_a_spool(self):
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane2"]["spool_id"] = None
+        self.fake.objects["AFC_autocal"] = {"lane_k": {"lane2": 0.0237}}
+        snap = self.manager.read(self.client)
+        self.assertEqual(snap.find_lane("lane2").flow_k, 0.0237)
+        self.fake.objects["AFC_autocal"] = {"lane_k": {}}
+        self.assertEqual(self.manager.read(self.client).find_lane("lane2").flow_k, -1.0)
+
     def test_objects_fallback(self):
         self.fake.webhook = None
         self.fake.objects = {

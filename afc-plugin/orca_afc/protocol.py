@@ -121,6 +121,7 @@ class Snapshot:
     top_cover: bool = False   # a U1 reports its top cover (filter and exhaust fan) attached
     message: str = ""         # AFC's oldest queued error or warning, until AFC_CLEAR_MESSAGE
     message_type: str = ""    # "error" or "warning"
+    autocal_k: dict = field(default_factory=dict)  # lane -> K AFC autocal holds for its spool (_read_autocal())
     # AMS filament backup, kept in the plugin's database namespace (merge_backup()):
     # a print sent from OrcaSlicer links matching spools, and these are the runout lanes it set.
     filament_backup: bool = True
@@ -349,6 +350,17 @@ def _read_top_cover(status: dict, out: Snapshot) -> None:
         out.top_cover = _bool(purifier, "power_detected")
 
 
+def _read_autocal(status: dict, out: Snapshot) -> None:
+    """AFC autocal's K for each lane whose spool it was measured on. It is the
+    only record of a lane with no Spoolman spool; older AFCs report nothing."""
+    autocal = status.get("AFC_autocal")
+    lane_k = autocal.get("lane_k") if isinstance(autocal, dict) else None
+    if not isinstance(lane_k, dict):
+        return
+    out.autocal_k = {name: float(k) for name, k in lane_k.items()
+                     if isinstance(k, (int, float)) and not isinstance(k, bool) and 0 < k < 2}
+
+
 def _unwrap_status(result: dict):
     cur = result
     # AFC's webhook answers {"status:": {"AFC": {...}}} (the colon is AFC's),
@@ -411,12 +423,14 @@ def parse_status_endpoint(result) -> Snapshot | None:
 
 def afc_object_query() -> dict:
     """Klipper object fields the webhook leaves out, plus the U1's
-    print_task_config switches and whether its top cover is on. A printer
+    print_task_config switches, whether its top cover is on and the K AFC
+    autocal holds for each lane. A printer
     without those objects answers them with null fields (see
     _read_u1_print_options)."""
     return {"AFC": ["multiple_tool_mapping", "message"],
             "print_task_config": ["auto_bed_leveling", "flow_calibrate", "time_lapse_camera"],
-            "purifier": ["power_detected"]}
+            "purifier": ["power_detected"],
+            "AFC_autocal": ["lane_k"]}
 
 
 def merge_afc_object(status, out: Snapshot) -> None:
@@ -427,6 +441,7 @@ def merge_afc_object(status, out: Snapshot) -> None:
         return
     _read_u1_print_options(st, out)
     _read_top_cover(st, out)
+    _read_autocal(st, out)
     afc = st.get("AFC")
     if isinstance(afc, dict) and afc.get("multiple_tool_mapping") is not None:
         out.multiple_mapping = _bool(afc, "multiple_tool_mapping")
@@ -466,6 +481,7 @@ def parse_objects_status(status) -> Snapshot | None:
     _read_afc_object(afc, out)
     _read_u1_print_options(st, out)
     _read_top_cover(st, out)
+    _read_autocal(st, out)
 
     unit_types = {}
     for entry in _string_list(afc.get("units")):

@@ -59,7 +59,8 @@ def read_snapshot(client: Moonraker) -> Snapshot:
         except MoonrakerError:
             objects_list = {}
         u1 = protocol.afc_object_query()
-        objects = {"AFC": None, "print_task_config": u1["print_task_config"], "purifier": u1["purifier"]}
+        objects = {"AFC": None, "print_task_config": u1["print_task_config"], "purifier": u1["purifier"],
+                   "AFC_autocal": u1["AFC_autocal"]}
         for name in protocol.lane_object_names(objects_list, lanes):
             objects[name] = None
         snap = protocol.parse_objects_status(client.objects_query(objects)) or Snapshot()
@@ -125,10 +126,12 @@ class AFCManager:
         return snap if not error and source == client.url and snap.present else None
 
     def _read_flow_k(self, client: Moonraker, snap: Snapshot) -> None:
-        """Each spool's saved pressure advance, from Spoolman."""
+        """Each spool's saved pressure advance, from Spoolman. A lane with no
+        spool takes the K AFC autocal holds for it, when it holds one."""
         now = self._clock()
         for lane in snap.lanes:
             if lane.spool_id <= 0:
+                lane.flow_k = snap.autocal_k.get(lane.name, lane.flow_k)
                 continue
             known = self._flow_k.get(lane.spool_id)
             if known is None or now - known[1] >= FLOW_K_MAX_AGE:

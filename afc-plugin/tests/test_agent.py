@@ -572,6 +572,21 @@ class DeviceTabTest(Case):
         # K stays within the popup's range.
         self.assertEqual(self.cali_set(0, 2.5), afc_agent.ERR_INVALID_RESULT)
 
+    def test_autocal_k_of_a_lane_without_a_spool(self):
+        # AFC autocal reports the K it holds for a lane with no Spoolman spool.
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane2"]["spool_id"] = None
+        self.fake.objects["AFC_autocal"] = {"lane_k": {"lane2": 0.0229}}
+        self.connect()
+        self.assertEqual(self.push()["ams"]["ams"][0]["tray"][1]["k"], 0.0229)
+        # The tray popup's Factor K wins until autocal measures the lane again.
+        self.assertEqual(self.cali_set(1, 0.04), 0)
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][1]["k"], 0.04)
+        self.fake.objects["AFC_autocal"] = {"lane_k": {"lane2": 0.0241}}
+        self.agent._worker.call(lambda: self.agent._push(self.agent._current()), 5)
+        self.assertEqual(self.calls.messages("print", "push_status", 3)[-1]["ams"]["ams"][0]["tray"][1]["k"], 0.0241)
+        self.assertEqual(self.agent._current().lane_k, {})
+
     def test_camera_plays_the_first_webcam(self):
         self.fake.webcams = [{"name": "display", "service": "iframe", "enabled": True, "stream_url": "http://x/?embed"},
                              {"name": "cam", "service": "webrtc-camerastreamer", "enabled": True,

@@ -174,6 +174,15 @@ class AFCObjectTest(unittest.TestCase):
         self.assertEqual(p.to_json(s)["u1_print"],
                          {"bed_level": True, "flow_calibrate": False, "time_lapse_camera": True})
 
+    def test_autocal_lane_k(self):
+        s = parsed()
+        self.assertEqual(p.afc_object_query()["AFC_autocal"], ["lane_k"])
+        p.merge_afc_object({"status": {"AFC": {}, "AFC_autocal": {"lane_k": None}}}, s)
+        self.assertEqual(s.autocal_k, {})  # an AFC without the status, or no autocal
+        p.merge_afc_object({"status": {"AFC": {}, "AFC_autocal": {"lane_k": {
+            "lane1": 0.0237, "lane2": 0, "lane3": "x", "lane4": True, "lane5": 1}}}}, s)
+        self.assertEqual(s.autocal_k, {"lane1": 0.0237, "lane5": 1.0})
+
     def test_u1_top_cover(self):
         s = parsed()
         self.assertEqual(p.afc_object_query()["purifier"], ["power_detected"])
