@@ -291,6 +291,17 @@ class StatusTest(Case):
         self.assertEqual((status["subtask_name"], status["mc_percent"], status["mc_remaining_time"]),
                          ("cube.gcode", 25, 30))
 
+    def test_calibration_job_by_its_mode(self):
+        # The Calibration tab follows its test by the mode name only, then offers Record Factor.
+        self.fake.objects["print_stats"] = {"state": "printing", "filename": "pa_line_calib_mode_plate_1.gcode",
+                                            "print_duration": 60}
+        self.connect()
+        status = self.push()
+        self.assertEqual((status["subtask_name"], status["gcode_file"]),
+                         ("pa_line_calib_mode", "pa_line_calib_mode_plate_1.gcode"))
+        self.assertEqual(afc_agent.task_name("flow_rate_coarse_calib_mode_plate_1.gcode"), "flow_rate_coarse_calib_mode")
+        self.assertEqual(afc_agent.task_name("Cube_box_plate_1.gcode"), "Cube_box_plate_1.gcode")
+
     def test_stage_line(self):
         self.connect()
         idle = self.push()

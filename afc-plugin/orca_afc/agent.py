@@ -467,7 +467,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     # The speed popup's level and the speed in percent beside it.
     out.update(controls.speed_report(obj("gcode_move").get("speed_factor")))
     if isinstance(stats.get("filename"), str):
-        out["subtask_name"] = out["gcode_file"] = stats["filename"]
+        out["subtask_name"] = task_name(stats["filename"])
+        out["gcode_file"] = stats["filename"]
     out["thumbnail_url"] = job.get("thumbnail_url", "")
     # The slicer's M73 progress, which runs by print time; Klipper falls back to the file position without it.
     progress = _number(obj("display_status").get("progress"))
@@ -565,6 +566,19 @@ def plate_gcode(path: str, plate: int):
         with open(sibling, "rb") as f:
             return f.read()
     return None
+
+
+_CALIBRATION_FILE = re.compile(r"(?:.*/)?(\w+_calib_mode)_plate_\d+\.gcode")
+
+
+def task_name(filename: str) -> str:
+    """The job name the Device and Calibration tabs show for a print file:
+    a Calibration tab test (upload_name() of its mode name, such as
+    "pa_line_calib_mode_plate_1.gcode") by its mode name, which the
+    Calibration tab looks for to follow the test and offer its next step;
+    any other file by its name."""
+    match = _CALIBRATION_FILE.fullmatch(filename or "")
+    return match.group(1) if match else filename
 
 
 def upload_name(project: str, plate: int) -> str:
