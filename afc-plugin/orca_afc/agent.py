@@ -537,6 +537,13 @@ class PrintJob:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
+def is_pa_calibration(project: str) -> bool:
+    """Whether a print is one of the Calibration tab's Flow Dynamics tests,
+    which OrcaSlicer names after its mode ("pa_line_calib_mode",
+    "pa_pattern_calib_mode", "auto_pa_line_calib_mode")."""
+    return project.endswith("pa_line_calib_mode") or project.endswith("pa_pattern_calib_mode")
+
+
 def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse: bool = False,
             wide: bool = False) -> str:
     """The file as the printer gets it: the print dialog's trays for its
@@ -548,7 +555,10 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
     if settings.klipper and snapshot is not None and snapshot.present:
         shown = trays.layout(snapshot, by_unit, wide)
         mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
-        text = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, mapping, settings), settings).text
+        plan = gcode.plan_for(snapshot, settings.filaments, mapping, settings)
+        if is_pa_calibration(job.project):
+            plan.flow_k.clear()  # a Flow Dynamics test prints its own K on every line
+        text = gcode.transform(text, plan, settings).text
     if snapshot is not None and snapshot.u1_print.present:
         options = protocol.U1PrintOptions(True, job.bed_level, job.flow_calibrate, job.time_lapse)
         line = protocol.u1_file_print_options_gcode(options)

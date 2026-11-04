@@ -1273,6 +1273,21 @@ class FileTest(unittest.TestCase):
         text = PLATE.replace("gcode_flavor = klipper", "gcode_flavor = marlin2")
         self.assertEqual(afc_agent.prepare(text, afc_agent.PrintJob(ams_mapping="[4,0]"), Snapshot()), text)
 
+    def test_prepare_keeps_a_flow_dynamics_test_k(self):
+        # The Calibration tab's test prints its own K on each line; a normal print takes the spool's.
+        from orca_afc.protocol import Lane
+        snap = Snapshot(present=True, lanes=[Lane(name="lane1", maps=["T0"], extruder_index=0, flow_k=0.03)])
+        body = "PRINT_START TOOL=0\nT0\nSET_PRESSURE_ADVANCE ADVANCE=0.005; Override pressure advance value\nG1 X10 E1\n"
+        text = HEADER + body + CONFIG.replace("#FF0000;#00FF00", "#FF0000").replace("1.75,1.75", "1.75")
+        test = afc_agent.prepare(text, afc_agent.PrintJob(project="pa_line_calib_mode", ams_mapping="[0]"), snap)
+        self.assertIn("ADVANCE=0.005;", test)
+        self.assertNotIn("0.03", test)
+        normal = afc_agent.prepare(text, afc_agent.PrintJob(project="Cube", ams_mapping="[0]"), snap)
+        self.assertNotIn("ADVANCE=0.005", normal)
+        self.assertIn("ADVANCE=0.03", normal)
+        self.assertTrue(afc_agent.is_pa_calibration("auto_pa_line_calib_mode"))
+        self.assertFalse(afc_agent.is_pa_calibration("flow_rate_coarse_calib_mode"))
+
 
 if __name__ == "__main__":
     unittest.main()
