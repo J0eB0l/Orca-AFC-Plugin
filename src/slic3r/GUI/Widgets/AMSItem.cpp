@@ -5,6 +5,7 @@
 #include "../GUI_App.hpp"
 #include "../FilamentBitmapUtils.hpp"
 #include "../Utils/WxFontUtils.hpp"
+#include "slic3r/Utils/NetworkAgentFactory.hpp"
 
 #include "slic3r/GUI/DeviceTab/uiAmsHumidityPopup.h"
 
@@ -1221,6 +1222,11 @@ void AMSLib::render_generic_text(wxDC &dc)
     bool show_k_value = true;
     if (m_info.material_name.empty()) {
         show_k_value = false;
+    }
+    else if (m_obj && !m_obj->printer_agent_id.empty() && m_obj->printer_agent_id != BBL_PRINTER_AGENT_ID) {
+        // Orca: a printer agent's tray reports the K the printer gives that spool (0 for none) and keeps
+        // no calibration table, so the table's default K would hide what the printer was told.
+        show_k_value = abs(m_info.k) >= EPSILON;
     }
     else if (m_info.cali_idx == -1 || (m_obj && (CalibUtils::get_selected_calib_idx(m_obj->pa_calib_tab, m_info.cali_idx) == -1))) {
         if (m_obj && m_obj->GetConfig()->SupportCalibrationPA_FlowAuto())
