@@ -3416,6 +3416,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     for (const json& line : prompt.value("notes", json::array()))
                         if (line.is_string())
                             agent_prompt.notes.push_back(line.get<std::string>());
+                    agent_prompt.status = prompt.value("status", std::string());
+                    for (const json& line : prompt.value("log", json::array()))
+                        if (line.is_string())
+                            agent_prompt.log.push_back(line.get<std::string>());
                     for (const json& line : prompt.value("text", json::array()))
                         if (line.is_string())
                             agent_prompt.text.push_back(line.get<std::string>());

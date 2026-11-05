@@ -22,6 +22,7 @@
 #include "slic3r/GUI/DeviceCore/DevConfigUtil.h"
 #include "slic3r/GUI/DeviceManager.hpp"
 #include <wx/sizer.h>
+#include <wx/stattext.h>
 #include "slic3r/GUI/Widgets/Button.hpp"
 #include "libslic3r/CommonDefs.hpp"
 #include "slic3r/GUI/DeviceCore/DevDefs.h"
@@ -2056,7 +2057,7 @@ AgentPromptDialog::AgentPromptDialog(wxWindow* parent, MachineObject* obj, const
     sizer->Add(m_content, 1, wxEXPAND | wxALL, FromDIP(18));
     SetSizer(sizer);
 
-    show_waiting({});
+    show_waiting(MachineObject::AgentPrompt());
     send(start_gcode);
     relayout();
     CenterOnParent();
@@ -2091,11 +2092,25 @@ void AgentPromptDialog::add_errors(const std::vector<std::string>& errors)
         add_text(from_u8(error), wxColour(255, 0, 0));
 }
 
-void AgentPromptDialog::show_waiting(const std::vector<std::string>& errors)
+void AgentPromptDialog::show_waiting(const MachineObject::AgentPrompt& prompt)
 {
     clear_content();
-    add_text(_L("Waiting for the printer..."), STATIC_TEXT_CAPTION_COL);
-    add_errors(errors);
+    if (!prompt.status.empty())
+        add_text(from_u8(prompt.status));
+    else
+        add_text(prompt.log.empty() ? _L("Waiting for the printer...") : _L("Working..."),
+                 prompt.log.empty() ? STATIC_TEXT_CAPTION_COL : wxNullColour);
+    // The printer's newest console lines, one row each, so the window keeps its size as they change.
+    for (const std::string& line : prompt.log) {
+        auto* label = new wxStaticText(m_content, wxID_ANY, from_u8(line), wxDefaultPosition, wxDefaultSize,
+                                       wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+        label->SetFont(Label::Body_12);
+        label->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
+        label->SetMinSize(wxSize(FromDIP(480), -1));
+        label->SetMaxSize(wxSize(FromDIP(480), -1));
+        m_content->GetSizer()->Add(label, 0, wxBOTTOM, FromDIP(4));
+    }
+    add_errors(prompt.errors);
 }
 
 void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
@@ -2123,7 +2138,7 @@ void AgentPromptDialog::show_prompt(const MachineObject::AgentPrompt& prompt)
                         EndModal(wxID_OK);
                     return;
                 }
-                show_waiting({});
+                show_waiting(MachineObject::AgentPrompt());
                 relayout();
             });
         });
@@ -2175,7 +2190,7 @@ void AgentPromptDialog::update_prompt(MachineObject* obj)
     if (prompt.open)
         show_prompt(prompt);
     else if (prompt.running)
-        show_waiting(prompt.errors);
+        show_waiting(prompt);
     else if (!prompt.errors.empty() || !prompt.notes.empty())
         show_finished(prompt.errors, prompt.notes);
     else {

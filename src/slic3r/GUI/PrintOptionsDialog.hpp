@@ -117,7 +117,7 @@ private:
     std::string                  m_dev_id;
     wxPanel*                     m_content {nullptr};
     int                          m_shown_id {0};
-    void                         show_waiting(const std::vector<std::string>& errors);
+    void                         show_waiting(const MachineObject::AgentPrompt& prompt); // its status and console lines while it runs
     void                         show_prompt(const MachineObject::AgentPrompt& prompt);
     void                         show_finished(const std::vector<std::string>& errors,
                                                const std::vector<std::string>& notes); // what the printer answered and what went wrong, with OK

@@ -669,6 +669,8 @@ public:
         bool                                        running {false}; // G-code OrcaSlicer sent is still running
         std::vector<std::string>                    errors;          // errors printed while it ran
         std::vector<std::string>                    notes;           // what the command it ran answered (the K autocal stored)
+        std::string                                 status;          // what the printer does while it runs ("Homing"), "" for nothing to say
+        std::vector<std::string>                    log;             // the printer's newest console lines while it runs
         std::string                                 title;
         std::vector<std::string>                    text;
         std::vector<std::vector<AgentPromptButton>> rows;
