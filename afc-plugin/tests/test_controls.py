@@ -135,6 +135,27 @@ class TrayTest(unittest.TestCase):
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request), ["SET_COLOR LANE=lane1 COLOR=00FF00"])
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_color": "00000000"}), [])
 
+    def test_popup_sets_the_filament_id_where_afc_keeps_it(self):
+        lane1 = self.snap.lanes[0]
+        request = {"tray_info_idx": "OFDSrzZ8", "tray_type": "PLA"}
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request), [])
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, True),
+                         ["SET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8"])
+        lane1.filament_id = "OFDSrzZ8"
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, True), [])
+        # A new material drops AFC's id, so the same pick goes again after it.
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OFDSrzZ8", "tray_type": "PETG"}, True),
+                         ["SET_MATERIAL LANE=lane1 MATERIAL=PETG", "SET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8"])
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OF x;M112"}, True), [])
+
+    def test_popup_reset_clears_the_id_of_a_lane_without_a_spool(self):
+        lane1 = self.snap.lanes[0]
+        lane1.filament_id = "OFDSrzZ8"
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": ""}, True),
+                         ["SET_FILAMENT_ID LANE=lane1"])
+        lane1.spool_id = 7  # a spool's id is Spoolman's
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": ""}, True), [])
+
     def test_load_a_tray(self):
         self.assertEqual(controls.change_filament_gcode(self.snap, {"ams_id": 1, "slot_id": 0, "target": 4}, self.shown),
                          "CHANGE_TOOL LANE=lane5")

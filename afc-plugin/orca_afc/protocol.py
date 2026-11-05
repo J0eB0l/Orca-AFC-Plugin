@@ -809,13 +809,13 @@ def to_json(s: Snapshot) -> dict:
 
 # ------------------------------------------------------------------ G-code from the page
 
-_EDIT_ORDER = ("spool_id", "map", "material", "color", "weight", "nozzle_temp", "bed_temp")
+_EDIT_ORDER = ("spool_id", "map", "material", "filament_id", "color", "weight", "nozzle_temp", "bed_temp")
 
 
 def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> list:
     """G-code for a lane edit from the AFC page. `changes` may hold color
-    ("#RRGGBB"), material, weight (g), spool_id (0 clears), map ("T5"),
-    nozzle_temp, bed_temp. Values are checked and never interpolated raw."""
+    ("#RRGGBB"), material, filament_id (OrcaSlicer's, "" clears), weight (g),
+    spool_id (0 clears), map ("T5"), nozzle_temp, bed_temp. Values are checked and never interpolated raw."""
     if not is_safe_lane_name(lane_name) or snapshot.find_lane(lane_name) is None:
         raise AFCError("unknown lane")
     if not isinstance(changes, dict) or not changes:
@@ -840,6 +840,11 @@ def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> 
             if not isinstance(val, str) or not _safe_value(val, 32):
                 raise AFCError("material may only use letters, digits and + - _ .")
             out.append("SET_MATERIAL" + lane_arg + " MATERIAL=" + val)
+        elif key == "filament_id":
+            # After SET_MATERIAL, which drops the lane's id when the material changes.
+            if not isinstance(val, str) or (val and not _safe_value(val, 64)):
+                raise AFCError("filament id may only use letters, digits and + - _ .")
+            out.append("SET_FILAMENT_ID" + lane_arg + (" ID=" + val if val else ""))
         elif key == "weight":
             if not _is_number(val) or val < 0 or val > 100000:
                 raise AFCError("weight must be 0-100000 g")

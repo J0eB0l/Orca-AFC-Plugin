@@ -644,6 +644,7 @@ def auto_lanes(extra_options: str) -> bool:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
+SET_FILAMENT_ID = "SET_FILAMENT_ID"  # AFC keeps a lane's OrcaSlicer filament id
 FLOW_K_CALIBRATION = "AFC_CALIBRATE_LANE_FLOW_K"  # AFC autocal: measure the current lane's K and save it
 FLOW_K_NOTE = "AFC_autocal: "                     # how autocal answers it in the console
 _FLOW_K_STORED = re.compile(r"AFC_autocal: stored K=([0-9.]+) for (\S+)")
@@ -764,6 +765,7 @@ class _Printer:
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
     fans: list = field(default_factory=list)          # Klipper fans, for the fan popup (controls.find_fans())
     flow_calibration: bool = False                    # AFC autocal's FLOW_K_CALIBRATION command is there
+    filament_ids: bool = False                        # AFC's SET_FILAMENT_ID is there (keeps a tray's preset id)
     chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
@@ -1038,6 +1040,7 @@ else:
             try:
                 commands = printer.client.get("/printer/gcode/help")
                 printer.flow_calibration = isinstance(commands, dict) and FLOW_K_CALIBRATION in commands
+                printer.filament_ids = isinstance(commands, dict) and SET_FILAMENT_ID in commands
             except MoonrakerError:
                 pass
             if not printer.model_id:
@@ -1717,7 +1720,8 @@ else:
 
         def _filament_setting(self, printer: _Printer, job: dict) -> int:
             """The tray popup: the lane takes its color and material, and the
-            preset picked for it until it gets another spool. A reset (no
+            preset picked for it until it gets another spool (in AFC too, as
+            its filament id, where AFC has SET_FILAMENT_ID). A reset (no
             filament) drops the pick."""
             lane = controls.lane_of(printer.snapshot, self._layout(printer).tool(job.get("ams_id"), job.get("slot_id")))
             if lane is None:
@@ -1725,7 +1729,8 @@ else:
             reset = not job.get("tray_info_idx")
             preset = job.get("filament_preset")
             try:
-                script = [] if reset else controls.filament_setting_gcode(printer.snapshot, lane, job)
+                script = controls.filament_setting_gcode(printer.snapshot, lane, job, printer.filament_ids) \
+                    if printer.filament_ids or not reset else []
             except AFCError:
                 return ERR_INVALID_RESULT
             with self._lock:

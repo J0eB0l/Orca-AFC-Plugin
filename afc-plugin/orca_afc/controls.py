@@ -262,10 +262,17 @@ def lane_of(snapshot: Snapshot, tray: int):
     return lanes_by_tray(snapshot).get(tray) if snapshot is not None and tray >= 0 else None
 
 
-def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict) -> list:
+def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict, filament_ids: bool = False) -> list:
     """The tray edit popup's color and material for the lane, where they differ
-    from what AFC has."""
+    from what AFC has, and with `filament_ids` (AFC has SET_FILAMENT_ID) the
+    picked preset's filament id, which AFC keeps with the spool and sends back
+    in lane_data. A reset (no tray_info_idx) drops the id of a lane with no
+    Spoolman spool; a spool's own id comes from Spoolman."""
     changes = {}
+    picked = request.get("tray_info_idx")
+    if filament_ids and not picked:
+        return protocol.build_lane_edit_gcode(snapshot, lane.name, {"filament_id": ""}) \
+            if lane.filament_id and lane.spool_id <= 0 else []
     color = request.get("tray_color")
     # "RRGGBBAA"; a clear one ("00000000") is no color.
     if isinstance(color, str) and re.fullmatch(r"[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?", color) and color[6:] != "00":
@@ -274,6 +281,9 @@ def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict) -> lis
     material = request.get("tray_type")
     if isinstance(material, str) and material and material.upper() != (lane.material or "").upper():
         changes["material"] = material
+    if (filament_ids and isinstance(picked, str) and re.fullmatch(r"[A-Za-z0-9_\-+.]{1,64}", picked)
+            and (picked != lane.filament_id or "material" in changes)):
+        changes["filament_id"] = picked
     return protocol.build_lane_edit_gcode(snapshot, lane.name, changes) if changes else []
 
 

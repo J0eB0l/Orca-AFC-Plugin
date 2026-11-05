@@ -292,13 +292,20 @@ class GcodeTest(unittest.TestCase):
                          ["SET_SPOOL_ID LANE=lane2 SPOOL_ID=7", "SET_MAP LANE=lane2 MAP=T3",
                           "SET_WEIGHT LANE=lane2 WEIGHT=40", "AFC_SET_SPOOL_TEMP LANE=lane2 BED_TEMP=66"])
 
+    def test_lane_edit_filament_id(self):
+        s = parsed()
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": "OF5CgdDq", "material": "PLA"}),
+                         ["SET_MATERIAL LANE=lane2 MATERIAL=PLA", "SET_FILAMENT_ID LANE=lane2 ID=OF5CgdDq"])
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": ""}), ["SET_FILAMENT_ID LANE=lane2"])
+
     def test_lane_edit_rejects(self):
         s = parsed()
         for lane, changes in (("lane2", {"material": "PLA\nM112"}), ("lane2", {"material": "PLA ;x"}),
                               ("lane2 X=1", {"weight": 1}), ("lane42", {"weight": 1}),
                               ("lane2", {"color": "red"}), ("lane2", {"map": "T5 M112"}),
                               ("lane2", {"run": "M112"}), ("lane2", {}), ("lane2", {"weight": True}),
-                              ("lane2", {"spool_id": 1.5}), ("lane2", {"nozzle_temp": 900})):
+                              ("lane2", {"spool_id": 1.5}), ("lane2", {"nozzle_temp": 900}),
+                              ("lane2", {"filament_id": "OF x"}), ("lane2", {"filament_id": None})):
             with self.subTest(lane=lane, changes=changes), self.assertRaises(AFCError):
                 p.build_lane_edit_gcode(s, lane, changes)
 
