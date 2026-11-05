@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, bambu_ids, controls, gcode, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
+from . import afclog, bambu_ids, controls, gcode, keepouts, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -301,6 +301,17 @@ def toolhead_nozzles(settings) -> list:
     return [sizes.get(i, 0.0) for i in range(max(sizes) + 1)] if sizes else []
 
 
+LIMIT_KEYS = ("max_velocity", "max_accel", "max_z_velocity", "max_z_accel", "square_corner_velocity")
+
+
+def klipper_limits(settings) -> dict:
+    """The motion limits in Klipper's [printer] section, from its configfile
+    settings, for the printer preset's machine limits."""
+    section = settings.get("printer") if isinstance(settings, dict) else None
+    section = section if isinstance(section, dict) else {}
+    return {key: float(section[key]) for key in LIMIT_KEYS if (_number(section.get(key)) or 0) > 0}
+
+
 def toolhead_parts(sizes: list, saved: dict, extruders=()) -> list:
     """Each toolhead's nozzle for Printer Parts, by extruder number: its AFC
     name, the size and type set there (`saved`, {"<number>": {diameter, type}})
@@ -376,7 +387,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
-                lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False) -> dict:
+                lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False,
+                bed_keepouts=None, limits=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -395,7 +407,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     console's open prompt (prompt.Watch.json()), for the Calibration window,
     `fans` the printer's fans (controls.find_fans()), for the fan popup, and
     `flow_calibration` whether AFC autocal can measure a lane's K here
-    (FLOW_K_CALIBRATION)."""
+    (FLOW_K_CALIBRATION) and `bed_keepouts` AFC's spots on the bed
+    (keepouts.bed_keepouts()), None until read, and `limits` Klipper's motion
+    limits (klipper_limits())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -450,6 +464,13 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         if any(part["diameter"] > 0 for part in nozzles):
             # ... which its print dialog checks the file's toolheads and nozzle sizes against.
             out["toolhead_nozzles"] = [part["diameter"] for part in nozzles]
+    if limits:
+        # ... and offers them for the printer preset's machine limits on a sync.
+        out["klipper_limits"] = dict(limits)
+    if bed_keepouts is not None:
+        # ... and filament sync keeps them in the printer preset, which keeps parts off them when
+        # "Keep parts off AFC's spots" is ticked.
+        out["afc_keepouts"] = bed_keepouts
     if files_url:
         # ... and its Storage page lists the G-code files and moonraker-timelapse videos there,
         # with the printer's access code as the API key.
@@ -785,6 +806,8 @@ class _Printer:
     nozzles: list = field(default_factory=list)       # toolhead_nozzles() of Klipper's config
     saved_nozzles: dict = field(default_factory=dict) # the nozzles set in Printer Parts (toolhead_parts())
     nozzles_due: float = 0.0                          # when to read them again
+    bed_keepouts: str = None                          # keepouts.bed_keepouts(), read with them; None until read
+    limits: dict = field(default_factory=dict)        # klipper_limits(), read with them
     timelapse: bool = False                           # moonraker-timelapse runs here (_timelapse())
     timelapse_due: float = 0.0                        # when to look again
     afc_log: dict = None                              # afclog.view() of AFC.log
@@ -1153,7 +1176,8 @@ else:
                                   printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
                                   self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
-                                  printer.fans, printer.flow_calibration)
+                                  printer.fans, printer.flow_calibration, printer.bed_keepouts,
+                                  printer.limits)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1338,14 +1362,24 @@ else:
             except MoonrakerError:  # none set yet
                 printer.saved_nozzles = {}
             try:
-                answer = printer.client.objects_query({"configfile": ["settings"]})
+                listed = printer.client.objects_list()
+                macros = keepouts.macro_objects(listed.get("objects") if isinstance(listed, dict) else listed)
+                query = {"configfile": ["settings"], "toolhead": ["axis_maximum"]}
+                query.update({name: None for name in macros})
+                answer = printer.client.objects_query(query)
             except MoonrakerError:
                 return
             try:
-                settings = answer["status"]["configfile"]["settings"]
+                status = answer["status"]
+                settings = status["configfile"]["settings"]
             except (KeyError, TypeError):
                 return
             printer.nozzles = toolhead_nozzles(settings) or printer.nozzles
+            printer.limits = klipper_limits(settings) or printer.limits
+            axis = (status.get("toolhead") or {}).get("axis_maximum") or ()
+            printer.bed_keepouts = keepouts.bed_keepouts({name: status.get(name) for name in macros},
+                                                         settings.get("afc") if isinstance(settings, dict) else None,
+                                                         list(axis[:2]) or None)
 
         def _set_nozzle(self, printer: _Printer, job: dict) -> int:
             """Printer Parts' nozzle for one toolhead, kept in Moonraker's database

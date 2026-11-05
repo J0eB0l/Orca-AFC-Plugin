@@ -640,6 +640,24 @@ class DeviceTabTest(Case):
         self.connect()
         self.assertEqual(self.push()["toolhead_nozzles"], [0.4, 0.0, 0.6])
 
+    def test_motion_limits_from_klippers_printer_section(self):
+        self.fake.objects["configfile"] = {"settings": {"printer": {"kinematics": "corexy", "max_velocity": 500.0,
+                                                                    "max_accel": 10000.0, "max_z_velocity": 0,
+                                                                    "square_corner_velocity": 5.0}}}
+        self.connect()
+        self.assertEqual(self.push()["klipper_limits"],
+                         {"max_velocity": 500.0, "max_accel": 10000.0, "square_corner_velocity": 5.0})
+
+    def test_afc_spots_on_the_bed_from_its_macro_variables(self):
+        self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},
+                                                        "afc": {"poop": True, "kick": False, "wipe": True}}}
+        self.fake.objects["toolhead"] = dict(self.fake.objects.get("toolhead") or {}, axis_maximum=[350, 350, 300, 0])
+        self.fake.objects["gcode_macro _AFC_POOP_VARS"] = {"purge_loc_xy": [340, 340]}
+        self.fake.objects["gcode_macro _AFC_KICK_VARS"] = {"kick_start_loc": [280, 340, 5], "kick_direction": "right"}
+        self.fake.objects["gcode_macro _AFC_BRUSH_VARS"] = {"brush_loc": [-99, -99, -1]}
+        self.connect()
+        self.assertEqual(self.push()["afc_keepouts"], "325x325, 350x325, 350x350, 325x350")
+
     def test_printer_parts_sets_a_toolheads_nozzle(self):
         self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},
                                                         "extruder1": {"nozzle_diameter": 0.4}}}
