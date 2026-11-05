@@ -86,6 +86,12 @@ class WebhookTest(unittest.TestCase):
         self.assertEqual((s.find_lane("lane1").filament_id, s.find_lane("lane2").filament_id), ("OF5CgdDq", ""))
         self.assertEqual(s.find_lane("lane5").filament_id, "")
 
+    def test_spool_article(self):
+        self.assertEqual(p.spool_article({"filament": {"article_number": " GFA00 "}}), "GFA00")
+        self.assertEqual(p.spool_article({"response": {"filament": {"article_number": "GFA00"}}}), "GFA00")
+        self.assertEqual(p.spool_article({"filament": {"article_number": None}}), "")
+        self.assertEqual(p.spool_article(None), "")
+
     def test_spoolman_text(self):
         self.assertEqual([p.spoolman_text(v) for v in ('"OF5CgdDq"', "OF5CgdDq", "12", "", None)],
                          ["OF5CgdDq", "OF5CgdDq", "", "", ""])

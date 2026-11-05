@@ -161,6 +161,18 @@ class FlowKTest(Case):
         self.assertEqual((self.proxy_calls(), len(spoolman.paths())), (2, 1))
 
 
+class BambuTagIdTest(Case):
+    def test_a_bambu_article_number_is_the_lanes_bambu_id(self):
+        self.fake.spools = {12: dict(SPOOL_12, filament={"id": 4, "article_number": "GFA00"})}
+        self.refreshed()
+        self.assertEqual({lane.bambu_id for lane in self.manager.snapshot.lanes if lane.spool_id == 12}, {"GFA00"})
+
+    def test_another_article_number_is_not(self):
+        self.fake.spools = {12: dict(SPOOL_12, filament={"id": 4, "article_number": "PLA-1KG-BLK"})}
+        self.refreshed()
+        self.assertEqual({lane.bambu_id for lane in self.manager.snapshot.lanes}, {""})
+
+
 class FilamentIdTest(Case):
     def spool(self, extra=None):
         self.fake.spools = {12: {"id": 12, "filament": {"id": 4, "name": "PolyLite PLA", "extra": extra or {}}}}

@@ -30,7 +30,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from . import opc
+from . import bambu_ids, opc
 from .protocol import Lane, material_key
 
 # What OrcaSlicer's sync reads as "a filament it does not know": it then
@@ -381,13 +381,20 @@ def spool_preset_names(lane: Lane) -> list:
     return out
 
 
+def lane_id(lane: Lane) -> str:
+    """The OrcaSlicer filament id the lane's spool names: its Spoolman
+    filament's, else the one its Bambu tag's id translates to."""
+    return lane.filament_id or bambu_ids.to_orca(lane.bambu_id)
+
+
 def by_id(lane: Lane, candidates: list, ids: FilamentIds) -> list:
     """The presets of the lane's material that carry the filament id its
-    Spoolman filament holds, system presets first. Empty without one."""
-    if not lane.filament_id:
+    spool names (lane_id()), system presets first. Empty without one."""
+    wanted = lane_id(lane)
+    if not wanted:
         return []
     ids.learn(candidates)
-    found = [c for c in of_material(lane, candidates) if ids.of(c) == lane.filament_id]
+    found = [c for c in of_material(lane, candidates) if ids.of(c) == wanted]
     return sorted(found, key=lambda c: (not c.system, c.name))
 
 
@@ -415,7 +422,11 @@ def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     """The id to save on the lane's Spoolman filament: that of the best
     scored preset that is, or comes from, a system preset and names both the
     spool's vendor and its product. "" when none does, as a generic or
-    another product's id would keep OrcaSlicer on that preset for good."""
+    another product's id would keep OrcaSlicer on that preset for good. A
+    Bambu tag's id that a preset carries comes first."""
+    translated = "" if lane.filament_id else bambu_ids.to_orca(lane.bambu_id)
+    if translated and by_id(lane, candidates, ids):
+        return translated
     vendor = (lane.vendor or "").strip().lower()
     product = (lane.filament_name or "").strip().lower()
     if not vendor or vendor == "generic" or not product:

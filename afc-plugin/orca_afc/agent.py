@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 
 import orca
 
-from . import afclog, controls, gcode, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
+from . import afclog, bambu_ids, controls, gcode, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -839,7 +839,8 @@ else:
             self._selected = ""
             self._candidates = []     # presets.Candidate, read on the UI thread
             self._presets_due = 0.0
-            self._match = {}          # (material, sub type, vendor, product, filament id) -> (filament id, base, product id)
+            self._match = {}          # (material, sub type, vendor, product, filament id, Bambu id) -> (filament id, base, product id)
+            self._bambu_map = False   # bambu_ids has OrcaSlicer's map of Bambu's filament ids
             self._ids = presets.FilamentIds()
             self._spoolman = Worker("AFC printer agent Spoolman")  # saves filament ids, off the poll thread
             self._id_saves = set()    # (printer, spool) whose filament id was saved or tried
@@ -969,6 +970,11 @@ else:
                 self._watched.pop(printer.dev_id, None)
             if bundle is not None:
                 self._read_presets(bundle)
+            if not self._bambu_map:
+                try:
+                    self._bambu_map = bambu_ids.load(str(orca.host.app_info().get("resources_dir") or "")) > 0
+                except Exception:  # an OrcaSlicer without resources_dir: Bambu tags stay untranslated
+                    self._bambu_map = False
             with self._lock:
                 # Read again on the first poll: OrcaSlicer may connect before it has
                 # marked which presets fit a printer it is switching to.
@@ -1438,7 +1444,7 @@ else:
             for tray, lane in trays.lanes_by_tray(snapshot).items():
                 if not lane.has_filament:
                     continue
-                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id)
+                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id, lane.bambu_id)
                 if key not in cache:
                     cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates, self._ids),
                                   presets.product_id(lane, candidates, self._ids))

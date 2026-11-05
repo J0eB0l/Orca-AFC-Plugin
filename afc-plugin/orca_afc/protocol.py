@@ -39,6 +39,7 @@ class Lane:
     vendor: str = ""
     filament_name: str = ""
     filament_id: str = ""     # OrcaSlicer's id for the spool's filament, from its Spoolman filament
+    bambu_id: str = ""        # Bambu's id for it (GFA00) from a Bambu tag, the Spoolman filament's article number
     spool_id: int = 0         # Spoolman spool id, 0 = none
     weight: float = 0.0       # remaining grams
     initial_weight: float = 0.0
@@ -770,6 +771,16 @@ def spool_flow_k(spool) -> float:
         return -1.0
     k = float(value)
     return k if math.isfinite(k) and k >= 0 else -1.0
+
+
+def spool_article(spool) -> str:
+    """The article number of a Spoolman spool's filament (AFC's RFID reading
+    puts a Bambu tag's filament id there). Takes what spool_flow_k() takes."""
+    if isinstance(spool, dict) and "response" in spool:
+        return spool_article(spool["response"])
+    filament = spool.get("filament") if isinstance(spool, dict) else None
+    article = filament.get("article_number") if isinstance(filament, dict) else None
+    return article.strip() if isinstance(article, str) else ""
 
 
 # ------------------------------------------------------------------ page state

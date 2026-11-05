@@ -10,7 +10,7 @@ import json
 import threading
 import time
 
-from . import protocol, runout
+from . import bambu_ids, protocol, runout
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
 from .protocol import AFCError, Snapshot
 
@@ -94,6 +94,7 @@ class AFCManager:
         self.snapshot = Snapshot()
         self.printer = ""       # the printer the snapshot came from
         self._flow_k = {}       # spool id -> (k, read at)
+        self._articles = {}     # spool id -> its filament's article number, read with K
         self._k_way = ""        # how K was read last: "direct" (AFC's Spoolman) or "proxy" (Moonraker's)
         self._move = None       # (thread, "lane4 is loading") while a lane move runs
         self._move_error = ""   # how the last lane move failed, until the page shows it
@@ -105,6 +106,7 @@ class AFCManager:
         the same printer keeps its last good snapshot."""
         if client.url != self.printer:
             self._flow_k.clear()
+            self._articles.clear()
             self._k_way = ""
         try:
             snap = read_snapshot(client)
@@ -126,8 +128,9 @@ class AFCManager:
         return snap if not error and source == client.url and snap.present else None
 
     def _read_flow_k(self, client: Moonraker, snap: Snapshot) -> None:
-        """Each spool's saved pressure advance, from Spoolman. A lane with no
-        spool takes the K AFC autocal holds for it, when it holds one."""
+        """Each spool's saved pressure advance, from Spoolman, and the Bambu
+        filament id its tag gave (bambu_ids). A lane with no spool takes the K
+        AFC autocal holds for it, when it holds one."""
         now = self._clock()
         for lane in snap.lanes:
             if lane.spool_id <= 0:
@@ -139,6 +142,8 @@ class AFCManager:
                 known = (self._spool_flow_k(client, lane.spool_id, spoolman), now)
                 self._flow_k[lane.spool_id] = known
             lane.flow_k = known[0]
+            article = self._articles.get(lane.spool_id, "")
+            lane.bambu_id = article if bambu_ids.is_bambu(article) else ""
 
     def _spool_flow_k(self, client: Moonraker, spool: int, spoolman_url: str) -> float:
         """Asks AFC's own Spoolman address (where autocal writes K) and Moonraker's
@@ -150,11 +155,12 @@ class AFCManager:
             ways.insert(1 if self._k_way == "proxy" else 0, direct)
         for way, ask in ways:
             try:
-                k = protocol.spool_flow_k(ask())
+                record = ask()
             except MoonrakerError:
                 continue
             self._k_way = way
-            return k
+            self._articles[spool] = protocol.spool_article(record)
+            return protocol.spool_flow_k(record)
         return -1.0  # counts as "no K" until it is due again
 
     def saved_flow_k(self, spool: int, k: float) -> None:

@@ -202,6 +202,26 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.product_id(lane(vendor="Sunlu", product="PLA"), candidates, ids), "")
         self.assertEqual(presets.product_id(lane(vendor="", product="PolyLite"), candidates, ids), "")
 
+    def test_a_bambu_tag_id_translates_to_the_preset_carrying_ours(self):
+        from orca_afc import bambu_ids
+        self.addCleanup(bambu_ids.set_map, {})
+        bambu_ids.set_map({"OFoiVqVM": "GFA00"})
+        basic = self.write(os.path.join(self.system, "V", "filament", "Bambu PLA Basic.json"), {"filament_id": "OFoiVqVM"})
+        generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
+        candidates = [Candidate(name="Bambu PLA Basic", type="PLA", vendor="Bambu Lab", system=True, file=basic,
+                                base_system=True),
+                      Candidate(name="Generic PLA", type="PLA", vendor="Generic", system=True, file=generic,
+                                base_system=True)]
+        ids = FilamentIds()
+        spool = lane(vendor="", product="")
+        self.assertEqual(presets.match(spool, candidates, ids), "OFDSrzZ8")
+        spool.bambu_id = "GFA00"
+        self.assertEqual(presets.match(spool, candidates, ids), "OFoiVqVM")
+        self.assertEqual(presets.product_id(spool, candidates, ids), "OFoiVqVM")
+        spool.bambu_id = "GFZ99"  # no row: matched as before, nothing saved
+        self.assertEqual(presets.match(spool, candidates, ids), "OFDSrzZ8")
+        self.assertEqual(presets.product_id(spool, candidates, ids), "")
+
 
 class SpoolPresetNameTest(unittest.TestCase):
     """The names OrcaSlicer's sync looks for the spool's own preset by, as the Snapmaker build names them."""
