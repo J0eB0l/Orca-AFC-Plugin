@@ -191,6 +191,38 @@ class AFCManager:
             return ""
         return error
 
+    def save_filament_id(self, client: Moonraker, spool: int, filament_id: str, spoolman_url: str = "") -> str:
+        """Save OrcaSlicer's filament id on a spool's Spoolman filament, in its
+        "filament_id" field, unless the filament already holds one. Returns
+        an error, or ""."""
+        def direct(method, path, body=None):
+            return fetch_json("%s/api%s" % (spoolman_url.rstrip("/"), path), timeout=10.0, method=method, body=body)
+
+        ways = [("proxy", lambda method, path, body=None: client.spoolman(method, path, body, timeout=10.0))]
+        if spoolman_url:
+            ways.insert(1 if self._k_way == "proxy" else 0, ("direct", direct))
+        error = ""
+        for _, call in ways:
+            try:
+                record = call("GET", "/v1/spool/%d" % spool)
+                filament = record.get("filament") if isinstance(record, dict) else None
+                if not isinstance(filament, dict) or not isinstance(filament.get("id"), int):
+                    return "Spoolman: spool %d has no filament" % spool
+                extra = dict(filament.get("extra") or {})
+                if protocol.spoolman_text(extra.get("filament_id")):
+                    return ""
+                fields = call("GET", "/v1/field/filament")
+                if not any(isinstance(f, dict) and f.get("key") == "filament_id" for f in fields or []):
+                    call("POST", "/v1/field/filament/filament_id", {"name": "Filament ID", "field_type": "text"})
+                # Spoolman keeps every extra field JSON-encoded.
+                extra["filament_id"] = json.dumps(filament_id)
+                call("PATCH", "/v1/filament/%d" % filament["id"], {"extra": extra})
+            except MoonrakerError as failure:
+                error = str(failure)
+                continue
+            return ""
+        return error
+
     def state(self, printer: str, hint: str = "", error: str = "") -> dict:
         """What the page draws: {connected, afc, error?, hint?}. A lane move
         that failed since the last state is reported here, once."""

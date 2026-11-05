@@ -169,6 +169,39 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.match(lane("TPU"), candidates, ids), presets.UNKNOWN_FILAMENT_ID)
 
 
+    def test_the_spoolman_filament_id_comes_first(self):
+        generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
+        lite = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyLite PLA.json"), {"filament_id": "OF5CgdDq"})
+        terra = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyTerra PLA.json"), {"filament_id": "OFterra1"})
+        candidates = [candidate("Polymaker PolyLite PLA", vendor="Polymaker", file=lite),
+                      candidate("Polymaker PolyTerra PLA", vendor="Polymaker", file=terra),
+                      candidate("Generic PLA", file=generic)]
+        ids = FilamentIds()
+        spool = lane(product="PolyLite")
+        self.assertEqual(presets.match(spool, candidates, ids), "OF5CgdDq")
+        spool.filament_id = "OFterra1"
+        self.assertEqual(presets.match(spool, candidates, ids), "OFterra1")
+        self.assertEqual(presets.best(spool, candidates, ids), "Polymaker PolyTerra PLA")
+        spool.filament_id = "OFgone00"  # no preset carries it: matched as before
+        self.assertEqual(presets.match(spool, candidates, ids), "OF5CgdDq")
+
+    def test_product_id_needs_the_vendor_and_product(self):
+        generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
+        lite = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyLite PLA.json"), {"filament_id": "OF5CgdDq"})
+        mine = self.write(os.path.join(self.root, "user", "1", "filament", "Sunlu PLA.json"), {"filament_id": "P5ba6812"})
+        candidates = [Candidate(name="Polymaker PolyLite PLA", type="PLA", vendor="Polymaker", system=True, file=lite,
+                                base_system=True),
+                      Candidate(name="Sunlu PLA", type="PLA", vendor="Sunlu", system=False, file=mine),
+                      Candidate(name="Generic PLA", type="PLA", vendor="Generic", system=True, file=generic,
+                                base_system=True)]
+        ids = FilamentIds()
+        self.assertEqual(presets.product_id(lane(product="PolyLite"), candidates, ids), "OF5CgdDq")
+        # Another product of the vendor, a generic, or the user's own preset is never saved.
+        self.assertEqual(presets.product_id(lane(product="PolyTerra"), candidates, ids), "")
+        self.assertEqual(presets.product_id(lane(vendor="Overture", product="PLA"), candidates, ids), "")
+        self.assertEqual(presets.product_id(lane(vendor="Sunlu", product="PLA"), candidates, ids), "")
+        self.assertEqual(presets.product_id(lane(vendor="", product="PolyLite"), candidates, ids), "")
+
 
 class SpoolPresetNameTest(unittest.TestCase):
     """The names OrcaSlicer's sync looks for the spool's own preset by, as the Snapmaker build names them."""

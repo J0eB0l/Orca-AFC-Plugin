@@ -20,6 +20,7 @@ class FakeMoonraker:
     logs      files in Moonraker's logs folder by name, served with Range: bytes=-N
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     spool_fields  Spoolman's extra spool fields (/v1/field/spool)
+    filament_fields  Spoolman's extra filament fields (/v1/field/filament)
     webcams   the /server/webcams/list webcams
     gcode_error  a message G-code calls fail with, as Klipper's errors come back
     effects   G-code script -> function the fake runs when that script is sent
@@ -47,6 +48,7 @@ class FakeMoonraker:
         self.unlistable_logs = False  # True to answer the logs root's file list 404, as an old Moonraker does
         self.spools = {}
         self.spool_fields = []
+        self.filament_fields = []
         self.webcams = []
         self.proxy = True
         self.gcode_error = ""
@@ -192,6 +194,20 @@ class FakeMoonraker:
         if method == "POST" and path.startswith("/v1/field/spool/"):
             self.spool_fields.append(dict(body, key=path.rsplit("/", 1)[1]))
             return {"response": self.spool_fields, "error": None}
+        if method == "GET" and path == "/v1/field/filament":
+            return {"response": self.filament_fields, "error": None}
+        if method == "POST" and path.startswith("/v1/field/filament/"):
+            self.filament_fields.append(dict(body, key=path.rsplit("/", 1)[1]))
+            return {"response": self.filament_fields, "error": None}
+        if method == "PATCH" and path.startswith("/v1/filament/"):
+            # A spool's filament, edited in place: every spool of it sees the change.
+            number = int(path.rsplit("/", 1)[1])
+            for spool in self.spools.values():
+                filament = spool.get("filament") or {}
+                if filament.get("id") == number:
+                    filament.setdefault("extra", {}).update(body.get("extra") or {})
+                    return {"response": filament, "error": None}
+            return {"response": None, "error": {"status_code": 404, "message": "No filament"}}
         spool = self.spools.get(int(path.rsplit("/", 1)[1])) if path.startswith("/v1/spool/") else None
         if spool is None:
             return {"response": None, "error": {"status_code": 404, "message": "No spool"}}

@@ -837,8 +837,10 @@ else:
             self._selected = ""
             self._candidates = []     # presets.Candidate, read on the UI thread
             self._presets_due = 0.0
-            self._match = {}          # (material, sub type, vendor, product) -> filament id
+            self._match = {}          # (material, sub type, vendor, product, filament id) -> (filament id, base, product id)
             self._ids = presets.FilamentIds()
+            self._spoolman = Worker("AFC printer agent Spoolman")  # saves filament ids, off the poll thread
+            self._id_saves = set()    # (printer, spool) whose filament id was saved or tried
             self._watched = {}        # dev_id -> _Printer of the other AFC printer presets (Multi-device)
             self._worker = Worker("AFC printer agent", tick=self._poll, every=poll)
             # The watched printers' own thread, so one that is off never holds up the selected printer's pushes.
@@ -867,6 +869,7 @@ else:
             self._watcher.stop()
             self._gcode.stop()
             self._web.stop()
+            self._spoolman.stop()
 
         # -------------------------------------------------------- OrcaSlicer's callbacks
 
@@ -1432,10 +1435,13 @@ else:
             for tray, lane in trays.lanes_by_tray(snapshot).items():
                 if not lane.has_filament:
                     continue
-                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name)
+                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id)
                 if key not in cache:
-                    cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates))
-                ids[tray], base = cache[key]
+                    cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates, self._ids),
+                                  presets.product_id(lane, candidates, self._ids))
+                ids[tray], base, product = cache[key]
+                if product and lane.spool_id > 0 and not lane.filament_id:
+                    self._save_filament_id(printer, snapshot, lane.spool_id, product)
                 extra = {}
                 names = presets.spool_preset_names(lane)
                 if names:
@@ -1444,6 +1450,17 @@ else:
                     extra["filament_preset"] = picked[lane.name]
                 extras[tray] = extra
             return ids, extras
+
+        def _save_filament_id(self, printer: _Printer, snapshot, spool: int, filament_id: str) -> None:
+            """Puts the id of the preset a spool matched on its Spoolman filament
+            once, so AFC hands it to OrcaSlicer in lane_data and the next match
+            is exact, in this OrcaSlicer and in others."""
+            with self._lock:
+                if (printer.client.url, spool) in self._id_saves:
+                    return
+                self._id_saves.add((printer.client.url, spool))
+            spoolman = protocol.spoolman_for_printer(snapshot.spoolman_url, printer.client.url)
+            self._spoolman.submit(lambda: printer.manager.save_filament_id(printer.client, spool, filament_id, spoolman))
 
         # -------------------------------------------------------- requests
 

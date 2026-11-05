@@ -270,6 +270,16 @@ class StatusTest(Case):
         self.assertEqual(second["tray"][0]["tray_info_idx"], "GFL_POLYLITE")
         self.assertEqual(second["tray"][1]["tray_color"], "00000000")  # lane6 is empty
 
+    def test_saves_the_matched_id_on_the_spoolman_filament(self):
+        filament = {"id": 4, "name": "PolyLite", "extra": {}}
+        self.fake.spools = {12: {"id": 12, "filament": filament}}
+        self.connect()
+        self.push()
+        deadline = time.monotonic() + 5
+        while "filament_id" not in filament["extra"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(filament["extra"]["filament_id"], '"GFL_POLYLITE"')
+
     def test_printer_state(self):
         self.connect()
         status = self.push()

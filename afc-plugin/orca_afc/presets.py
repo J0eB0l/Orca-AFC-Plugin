@@ -55,6 +55,7 @@ class Candidate:
     inherits: str = ""
     support: bool = False  # filament_is_support
     base: str = ""     # that preset's name: this one's, or the system preset it comes from
+    base_system: bool = False  # whether that preset is a system preset
 
 
 def _first(value) -> str:
@@ -101,6 +102,7 @@ def collect(bundle) -> list:
             inherits=_first(preset.config_value("inherits")),
             support=_first(preset.config_value("filament_is_support")).split(",")[0].strip().lower() in ("1", "true"),
             base=str(base.name),
+            base_system=bool(base.is_system),
         ))
     return out
 
@@ -379,21 +381,51 @@ def spool_preset_names(lane: Lane) -> list:
     return out
 
 
-def best(lane: Lane, candidates: list) -> str:
+def by_id(lane: Lane, candidates: list, ids: FilamentIds) -> list:
+    """The presets of the lane's material that carry the filament id its
+    Spoolman filament holds, system presets first. Empty without one."""
+    if not lane.filament_id:
+        return []
+    ids.learn(candidates)
+    found = [c for c in of_material(lane, candidates) if ids.of(c) == lane.filament_id]
+    return sorted(found, key=lambda c: (not c.system, c.name))
+
+
+def best(lane: Lane, candidates: list, ids: FilamentIds | None = None) -> str:
     """The name of the preset that fits the lane's spool best: the one a
     spool's own preset is copied from. "" when none is of its material."""
-    found = rank(lane, candidates) or generic(lane, candidates)
+    found = (by_id(lane, candidates, ids) if ids else []) or rank(lane, candidates) or generic(lane, candidates)
     return found[0].name if found else ""
 
 
 def match(lane: Lane, candidates: list, ids: FilamentIds) -> str:
-    """The filament id the sync should pick for a loaded lane: the best
-    scored preset's, else the generic one's, else UNKNOWN_FILAMENT_ID so the
-    sync still falls back on the material."""
+    """The filament id the sync should pick for a loaded lane: the id its
+    Spoolman filament holds when a preset carries it, else the best scored
+    preset's, else the generic one's, else UNKNOWN_FILAMENT_ID so the sync
+    still falls back on the material."""
     ids.learn(candidates)
-    for candidate in rank(lane, candidates) + generic(lane, candidates):
+    for candidate in by_id(lane, candidates, ids) + rank(lane, candidates) + generic(lane, candidates):
         filament_id = ids.of(candidate)
         if filament_id:
             return filament_id
     return UNKNOWN_FILAMENT_ID
+
+
+def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
+    """The id to save on the lane's Spoolman filament: that of the best
+    scored preset that is, or comes from, a system preset and names both the
+    spool's vendor and its product. "" when none does, as a generic or
+    another product's id would keep OrcaSlicer on that preset for good."""
+    vendor = (lane.vendor or "").strip().lower()
+    product = (lane.filament_name or "").strip().lower()
+    if not vendor or vendor == "generic" or not product:
+        return ""
+    ids.learn(candidates)
+    for candidate in rank(lane, candidates):
+        name = candidate.name.lower()
+        if candidate.base_system and product in name and (candidate.vendor.lower() == vendor or vendor in name):
+            filament_id = ids.of(candidate)
+            if filament_id:
+                return filament_id
+    return ""
 

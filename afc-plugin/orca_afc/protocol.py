@@ -38,6 +38,7 @@ class Lane:
     sub_type: str = ""
     vendor: str = ""
     filament_name: str = ""
+    filament_id: str = ""     # OrcaSlicer's id for the spool's filament, from its Spoolman filament
     spool_id: int = 0         # Spoolman spool id, 0 = none
     weight: float = 0.0       # remaining grams
     initial_weight: float = 0.0
@@ -144,6 +145,13 @@ class Snapshot:
 
 
 # ------------------------------------------------------------------ field readers
+
+
+def _filament_id(obj: dict) -> str:
+    """A filament_id field: text only, as OrcaSlicer reads it (Happy Hare puts
+    Spoolman's numeric filament id under the same name)."""
+    v = obj.get("filament_id")
+    return v.strip() if isinstance(v, str) else ""
 
 
 def _str(obj: dict, key: str) -> str:
@@ -288,6 +296,7 @@ def _fill_lane(st: dict, lane: Lane) -> None:
     lane.sub_type = _str(st, "sub_type")
     lane.vendor = _str(st, "spool_vendor")
     lane.filament_name = _str(st, "filament_name")
+    lane.filament_id = _filament_id(st)
     lane.spool_id = _int(_num(st, "spool_id", 0))
     lane.weight = _num(st, "weight", 0)
     lane.initial_weight = _num(st, "initial_weight", 0)
@@ -560,6 +569,8 @@ def merge_lane_data(lane_data, out: Snapshot) -> None:
             lane.vendor = _str(v, "vendor_name")
         if not lane.filament_name:
             lane.filament_name = _str(v, "name")
+        if not lane.filament_id:
+            lane.filament_id = _filament_id(v)
         if not lane.material:
             lane.material = _str(v, "material")
         if not lane.color:
@@ -725,6 +736,18 @@ def _is_integer(v) -> bool:
 # ------------------------------------------------------------------ Spoolman
 
 
+def spoolman_text(raw) -> str:
+    """A Spoolman text extra field's value: Spoolman keeps it JSON-encoded
+    ('"OF5CgdDq"'); a bare string counts as is. "" for none or not text."""
+    if not isinstance(raw, str) or not raw:
+        return ""
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        value = raw
+    return value.strip() if isinstance(value, str) else ""
+
+
 def spool_flow_k(spool) -> float:
     """Flow K (pressure advance) saved on a Spoolman spool: the "flow_k" extra
     field AFC's autocal writes. Takes the spool record, or Moonraker's Spoolman
@@ -767,7 +790,8 @@ def to_json(s: Snapshot) -> dict:
     lanes = [{"name": l.name, "unit": l.unit, "unit_type": l.unit_type, "index": l.index, "maps": list(l.maps),
               "extruder": l.extruder, "extruder_index": l.extruder_index, "color": l.color,
               "multi_colors": list(l.multi_colors), "material": l.material, "sub_type": l.sub_type,
-              "vendor": l.vendor, "filament_name": l.filament_name, "spool_id": l.spool_id,
+              "vendor": l.vendor, "filament_name": l.filament_name, "filament_id": l.filament_id,
+              "spool_id": l.spool_id,
               "weight": l.weight, "initial_weight": l.initial_weight, "density": l.density,
               "nozzle_temp": l.nozzle_temp, "bed_temp": l.bed_temp, "prep": l.prep, "load": l.load,
               "tool_loaded": l.tool_loaded, "has_filament": l.has_filament, "status": l.status, "td": l.td,

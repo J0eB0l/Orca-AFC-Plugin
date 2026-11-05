@@ -161,6 +161,32 @@ class FlowKTest(Case):
         self.assertEqual((self.proxy_calls(), len(spoolman.paths())), (2, 1))
 
 
+class FilamentIdTest(Case):
+    def spool(self, extra=None):
+        self.fake.spools = {12: {"id": 12, "filament": {"id": 4, "name": "PolyLite PLA", "extra": extra or {}}}}
+        return self.fake.spools[12]["filament"]
+
+    def test_saved_on_the_filament_with_its_field(self):
+        filament = self.spool()
+        self.assertEqual(self.manager.save_filament_id(self.client, 12, "OF5CgdDq"), "")
+        self.assertEqual(filament["extra"]["filament_id"], '"OF5CgdDq"')
+        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
+
+    def test_an_id_already_there_stays(self):
+        filament = self.spool({"filament_id": '"OFothers"'})
+        self.assertEqual(self.manager.save_filament_id(self.client, 12, "OF5CgdDq"), "")
+        self.assertEqual(filament["extra"]["filament_id"], '"OFothers"')
+        self.assertEqual(self.fake.filament_fields, [])
+
+    def test_other_fields_kept(self):
+        filament = self.spool({"drying_temp_c": "55"})
+        self.manager.save_filament_id(self.client, 12, "OF5CgdDq")
+        self.assertEqual(filament["extra"], {"drying_temp_c": "55", "filament_id": '"OF5CgdDq"'})
+
+    def test_missing_spool_is_an_error(self):
+        self.assertIn("No spool", self.manager.save_filament_id(self.client, 99, "OF5CgdDq"))
+
+
 class CommandTest(Case):
     def setUp(self):
         super().setUp()

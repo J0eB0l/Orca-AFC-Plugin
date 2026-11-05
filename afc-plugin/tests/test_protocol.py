@@ -77,6 +77,19 @@ class WebhookTest(unittest.TestCase):
         self.assertIsNone(s.lane_for_tool(3))
         self.assertEqual(s.max_tool(), 5)
 
+    def test_filament_id(self):
+        fixture = webhook_fixture()
+        lanes = fixture["status:"]["AFC"]["Turtle_1"]
+        lanes["lane1"]["filament_id"] = "OF5CgdDq"
+        lanes["lane2"]["filament_id"] = 7  # Happy Hare's numeric Spoolman id is no OrcaSlicer id
+        s = parsed(fixture)
+        self.assertEqual((s.find_lane("lane1").filament_id, s.find_lane("lane2").filament_id), ("OF5CgdDq", ""))
+        self.assertEqual(s.find_lane("lane5").filament_id, "")
+
+    def test_spoolman_text(self):
+        self.assertEqual([p.spoolman_text(v) for v in ('"OF5CgdDq"', "OF5CgdDq", "12", "", None)],
+                         ["OF5CgdDq", "OF5CgdDq", "", "", ""])
+
     def test_in_tool_counts_as_loaded(self):
         # A U1 toolhead lane after a reset: its extruder holds it, tool_loaded still reads false.
         fixture = webhook_fixture()
