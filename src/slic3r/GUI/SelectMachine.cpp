@@ -80,6 +80,7 @@
 #include "libslic3r/CommonDefs.hpp"
 #include "slic3r/GUI/ReleaseNote.hpp"
 #include <boost/algorithm/string/case_conv.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include <wx/dcclient.h>
 #include "libslic3r/Print.hpp"
@@ -4673,6 +4674,94 @@ void SelectMachineDialog::CheckWarningSpoolRemain(MachineObject* obj_)
     }
 }
 
+// Orca: the unit humidity (percent) above which a filament that takes up water prints best dried first;
+// 0 for one that does not. Nylons and the support materials go bad soonest.
+static int wet_spool_humidity(const std::string& type)
+{
+    const std::string t = boost::to_upper_copy(type);
+    for (const char* prefix : {"PA", "PPA", "PVA", "BVOH", "PPS"})
+        if (boost::starts_with(t, prefix))
+            return 30;
+    for (const char* prefix : {"TPU", "TPE", "PET", "PCTG", "PC"})
+        if (boost::starts_with(t, prefix))
+            return 45;
+    return 0;
+}
+
+void SelectMachineDialog::CheckWarningWetSpools(MachineObject* obj_)
+{
+    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto*               afc     = printer.option<ConfigOptionBool>("afc_enabled");
+    const auto*               check   = printer.option<ConfigOptionBool>("afc_spool_check");
+    if (!obj_ || !afc || !afc->value || !check || !check->value)
+        return;
+
+    wxString           msg;
+    std::set<DevAmsSlotId> seen;
+    for (const FilamentInfo& mapped : m_ams_mapping_result) {
+        if (mapped.ams_id.empty() || devPrinterUtil::IsVirtualSlot(mapped.ams_id) ||
+            !seen.insert({mapped.get_ams_id(), mapped.get_slot_id()}).second ||
+            !obj_->contains_tray(mapped.ams_id, mapped.slot_id))
+            continue;
+        // Only a unit that reports its humidity as a percentage (one with a dryer) is checked.
+        const DevAms* unit = obj_->GetFilaSystem()->GetAmsById(mapped.ams_id);
+        const int     humidity = unit ? unit->GetHumidityPercent() : -1;
+        const DevAmsTray tray  = obj_->get_tray(mapped.ams_id, mapped.slot_id);
+        const int     limit    = wet_spool_humidity(tray.m_fila_type);
+        if (humidity < 0 || limit == 0 || humidity <= limit)
+            continue;
+        if (!msg.empty())
+            msg += "\n";
+        // TRN %1%: the lane, "T3"; %2%: a filament type, "PETG"; %3%: the unit's humidity, "52%".
+        msg += format_wxstr(_L("%1% holds %2% in a unit at %3% humidity. Dry it before printing for the best results."),
+                            tray.tool >= 0 ? wxString::Format("T%d", tray.tool) : wxString("?"), from_u8(tray.m_fila_type),
+                            wxString::Format("%d%%", humidity));
+    }
+    if (!msg.empty())
+        show_status(PrintDialogStatus::PrintStatusFilamentWarningWetSpool, {msg});
+}
+
+void SelectMachineDialog::CheckWarningSpoolTemps(MachineObject* obj_)
+{
+    const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto*               afc     = printer.option<ConfigOptionBool>("afc_enabled");
+    const auto*               check   = printer.option<ConfigOptionBool>("afc_spool_check");
+    if (!obj_ || !afc || !afc->value || !check || !check->value || m_print_type != PrintFromType::FROM_NORMAL)
+        return;
+    const DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config();
+    const auto*              temps       = full_config.option<ConfigOptionInts>("nozzle_temperature");
+    if (!temps)
+        return;
+
+    // A spool that names one temperature (AFC's, from Spoolman or a tag) allows this much either side of it.
+    constexpr int one_temp_margin = 15;
+    wxString      msg;
+    for (const FilamentInfo& mapped : m_ams_mapping_result) {
+        if (mapped.ams_id.empty() || devPrinterUtil::IsVirtualSlot(mapped.ams_id) || mapped.id < 0 ||
+            mapped.id >= int(temps->size()) || !obj_->contains_tray(mapped.ams_id, mapped.slot_id))
+            continue;
+        const DevAmsTray tray = obj_->get_tray(mapped.ams_id, mapped.slot_id);
+        const int        low  = std::atoi(tray.nozzle_temp_min.c_str());
+        const int        high = std::atoi(tray.nozzle_temp_max.c_str());
+        const int        temp = temps->get_at(mapped.id);
+        if (low <= 0 || high < low || temp <= 0)
+            continue;
+        const int margin = low == high ? one_temp_margin : 0;
+        if (temp >= low - margin && temp <= high + margin)
+            continue;
+        if (!msg.empty())
+            msg += "\n";
+        const wxString lane = tray.tool >= 0 ? wxString::Format("T%d", tray.tool) : wxString("?");
+        msg += low == high ?
+            // TRN %1%: the lane, "T3"; %2%: the spool's temperature in °C; %3%: the file's nozzle temperature in °C.
+            format_wxstr(_L("The spool in %1% prints at %2% °C, but the file prints it at %3% °C."), lane, low, temp) :
+            // TRN %1%: the lane, "T3"; %2% and %3%: the spool's lowest and highest temperatures in °C; %4%: the file's.
+            format_wxstr(_L("The spool in %1% prints at %2%-%3% °C, but the file prints it at %4% °C."), lane, low, high, temp);
+    }
+    if (!msg.empty())
+        show_status(PrintDialogStatus::PrintStatusFilamentWarningTempRange, {msg});
+}
+
 void SelectMachineDialog::CheckWarningToolheads(MachineObject* obj_)
 {
     const DynamicPrintConfig& printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -5470,6 +5559,8 @@ void SelectMachineDialog::update_show_status(MachineObject* obj_)
     ext_mismatch:
 
     CheckWarningSpoolRemain(obj_);
+    CheckWarningWetSpools(obj_);
+    CheckWarningSpoolTemps(obj_);
     CheckWarningToolheads(obj_);
 
     /*STUDIO-10970 check the k value and flow cali option*/

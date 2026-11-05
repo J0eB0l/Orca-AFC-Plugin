@@ -143,6 +143,10 @@ enum PrintDialogStatus : unsigned int {
     PrintStatusSmartNozzleBlobNeedAuto,
     PrintStatusFilamentWarningRemainNotEnough,
     PrintStatusPrintTimeEstimateWarning,
+    // Orca: an AFC unit too humid for a filament in it (SelectMachineDialog::CheckWarningWetSpools).
+    PrintStatusFilamentWarningWetSpool,
+    // Orca: a filament printed outside its AFC spool's temperatures (SelectMachineDialog::CheckWarningSpoolTemps).
+    PrintStatusFilamentWarningTempRange,
     PrintStatusFilamentWarningEnd,
 
     PrintStatusWarningEnd,//->end error<-

@@ -571,6 +571,12 @@ public:
     // Orca: warn (without blocking) when an AFC printer's spools hold less filament than the print
     // uses from them, a refill group's spools (AFC's runout lanes) counted together (afc_spool_check).
     void CheckWarningSpoolRemain(MachineObject* obj_);
+    // Orca: warn when an AFC printer's unit holds a filament that takes up water at a humidity it
+    // prints poorly at (afc_spool_check); only units that report a humidity percentage are checked.
+    void CheckWarningWetSpools(MachineObject* obj_);
+    // Orca: warn when the file prints a filament outside the temperatures its AFC spool names
+    // (afc_spool_check); one named temperature allows a margin either side.
+    void CheckWarningSpoolTemps(MachineObject* obj_);
     // Orca: warn when an AFC printer lacks a toolhead the file prints with, or has another nozzle size
     // on one than the file was sliced for (afc_toolhead_check); a size needs acknowledging as above.
     void CheckWarningToolheads(MachineObject* obj_);

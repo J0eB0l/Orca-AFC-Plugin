@@ -87,6 +87,8 @@ std::string PrePrintChecker::get_print_status_info(PrintDialogStatus status)
     case PrintStatusSmartNozzleBlobNeedAuto: return "PrintStatusSmartNozzleBlobNeedAuto";
     case PrintStatusFilamentWarningRemainNotEnough: return "PrintStatusFilamentWarningRemainNotEnough";
     case PrintStatusPrintTimeEstimateWarning: return "PrintStatusPrintTimeEstimateWarning";
+    case PrintStatusFilamentWarningWetSpool: return "PrintStatusFilamentWarningWetSpool";
+    case PrintStatusFilamentWarningTempRange: return "PrintStatusFilamentWarningTempRange";
     case PrintStatusReadingFinished: return "PrintStatusReadingFinished";
     case PrintStatusSendingCanceled: return "PrintStatusSendingCanceled";
     case PrintStatusAmsMappingSuccess: return "PrintStatusAmsMappingSuccess";

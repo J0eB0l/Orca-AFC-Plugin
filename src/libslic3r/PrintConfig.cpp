@@ -1219,8 +1219,9 @@ void PrintConfigDef::init_common_params()
 
     def = this->add("afc_spool_check", coBool);
     def->label = L("Check spools before printing");
-    def->tooltip = L("The print dialog warns when a lane's spool holds less filament than the print uses from it. "
-                     "A lane with a runout lane counts that lane's spool too.");
+    def->tooltip = L("The print dialog warns when a lane's spool holds less filament than the print uses from it, "
+                     "when the file prints it outside the spool's temperatures, or when a filament that takes up water "
+                     "sits in a unit too humid for it. A lane with a runout lane counts that lane's spool too.");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(true));
