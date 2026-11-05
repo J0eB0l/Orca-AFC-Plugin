@@ -7,6 +7,7 @@
 #include <libslic3r/PresetBundle.hpp>
 #include <libslic3r/AppConfig.hpp>
 #include <libslic3r/Semver.hpp>
+#include <libslic3r/Utils.hpp>
 #include <libslic3r_version.h>
 #include <slic3r/GUI/BuildCommit.hpp>
 #include <slic3r/GUI/DeviceCore/DevManager.h>
@@ -126,6 +127,8 @@ py::dict app_info()
     out["network_plugin_version"] = NetworkAgent::is_network_module_loaded() ? NetworkAgent::get_version() : std::string();
     const NetworkLibraryLoadError load_error = NetworkAgent::get_load_error();
     out["network_plugin_error"] = load_error.has_error ? load_error.message : std::string();
+    // Read-only for plugins: the shipped tables, e.g. printers/bambu_filament_ids.json.
+    out["resources_dir"] = resources_dir();
     return out;
 }
 
