@@ -49,6 +49,7 @@ class FakeMoonraker:
         self.spools = {}
         self.spool_fields = []
         self.filament_fields = []
+        self.filaments = []  # Spoolman filaments no spool here is of
         self.webcams = []
         self.proxy = True
         self.gcode_error = ""
@@ -187,6 +188,14 @@ class FakeMoonraker:
         return 404, {"error": {"code": 404, "message": "Not Found"}}
 
 
+    def all_filaments(self):
+        """Every Spoolman filament: the spools' own and the others."""
+        found = {}
+        for filament in [spool.get("filament") for spool in self.spools.values()] + self.filaments:
+            if isinstance(filament, dict) and filament.get("id") not in found:
+                found[filament.get("id")] = filament
+        return list(found.values())
+
     def spoolman(self, method, path, body):
         """Spoolman's answer to a proxied call, as use_v2_response wraps it."""
         if method == "GET" and path == "/v1/field/spool":
@@ -199,11 +208,12 @@ class FakeMoonraker:
         if method == "POST" and path.startswith("/v1/field/filament/"):
             self.filament_fields.append(dict(body, key=path.rsplit("/", 1)[1]))
             return {"response": self.filament_fields, "error": None}
+        if method == "GET" and path == "/v1/filament":
+            return {"response": self.all_filaments(), "error": None}
         if method == "PATCH" and path.startswith("/v1/filament/"):
             # A spool's filament, edited in place: every spool of it sees the change.
             number = int(path.rsplit("/", 1)[1])
-            for spool in self.spools.values():
-                filament = spool.get("filament") or {}
+            for filament in self.all_filaments():
                 if filament.get("id") == number:
                     filament.setdefault("extra", {}).update(body.get("extra") or {})
                     return {"response": filament, "error": None}

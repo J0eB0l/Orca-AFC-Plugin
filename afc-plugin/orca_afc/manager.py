@@ -10,9 +10,9 @@ import json
 import threading
 import time
 
-from . import bambu_ids, protocol, runout
+from . import bambu_ids, presets, protocol, runout
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
-from .protocol import AFCError, Snapshot
+from .protocol import AFCError, Lane, Snapshot
 
 # How long a spool's flow K is trusted before it is read again. AFC autocal only
 # writes it after a calibration, so this mostly bounds how soon a new one shows.
@@ -197,37 +197,90 @@ class AFCManager:
             return ""
         return error
 
+    def _spoolman_calls(self, client: Moonraker, spoolman_url: str) -> list:
+        """Ways to call Spoolman ("GET", "/v1/..."), the way K was read last
+        first: Moonraker's proxy, and AFC's own Spoolman address when it has one."""
+        def direct(method, path, body=None):
+            return fetch_json("%s/api%s" % (spoolman_url.rstrip("/"), path), timeout=10.0, method=method, body=body)
+
+        ways = [lambda method, path, body=None: client.spoolman(method, path, body, timeout=10.0)]
+        if spoolman_url:
+            ways.insert(1 if self._k_way == "proxy" else 0, direct)
+        return ways
+
+    @staticmethod
+    def _write_filament_id(call, filament: dict, filament_id: str, field_checked: bool = False) -> None:
+        """Put the id in a Spoolman filament's "filament_id" field, made first
+        when Spoolman has none."""
+        if not field_checked:
+            fields = call("GET", "/v1/field/filament")
+            if not any(isinstance(f, dict) and f.get("key") == "filament_id" for f in fields or []):
+                call("POST", "/v1/field/filament/filament_id", {"name": "Filament ID", "field_type": "text"})
+        extra = dict(filament.get("extra") or {})
+        # Spoolman keeps every extra field JSON-encoded.
+        extra["filament_id"] = json.dumps(filament_id)
+        call("PATCH", "/v1/filament/%d" % filament["id"], {"extra": extra})
+
     def save_filament_id(self, client: Moonraker, spool: int, filament_id: str, spoolman_url: str = "") -> str:
         """Save OrcaSlicer's filament id on a spool's Spoolman filament, in its
         "filament_id" field, unless the filament already holds one. Returns
         an error, or ""."""
-        def direct(method, path, body=None):
-            return fetch_json("%s/api%s" % (spoolman_url.rstrip("/"), path), timeout=10.0, method=method, body=body)
-
-        ways = [("proxy", lambda method, path, body=None: client.spoolman(method, path, body, timeout=10.0))]
-        if spoolman_url:
-            ways.insert(1 if self._k_way == "proxy" else 0, ("direct", direct))
         error = ""
-        for _, call in ways:
+        for call in self._spoolman_calls(client, spoolman_url):
             try:
                 record = call("GET", "/v1/spool/%d" % spool)
                 filament = record.get("filament") if isinstance(record, dict) else None
                 if not isinstance(filament, dict) or not isinstance(filament.get("id"), int):
                     return "Spoolman: spool %d has no filament" % spool
-                extra = dict(filament.get("extra") or {})
-                if protocol.spoolman_text(extra.get("filament_id")):
+                if protocol.spoolman_text((filament.get("extra") or {}).get("filament_id")):
                     return ""
-                fields = call("GET", "/v1/field/filament")
-                if not any(isinstance(f, dict) and f.get("key") == "filament_id" for f in fields or []):
-                    call("POST", "/v1/field/filament/filament_id", {"name": "Filament ID", "field_type": "text"})
-                # Spoolman keeps every extra field JSON-encoded.
-                extra["filament_id"] = json.dumps(filament_id)
-                call("PATCH", "/v1/filament/%d" % filament["id"], {"extra": extra})
+                self._write_filament_id(call, filament, filament_id)
             except MoonrakerError as failure:
                 error = str(failure)
                 continue
             return ""
         return error
+
+    def filament_id_plan(self, client: Moonraker, candidates: list, ids, spoolman_url: str = "") -> tuple:
+        """Every Spoolman filament with the OrcaSlicer filament id it has or
+        would get, the way the sync picks one for a spool (presets.product_id()):
+        ([{filament, name, material, filament_id, preset, state}], error). The
+        state is "has" (an id is there), "fill" (one would be written) or
+        "none" (no system preset names its vendor and product)."""
+        error = ""
+        for call in self._spoolman_calls(client, spoolman_url):
+            try:
+                filaments = call("GET", "/v1/filament")
+            except MoonrakerError as failure:
+                error = str(failure)
+                continue
+            rows = [row for row in map(lambda f: _plan_row(f, candidates, ids), filaments or []) if row]
+            order = {"fill": 0, "none": 1, "has": 2}
+            return sorted(rows, key=lambda r: (order[r["state"]], r["name"].lower())), ""
+        return [], error
+
+    def fill_filament_ids(self, client: Moonraker, candidates: list, ids, filaments: list,
+                          spoolman_url: str = "") -> tuple:
+        """Write the planned id on each of these Spoolman filaments that still
+        has none (filament_id_plan()). Returns (how many were written, error)."""
+        wanted = {f for f in filaments if isinstance(f, int)}
+        error, written = "", 0
+        for call in self._spoolman_calls(client, spoolman_url):
+            try:
+                records = call("GET", "/v1/filament")
+                checked = False
+                for record in records or []:
+                    row = _plan_row(record, candidates, ids)
+                    if not row or row["state"] != "fill" or row["filament"] not in wanted:
+                        continue
+                    self._write_filament_id(call, record, row["filament_id"], checked)
+                    checked, written = True, written + 1
+                    wanted.discard(row["filament"])
+            except MoonrakerError as failure:
+                error = str(failure)
+                continue
+            return written, ""
+        return written, error
 
     def state(self, printer: str, hint: str = "", error: str = "") -> dict:
         """What the page draws: {connected, afc, error?, hint?}. A lane move
@@ -425,3 +478,23 @@ def shared() -> AFCManager:
     """The one manager the tab, the G-code step and the printer agent share,
     so the tab shows the latest read whoever made it."""
     return _shared
+
+
+def _plan_row(filament, candidates: list, ids) -> dict | None:
+    """One Spoolman filament for filament_id_plan(), None for a record that is not one."""
+    if not isinstance(filament, dict) or not isinstance(filament.get("id"), int):
+        return None
+    vendor = filament.get("vendor") if isinstance(filament.get("vendor"), dict) else {}
+    article = protocol.spool_article({"filament": filament})
+    lane = Lane(material=str(filament.get("material") or ""), vendor=str(vendor.get("name") or ""),
+                filament_name=str(filament.get("name") or ""), bambu_id=article if bambu_ids.is_bambu(article) else "")
+    has = protocol.spoolman_text((filament.get("extra") or {}).get("filament_id"))
+    filament_id = has or presets.product_id(lane, candidates, ids)
+    preset = ""
+    if filament_id:
+        lane.filament_id = filament_id
+        found = presets.by_id(lane, candidates, ids)
+        preset = found[0].name if found else ""
+    return {"filament": filament["id"], "name": " ".join(x for x in (lane.vendor, lane.filament_name) if x) or "#%d" % filament["id"],
+            "material": lane.material, "filament_id": filament_id, "preset": preset,
+            "state": "has" if has else "fill" if filament_id else "none"}

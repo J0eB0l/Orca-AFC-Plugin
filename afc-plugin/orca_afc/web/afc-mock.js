@@ -83,6 +83,14 @@
 
   const handlers = [];
 
+  // Spoolman filaments and the OrcaSlicer ids they have or would get.
+  const fidRows = [
+    { filament: 3, name: 'Polymaker PolyLite PLA', material: 'PLA', filament_id: 'OF5CgdDq', preset: 'Polymaker PolyLite PLA @System', state: 'fill' },
+    { filament: 7, name: 'Bambu Lab Bambu PLA Basic', material: 'PLA', filament_id: 'OFoiVqVM', preset: 'Bambu PLA Basic @System', state: 'fill' },
+    { filament: 9, name: 'Sunlu PETG', material: 'PETG', filament_id: '', preset: '', state: 'none' },
+    { filament: 1, name: 'Elegoo PLA+', material: 'PLA', filament_id: 'OFk2lX0a', preset: 'Elegoo PLA+ @System', state: 'has' },
+  ];
+
   function reply(id, ok, message, data) {
     setTimeout(() => handlers.forEach((h) => h({ afc_id: id, ok: ok, message: message, data: data })), 120);
   }
@@ -156,6 +164,13 @@
             else on();
           }
           return reply(msg.afc_id, true, '', state(false));
+        }
+        case 'filament_id_plan':
+          return reply(msg.afc_id, true, '', { rows: fidRows, written: 0 });
+        case 'fill_filament_ids': {
+          let written = 0;
+          fidRows.forEach((r) => { if (r.state === 'fill' && (p.filaments || []).includes(r.filament)) { r.state = 'has'; written++; } });
+          return reply(msg.afc_id, true, '', { rows: fidRows.slice().sort((a, b) => (a.state === 'has') - (b.state === 'has')), written: written });
         }
         default:
           return reply(msg.afc_id, true, '', {});

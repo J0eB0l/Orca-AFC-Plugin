@@ -296,6 +296,8 @@
   }
 
   let runoutOpen = false;    // panel: the infinite spool sheet is open
+  let fidOpen = false;       // panel: the filament ids sheet is open
+  let fidRows = null;        // its Spoolman filaments, null while they are read
   let stateJson = '';         // `state` as last drawn, to skip redrawing an unchanged poll
 
   async function load(refresh) {
@@ -358,11 +360,14 @@
     const linked = chains().length;
     const runoutBtn = '<button class="btn' + (runoutOpen ? ' on' : '') + '" id="runout" title="Runout lanes: what AFC loads when a lane runs out">' + icon('infinite') +
       'Infinite spool' + (linked ? '<span class="count">' + linked + '</span>' : '') + '</button>';
-    let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats + runoutBtn);
+    const fidBtn = afc.spoolman ? '<button class="btn' + (fidOpen ? ' on' : '') + '" id="fid" title="Give Spoolman filaments the OrcaSlicer preset id the sync matches them by">' +
+      'Filament IDs</button>' : '';
+    let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats + fidBtn + runoutBtn);
     html += '<div class="main"><div class="scroll" id="scroll">' + headsStrip(afc);
     for (const unit of units) html += unitCard(unit);
     html += '</div>';
     if (runoutOpen) html += runoutSheet();
+    else if (fidOpen) html += fidSheet();
     else if (selected && laneByName(selected)) html += editor(laneByName(selected));
     html += '</div>';
     const dryOpen = dryUnit && unitByName(dryUnit) && unitByName(dryUnit).dryer;
@@ -374,11 +379,14 @@
     }
     if (dryOpen) bindDry(unitByName(dryUnit));
     for (const el of document.querySelectorAll('.lane[data-lane]')) {
-      el.onclick = () => { selected = el.dataset.lane === selected ? null : el.dataset.lane; editorDirty = false; dryUnit = null; runoutOpen = false; render(); };
+      el.onclick = () => { selected = el.dataset.lane === selected ? null : el.dataset.lane; editorDirty = false; dryUnit = null; runoutOpen = false; fidOpen = false; render(); };
     }
     const ro = document.getElementById('runout');
-    if (ro) ro.onclick = () => { runoutOpen = !runoutOpen; selected = null; dryUnit = null; render(); };
+    if (ro) ro.onclick = () => { runoutOpen = !runoutOpen; fidOpen = false; selected = null; dryUnit = null; render(); };
+    const fid = document.getElementById('fid');
+    if (fid) fid.onclick = () => { fidOpen = !fidOpen; runoutOpen = false; selected = null; dryUnit = null; if (fidOpen) readFilamentIds(); render(); };
     if (runoutOpen) bindRunout();
+    else if (fidOpen) bindFid();
     else if (selected) bindEditor(laneByName(selected));
   }
 
@@ -413,6 +421,60 @@
     html += '</div></div><div class="sheet-foot"><button class="btn" id="ro-clear"' + (all.length ? '' : ' disabled') + '>Clear all</button>' +
       '<button class="btn primary" id="ro-match" title="Chain loaded lanes with the same material and color">' + icon('infinite') + 'Link matching spools</button></div></div>';
     return html;
+  }
+
+  async function readFilamentIds() {
+    fidRows = null;
+    try {
+      fidRows = (await call('filament_id_plan')).rows;
+    } catch (e) {
+      fidRows = [];
+      toast(e.message, true);
+    }
+    if (fidOpen) render();
+  }
+
+  function fidSheet() {
+    const rows = fidRows || [];
+    const fill = rows.filter((r) => r.state === 'fill');
+    let html = '<div class="drawer wide" id="drawer"><div class="sheet-head"><span class="logo">' + icon('afc') + '</span>' +
+      '<div class="grow"><h2>Filament IDs</h2><span class="hint">OrcaSlicer picks a spool\'s preset by the filament ID on its Spoolman filament. ' +
+      'A filament with no ID gets the ID of the system preset that names its vendor and product. IDs already there stay.</span></div>' +
+      '<button class="btn icon ghost" id="close" title="Close">' + icon('close') + '</button></div><div class="sheet-body">';
+    if (fidRows === null) html += '<div class="hint">Reading Spoolman…</div>';
+    else if (!rows.length) html += '<div class="hint">Spoolman has no filaments.</div>';
+    const label = { fill: 'Gets an ID', none: 'No preset names it', has: 'Has an ID' };
+    let last = '';
+    for (const r of rows) {
+      if (r.state !== last) { html += '<div class="section-label">' + label[r.state] + '</div>'; last = r.state; }
+      html += '<div class="fid-row"><div class="who"><b>' + esc(r.name) + '</b><span class="hint">' + esc(r.material || '') + '</span></div>' +
+        '<div class="then">' + (r.filament_id ? esc(r.preset || 'no preset of this printer') + ' <span class="pill' + (r.state === 'fill' ? ' accent' : '') + '">' +
+        esc(r.filament_id) + '</span>' : '') + '</div></div>';
+    }
+    html += '</div><div class="sheet-foot"><button class="btn primary" id="fid-fill"' + (fill.length ? '' : ' disabled') + '>' +
+      (fill.length ? 'Give ' + fill.length + ' filament' + (fill.length === 1 ? '' : 's') + ' an ID' : 'Nothing to fill') + '</button></div></div>';
+    return html;
+  }
+
+  function bindFid() {
+    document.getElementById('close').onclick = () => { fidOpen = false; render(); };
+    document.getElementById('fid-fill').onclick = async () => {
+      if (busy) return;
+      const filaments = (fidRows || []).filter((r) => r.state === 'fill').map((r) => r.filament);
+      busy = true;
+      $app.classList.add('busy');
+      try {
+        const data = await call('fill_filament_ids', { filaments: filaments });
+        fidRows = data.rows;
+        toast(data.written + ' filament' + (data.written === 1 ? '' : 's') + ' got an ID');
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        busy = false;
+        $app.classList.remove('busy');
+        render();
+      }
+    };
   }
 
   function bindRunout() {

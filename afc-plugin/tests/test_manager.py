@@ -173,6 +173,43 @@ class BambuTagIdTest(Case):
         self.assertEqual({lane.bambu_id for lane in self.manager.snapshot.lanes}, {""})
 
 
+class FillFilamentIdsTest(Case):
+    def setUp(self):
+        super().setUp()
+        import tempfile, os, json as _json
+        from orca_afc.presets import Candidate, FilamentIds
+        root = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, root)
+        os.makedirs(os.path.join(root, "system", "V", "filament"))
+        def write(name, fid):
+            path = os.path.join(root, "system", "V", "filament", name + ".json")
+            with open(path, "w") as f:
+                _json.dump({"filament_id": fid}, f)
+            return path
+        self.candidates = [Candidate(name="Polymaker PolyLite PLA", type="PLA", vendor="Polymaker", system=True,
+                                     file=write("Polymaker PolyLite PLA", "OF5CgdDq"), base_system=True)]
+        self.ids = FilamentIds()
+        self.fake.filaments = [
+            {"id": 3, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"}, "extra": {}},
+            {"id": 4, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
+             "extra": {"filament_id": '"Pmine01"'}},
+            {"id": 5, "name": "Mystery PLA", "material": "PLA", "vendor": {"name": "Nobody"}, "extra": {}},
+        ]
+
+    def test_plan_says_what_each_filament_gets(self):
+        rows, error = self.manager.filament_id_plan(self.client, self.candidates, self.ids)
+        self.assertEqual(error, "")
+        self.assertEqual([(r["filament"], r["state"], r["filament_id"]) for r in rows],
+                         [(3, "fill", "OF5CgdDq"), (5, "none", ""), (4, "has", "Pmine01")])
+        self.assertEqual(rows[0]["preset"], "Polymaker PolyLite PLA")
+
+    def test_fill_writes_only_the_planned_empty_ones(self):
+        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [3, 4, 5])
+        self.assertEqual((written, error), (1, ""))
+        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments], ['"OF5CgdDq"', '"Pmine01"', None])
+        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
+
+
 class FilamentIdTest(Case):
     def spool(self, extra=None):
         self.fake.spools = {12: {"id": 12, "filament": {"id": 4, "name": "PolyLite PLA", "extra": extra or {}}}}

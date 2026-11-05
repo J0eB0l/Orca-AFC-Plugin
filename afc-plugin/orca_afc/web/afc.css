@@ -353,6 +353,10 @@ body input, body select { border: 1px solid var(--border-2); border-radius: 8px;
 .runout-list { display: flex; flex-direction: column; }
 .runout-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 190px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .runout-row:last-child { border-bottom: 0; }
+.fid-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.fid-row .who { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.fid-row .who b { font-size: 12.5px; }
+.fid-row .then { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12px; text-align: right; }
 .runout-row .who { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .runout-row .who b { font-size: 12.5px; }
 .runout-row .who .pill { align-self: flex-start; }
