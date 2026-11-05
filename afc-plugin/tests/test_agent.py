@@ -640,7 +640,7 @@ class DeviceTabTest(Case):
 
     def test_calibration_prompt_after_gcode(self):
         self.connect()
-        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False, "running": False, "errors": [], "notes": []})
+        self.assertEqual(self.push()["agent_prompt"], {"id": 0, "open": False, "running": False, "errors": [], "notes": [], "log": []})
         self.assertEqual(self.push()["agent_calibration"], "AFC_CALIBRATION")
         self.fake.effects["AFC_CALIBRATION"] = lambda: self.fake.gcode_store.extend(
             {"message": m, "time": 10.0 + i, "type": "response"}
@@ -710,6 +710,20 @@ class DeviceTabTest(Case):
         tray = self.calls.messages("print", "push_status", 2)[-1]["ams"]["ams"][0]["tray"][1]
         self.assertEqual(tray["k"], 0.023685)
         self.assertEqual(afc_agent.stored_flow_k([{"message": "// AFC_autocal: stored K=0.02 for lane20"}], "lane2"), None)
+
+    def test_calibration_window_shows_what_the_printer_does(self):
+        running = {"id": 3, "open": False, "running": True, "errors": [], "notes": [], "log": ["G28"]}
+        objects = {"print_stats": {"state": "standby"}, "toolhead": {"homed_axes": "", "extruder": "extruder"}}
+        self.assertEqual(afc_agent._prompt_status(running, objects, None, 1, False)["status"], "Homing")
+        objects["toolhead"]["homed_axes"] = "xyz"
+        objects["extruder"] = {"temperature": 187.0, "target": 220.0}
+        self.assertEqual(afc_agent._prompt_status(running, objects, None, 1, False)["status"],
+                         "Heating the nozzle to 220 °C (now 187 °C)")
+        objects["extruder"]["temperature"] = 219.0
+        self.assertEqual(afc_agent._prompt_status(running, objects, None, 1, False)["status"], "")
+        # An open prompt or a finished G-code has none.
+        self.assertNotIn("status", afc_agent._prompt_status(dict(running, open=True), objects, None, 1, False))
+        self.assertNotIn("status", afc_agent._prompt_status(dict(running, running=False), objects, None, 1, False))
 
     def test_u1_flow_calibration_of_the_lane_in_the_toolhead(self):
         self.assertEqual(afc_agent.flow_calibration_gcode(Lane(name="lane2", tool_loaded=True), "lane2"),

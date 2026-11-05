@@ -363,6 +363,15 @@ def _layers(state: str, stats: dict, position, job: dict):
     return max(0, min(int(current), int(total))), int(total)
 
 
+def _prompt_status(prompt_json: dict, objects, snapshot, toolheads: int, probing: bool) -> dict:
+    """The Calibration window's prompt, with what the printer is doing while
+    OrcaSlicer's G-code runs: the Device tab's stage words (homing, heating,
+    AFC loading a lane), "" when they have none."""
+    if prompt_json.get("running") and not prompt_json.get("open"):
+        status = stage.describe(objects, snapshot, toolheads, probing, active=True)[1]
+        return dict(prompt_json, status=status)
+    return prompt_json
+
 def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, reading=(), lights=(), job=None,
                 by_unit: bool = False, dry_filaments=None, chamber: str = "", swap_times=None,
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
@@ -426,7 +435,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # The AFC build of OrcaSlicer shows the chamber's temperature on the Device tab.
         "support_chamber": bool(chamber),
         # ... runs AFC's calibration from the Device tab's Calibration and shows its prompts.
-        "agent_calibration": "AFC_CALIBRATION", "agent_prompt": prompt_json or prompt.Watch().json(),
+        "agent_calibration": "AFC_CALIBRATION", "agent_prompt": _prompt_status(prompt_json or prompt.Watch().json(),
+                                                                                objects, snapshot, toolheads, probing),
         # ... and on a U1 with AFC autocal, offers U1 Flow Calibration as a Flow Dynamics method
         # (agent_flow_calibration command).
         "agent_flow_calibration": u1 and flow_calibration,
@@ -1137,9 +1147,10 @@ else:
 
         def _probing(self, printer: _Printer, status: dict) -> bool:
             """Whether the printer probed its bed since the last push, from the
-            G-code store's newest lines; only asked while a print runs."""
+            G-code store's newest lines; only asked while a print or OrcaSlicer's
+            G-code (a calibration) runs."""
             state = str((status.get("print_stats") or {}).get("state") or "").lower()
-            if state != "printing":
+            if state != "printing" and not printer.prompt.busy():
                 printer.probes = stage.ProbeWatch()
                 return False
             try:

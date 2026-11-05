@@ -27,7 +27,7 @@ class WatchTest(unittest.TestCase):
         watch = prompt.Watch()
         self.assertTrue(watch.feed(lines("echo: hello", *CALIBRATION)))
         self.assertEqual(watch.json(), {
-            "id": 1, "open": True, "running": False, "errors": [], "notes": [], "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
+            "id": 1, "open": True, "running": False, "errors": [], "notes": [], "log": [], "title": "AFC Calibration", "text": ["Select a unit to calibrate."],
             "rows": [[{"label": "Turtle_1", "gcode": "UNIT_CALIBRATION UNIT=Turtle_1", "style": "primary"}],
                      [{"label": "Lane 1", "gcode": "CALIBRATE_AFC LANE=lane1", "style": ""},
                       {"label": "Lane 2", "gcode": "Lane 2", "style": ""}]],
@@ -46,7 +46,7 @@ class WatchTest(unittest.TestCase):
         store = lines(*CALIBRATION)
         watch.feed(store)
         self.assertTrue(watch.feed(store + lines("// action:prompt_end", start=20.0)))
-        self.assertEqual(watch.json(), {"id": 2, "open": False, "running": False, "errors": [], "notes": []})
+        self.assertEqual(watch.json(), {"id": 2, "open": False, "running": False, "errors": [], "notes": [], "log": []})
 
     def test_a_new_prompt_replaces_the_old(self):
         watch = prompt.Watch()
@@ -58,7 +58,7 @@ class WatchTest(unittest.TestCase):
     def test_unshown_prompt_stays_closed(self):
         watch = prompt.Watch()
         self.assertFalse(watch.feed(lines(*CALIBRATION[:-1])))
-        self.assertEqual(watch.json(), {"id": 0, "open": False, "running": False, "errors": [], "notes": []})
+        self.assertEqual(watch.json(), {"id": 0, "open": False, "running": False, "errors": [], "notes": [], "log": []})
 
     def test_calibration_runs_on_after_its_prompt_ends(self):
         # CALIBRATE_AFC ends the unit's prompt as it starts; the window waits for its result.
@@ -89,6 +89,28 @@ class WatchTest(unittest.TestCase):
         # The next G-code starts with none.
         watch.start()
         self.assertEqual(watch.json()["errors"], [])
+
+    def test_console_lines_while_gcode_runs(self):
+        watch = prompt.Watch()
+        watch.feed(lines("// before it started", start=1.0))
+        watch.start()
+        watch.mark(5.0)
+        before = watch.id
+        self.assertTrue(watch.feed(lines("AFC_CALIBRATE_LANE_FLOW_K", "ok", "// start flow calibration for extruder",
+                                         '<span class=success--text>lane2  LOADED</span>', start=6.0)))
+        self.assertGreater(watch.id, before)  # the window shows each new line
+        self.assertEqual(watch.json()["log"], ["AFC_CALIBRATE_LANE_FLOW_K", "start flow calibration for extruder",
+                                               "lane2 LOADED"])  # no "ok", no markup
+        watch.feed(lines("!! Lane not ready", start=15.0))
+        self.assertEqual((watch.json()["log"][-1], watch.json()["errors"]), ("lane2 LOADED", ["Lane not ready"]))
+        watch.feed(lines(*("// step %d" % n for n in range(12)), start=20.0))
+        self.assertEqual(watch.json()["log"], ["step %d" % n for n in range(8, 12)])
+        # Lines after the G-code ended are not its progress; the next G-code starts with none.
+        watch.finish()
+        watch.feed(lines("// later", start=40.0))
+        self.assertEqual(watch.json()["log"][-1], "step 11")
+        watch.start()
+        self.assertEqual(watch.json()["log"], [])
 
     def test_a_read_begun_before_the_end_does_not_settle_it(self):
         # The G-code's prompt may land in the store after a read began: only a later read counts.

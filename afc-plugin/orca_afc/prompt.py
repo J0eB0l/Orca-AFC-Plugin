@@ -10,6 +10,7 @@ runs, so the window can say how a calibration ended when AFC shows no prompt."""
 
 from __future__ import annotations
 
+import re
 import threading
 
 PREFIX = "// action:prompt_"
@@ -18,6 +19,18 @@ WATCH = 600.0  # seconds the store is read after OrcaSlicer sends G-code, for th
 ERROR = "!! "  # Klipper's and AFC's errors in the console
 ERRORS = 5     # errors kept for the window
 NOTE = "// "   # Klipper's answers in the console, kept as notes when the G-code asks for them (Watch.start())
+LOG = 4        # console lines kept for the window while the G-code runs
+LOG_WIDTH = 200
+_MARKUP = re.compile(r"<[^>]*>")
+
+
+def _log_line(line: str) -> str:
+    """A console line as the window shows it while the G-code runs: without
+    Klipper's "// " and the HTML Mainsail and Fluidd color it with."""
+    if line.startswith(NOTE):
+        line = line[len(NOTE):]
+    line = " ".join(_MARKUP.sub("", line).split())
+    return "" if line.lower() == "ok" else line[:LOG_WIDTH]
 
 
 def _button(rest: str) -> dict:
@@ -42,6 +55,7 @@ class Watch:
         self.running = 0      # OrcaSlicer's G-code lines still running
         self.errors = []      # errors printed since the first of them started
         self.notes = []       # answers starting with the G-code's note prefix, printed since it started
+        self.log = []         # the newest console lines printed since it started, while it runs
         self._note = ""       # that prefix ("AFC_autocal: "), "" to keep none
         self._since = None    # store time errors are kept after, None until the G-code starts
         self._finished = 0    # G-code lines ended so far
@@ -58,6 +72,7 @@ class Watch:
             if self.running == 0:
                 self.errors = []
                 self.notes = []
+                self.log = []
                 self._note = ""
                 self._since = None
             self._note = note or self._note
@@ -93,7 +108,8 @@ class Watch:
 
     def feed(self, entries, token=None) -> bool:
         """Reads the G-code store's entries (oldest first) newer than the last
-        read, which began at `token` (token()); True when a prompt opened or closed."""
+        read, which began at `token` (token()); True when a prompt opened or closed
+        or the running G-code printed a line."""
         with self._lock:
             settled = self._read < self._finished
             self._read = max(self._read, self._finished if token is None else token)
@@ -121,6 +137,18 @@ class Watch:
         return changed
 
     def _line(self, line: str, when: float) -> bool:
+        logged = False
+        # Errors are kept apart (below), so the window shows each once.
+        if not line.startswith((PREFIX, ERROR)) and self._logging(when):
+            text = _log_line(line)
+            if text:
+                self.log = (self.log + [text])[-LOG:]
+                if self.prompt is None:
+                    self.id += 1  # the window shows the printer's progress
+                    logged = True
+        return self._prompt_line(line, when) or logged
+
+    def _prompt_line(self, line: str, when: float) -> bool:
         if line.startswith(ERROR):
             if self._since is None or when <= self._since:
                 return False
@@ -167,13 +195,17 @@ class Watch:
             return True
         return False
 
+    def _logging(self, when: float) -> bool:
+        """A line printed after OrcaSlicer's G-code started, while it still runs."""
+        return self._since is not None and when > self._since and (self.running > 0 or self._read < self._finished)
+
     def json(self) -> dict:
         """The agent_prompt the AFC build of OrcaSlicer shows: {id, open, running,
-        errors, notes} and the open prompt's title, text lines, rows of buttons
+        errors, notes, log} and the open prompt's title, text lines, rows of buttons
         and footer buttons."""
         out = {"id": self.id, "open": self.prompt is not None,
                "running": self.running > 0 or self._read < self._finished,
-               "errors": list(self.errors), "notes": list(self.notes)}
+               "errors": list(self.errors), "notes": list(self.notes), "log": list(self.log)}
         if self.prompt is not None:
             out.update(self.prompt)
         return out

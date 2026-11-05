@@ -134,10 +134,11 @@ def _capitalized(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-def describe(objects: dict, snapshot=None, toolheads: int = 1, probing: bool = False):
+def describe(objects: dict, snapshot=None, toolheads: int = 1, probing: bool = False, active: bool = False):
     """(stage number, text) of a print in progress or paused, from Klipper's
     objects (agent.status_query()); (PRINTING, "") when nothing more is going
-    on than printing, and when no print is."""
+    on than printing, and when no print is. `active` describes the printer as
+    if printing when it is not, for G-code OrcaSlicer runs (a calibration)."""
     objects = objects if isinstance(objects, dict) else {}
 
     def obj(name):
@@ -153,7 +154,7 @@ def describe(objects: dict, snapshot=None, toolheads: int = 1, probing: bool = F
             code = RUNOUT_PAUSE if "runout" in words or "ran out" in words else USER_PAUSE
             return code, "Paused: " + message.splitlines()[0].strip()
         return USER_PAUSE, "Paused"
-    if state != "printing":
+    if state != "printing" and not active:
         return PRINTING, ""
     extruder = str(obj("toolhead").get("extruder") or "extruder")
     found = _afc_stage(obj("AFC"), snapshot, objects, extruder, toolheads)
