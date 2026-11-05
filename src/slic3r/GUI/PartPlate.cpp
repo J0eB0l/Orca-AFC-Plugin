@@ -2286,8 +2286,9 @@ void PartPlate::update_exclusion_volume_preview_models()
             preview_footprints.emplace_back(region);
 
             // Legacy polygons continue to use Orca's existing grey bed preview;
-            // the additional floor/ribbon belongs only to collision volumes.
-            if (region_src.is_collision_volume()) {
+            // the additional floor/ribbon belongs to collision volumes and the
+            // printer's own spots, which the grey preview cannot show.
+            if (region_src.is_collision_volume() || region_src.is_printer_spot()) {
                 if (!region_src.has_z_range || region_src.z_min <= EPSILON) {
                     floor_regions.emplace_back(region);
                 } else {
@@ -7724,8 +7725,11 @@ bool PartPlateList::preprocess_exclude_areas(arrangement::ArrangePolygons &unsel
 	}
     const BedExcludeVolumeMode mode = active_bed_exclude_volume_mode(config);
     const bool use_resolved_regions = has_bed_exclude_volumes(config);
+    // Orca: the printer's own spots (AFC's) are blockers too, shared by every nozzle.
+    const auto *keep_off_spots = config.option<ConfigOptionBool>("afc_keep_off_spots");
+    const bool  printer_spots  = keep_off_spots != nullptr && keep_off_spots->value;
 
-    if (use_resolved_regions) {
+    if (use_resolved_regions || printer_spots) {
         const std::vector<std::vector<BedExcludeRegion>> regions_by_extruder =
             get_bed_excluded_regions_by_extruder(config);
         const size_t extruder_count = mode == BedExcludeVolumeMode::Shared ?
@@ -7734,8 +7738,9 @@ bool PartPlateList::preprocess_exclude_areas(arrangement::ArrangePolygons &unsel
         for (size_t extruder_id = 0; extruder_id < extruder_count; ++extruder_id) {
             for (size_t region_id = 0; region_id < regions_by_extruder[extruder_id].size(); ++region_id) {
                 const BedExcludeRegion &region = regions_by_extruder[extruder_id][region_id];
-                if (!region.is_collision_volume() || region.polygon.points.size() < 3 ||
-                    (region.has_z_range && region.z_max <= region.z_min + EPSILON))
+                const bool spot = region.is_printer_spot();
+                if ((!region.is_collision_volume() && !spot) || (spot && extruder_id > 0) ||
+                    region.polygon.points.size() < 3 || (region.has_z_range && region.z_max <= region.z_min + EPSILON))
                     continue;
 
                 for (int plate_idx = 0; plate_idx < num_plates; ++plate_idx) {
@@ -7745,7 +7750,7 @@ bool PartPlateList::preprocess_exclude_areas(arrangement::ArrangePolygons &unsel
                     blocker.rotation = 0.0;
                     blocker.is_virt_object = true;
                     blocker.is_bed_exclusion = true;
-                    blocker.bed_exclusion_extruder_id = mode == BedExcludeVolumeMode::Shared ? -1 : int(extruder_id);
+                    blocker.bed_exclusion_extruder_id = mode == BedExcludeVolumeMode::Shared || spot ? -1 : int(extruder_id);
                     blocker.bed_idx = plate_idx;
                     blocker.height = std::max(0.0, region.z_max - region.z_min);
                     blocker.z_min = region.z_min;

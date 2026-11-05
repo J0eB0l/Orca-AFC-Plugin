@@ -2010,6 +2010,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionString,             bed_exclude_volumes))
     ((ConfigOptionEnum<BedExcludeVolumeMode>, bed_exclude_volume_mode))
     ((ConfigOptionStrings,            extruder_bed_exclude_volumes))
+    // Orca: AFC's purge, kick and brush spots on the bed, kept free of parts when afc_keep_off_spots is on.
+    ((ConfigOptionBool,               afc_keep_off_spots))
+    ((ConfigOptionString,             afc_bed_keepouts))
     ((ConfigOptionPoints,             head_wrap_detect_zone))
     // BBS
     ((ConfigOptionString,             bed_custom_texture))
@@ -2561,7 +2564,10 @@ Points get_bed_shape(const SLAPrinterConfig &cfg);
 struct BedExcludeRegion {
     enum class Purpose {
         MaterialKeepout,
-        CollisionVolume
+        CollisionVolume,
+        // Orca: a spot the printer's own macros use on the bed (AFC's purge, kick and brush), kept free
+        // like a material keep-out and drawn on the plate.
+        PrinterSpot
     };
 
     Polygon polygon;
@@ -2571,6 +2577,7 @@ struct BedExcludeRegion {
     bool    has_z_range { false };
 
     bool is_collision_volume() const { return purpose == Purpose::CollisionVolume; }
+    bool is_printer_spot() const { return purpose == Purpose::PrinterSpot; }
 };
 std::vector<BedExcludeRegion> get_bed_excluded_regions(const DynamicPrintConfig& cfg);
 std::vector<BedExcludeRegion> get_bed_excluded_regions(const PrintConfig& cfg);

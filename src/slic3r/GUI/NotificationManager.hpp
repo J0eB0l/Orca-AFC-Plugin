@@ -197,9 +197,10 @@ enum class NotificationType
     // Active preset references a capability the installed+loaded plugin does not provide (outdated
     // plugin). Informational; cannot be auto-resolved; persistent, blocks slicing.
     OrcaPluginCapabilityUnavailableError,
-    // Orca: an AFC printer preset may use AFC's recommended settings, or preheat its next tool.
+    // Orca: an AFC printer preset may use AFC's recommended settings, preheat its next tool, or take Klipper's limits.
     AFCRecommendedSettings,
     AFCToolchangerPreheat,
+    AFCKlipperLimits,
     NotificationTypeCount
 
 };

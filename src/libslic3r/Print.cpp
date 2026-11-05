@@ -439,7 +439,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "bed_exclude_volumes",
         "bed_exclude_volume_mode",
         "extruder_bed_exclude_volumes",
-        "extruder_offset"
+        "extruder_offset",
+        "afc_keep_off_spots",
+        "afc_bed_keepouts"
     };
 
     std::vector<PrintStep> steps;

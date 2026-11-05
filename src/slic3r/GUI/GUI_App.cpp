@@ -4511,26 +4511,32 @@ void GUI_App::detect_afc_on_printer()
 }
 
 // Orca: filament sync on an AFC printer also takes the lane load, lane unload and tool swap times its
-// agent measured, so the time estimate counts the printer's own lane and tool changes. A user preset
-// with no other edits is saved with them, as detect_afc_on_printer() saves its tick.
+// agent measured, so the time estimate counts the printer's own lane and tool changes, and the spots on
+// the bed AFC's macros use, which "Keep parts off AFC's spots" keeps free. A user preset with no other
+// edits is saved with them, as detect_afc_on_printer() saves its tick.
 void GUI_App::apply_measured_swap_times(const MachineObject& obj)
 {
     if (!preset_bundle)
         return;
     const Preset& preset = preset_bundle->printers.get_edited_preset();
-    const auto* use = preset.config.option<ConfigOptionBool>("afc_swap_times");
-    if (!printer_has_afc(preset.config) || !use || !use->value)
+    if (!printer_has_afc(preset.config))
         return;
     DynamicPrintConfig times;
     bool changed = false;
+    const auto* use = preset.config.option<ConfigOptionBool>("afc_swap_times");
     for (const auto& [key, seconds] : {std::make_pair("machine_load_filament_time", obj.measured_load_time),
                                        std::make_pair("machine_unload_filament_time", obj.measured_unload_time),
                                        std::make_pair("machine_tool_change_time", obj.measured_tool_change_time)}) {
         const auto* current = preset.config.option<ConfigOptionFloat>(key);
         const double value = std::round(seconds * 10.) / 10.;
-        if (seconds < 0.f || !current || std::abs(current->value - value) < 0.05)
+        if (!use || !use->value || seconds < 0.f || !current || std::abs(current->value - value) < 0.05)
             continue;
         times.set_key_value(key, new ConfigOptionFloat(value));
+        changed = true;
+    }
+    const auto* keepouts = preset.config.option<ConfigOptionString>("afc_bed_keepouts");
+    if (obj.has_agent_bed_keepouts && keepouts && keepouts->value != obj.agent_bed_keepouts) {
+        times.set_key_value("afc_bed_keepouts", new ConfigOptionString(obj.agent_bed_keepouts));
         changed = true;
     }
     Tab* tab = get_tab(Preset::TYPE_PRINTER);
@@ -4539,9 +4545,65 @@ void GUI_App::apply_measured_swap_times(const MachineObject& obj)
     const std::string name = preset.name;
     const bool was_dirty = tab->current_preset_is_dirty();
     tab->load_config(times);
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC's measured change times set on preset " << name;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC's measured change times and bed spots set on preset " << name;
     if (!was_dirty && preset_bundle->printers.get_selected_preset().is_user())
         tab->save_preset(name);
+}
+
+// Orca: the printer preset's machine limits that differ from Klipper's [printer] section (agent_machine_limits),
+// as changes to apply. Klipper has no stealth mode, so every value of an option takes Klipper's. The toolheads'
+// offsets stay out: Klipper applies them itself on a tool change, and an extruder offset here would shift the
+// print again.
+static DynamicPrintConfig klipper_limit_changes(const DynamicPrintConfig& printer, const std::map<std::string, double>& limits)
+{
+    static const std::vector<std::pair<const char*, std::vector<const char*>>> keys = {
+        {"max_velocity", {"machine_max_speed_x", "machine_max_speed_y"}},
+        {"max_z_velocity", {"machine_max_speed_z"}},
+        {"max_accel", {"machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_extruding",
+                       "machine_max_acceleration_travel"}},
+        {"max_z_accel", {"machine_max_acceleration_z"}},
+        {"square_corner_velocity", {"machine_max_jerk_x", "machine_max_jerk_y"}},
+    };
+    DynamicPrintConfig changes;
+    for (const auto& [klipper_key, orca_keys] : keys) {
+        const auto limit = limits.find(klipper_key);
+        if (limit == limits.end())
+            continue;
+        for (const char* key : orca_keys) {
+            const auto* opt = printer.option<ConfigOptionFloats>(key);
+            if (!opt || std::all_of(opt->values.begin(), opt->values.end(), [&limit](double v) { return std::abs(v - limit->second) < 0.001; }))
+                continue;
+            auto* value = new ConfigOptionFloats(*opt);
+            std::fill(value->values.begin(), value->values.end(), limit->second);
+            changes.set_key_value(key, value);
+        }
+    }
+    return changes;
+}
+
+void GUI_App::suggest_klipper_limits(const MachineObject& obj)
+{
+    if (!preset_bundle || !plater() || is_closing() || obj.agent_machine_limits.empty())
+        return;
+    const Preset& preset = preset_bundle->printers.get_edited_preset();
+    const auto*   check  = preset.config.option<ConfigOptionBool>("afc_settings_check");
+    if (!printer_has_afc(preset.config) || !check || !check->value ||
+        klipper_limit_changes(preset.config, obj.agent_machine_limits).empty() ||
+        !m_klipper_limits_suggested.insert(preset.name).second)
+        return;
+    NotificationManager* notifications = plater()->get_notification_manager();
+    if (!notifications)
+        return;
+    const std::map<std::string, double> limits = obj.agent_machine_limits;
+    notifications->push_notification(NotificationType::AFCKlipperLimits, NotificationManager::NotificationLevel::ImportantNotificationLevel,
+        _u8L("This printer's maximum speeds and accelerations differ from the ones in its Klipper config, which the "
+             "time estimate should use."),
+        _u8L("Use Klipper's limits"), [this, limits](wxEvtHandler*) {
+            Tab* tab = get_tab(Preset::TYPE_PRINTER);
+            if (tab && preset_bundle && printer_has_afc(preset_bundle->printers.get_edited_preset().config))
+                tab->load_config(klipper_limit_changes(preset_bundle->printers.get_edited_preset().config, limits));
+            return true;
+        });
 }
 
 // Orca: AFC unloads and loads each lane itself, cutting or forming the tip, and its PRINT_START loads the first tool

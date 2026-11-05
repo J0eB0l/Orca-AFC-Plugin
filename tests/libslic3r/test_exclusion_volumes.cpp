@@ -449,6 +449,48 @@ TEST_CASE("Individual collision volumes retain the shared legacy area", "[Exclus
     CHECK(groups[1][1].is_collision_volume());
 }
 
+TEST_CASE("AFC's spots are full-height shared keep-outs only while switched on", "[ExclusionVolume][PrintConfig][AFC]")
+{
+    DynamicPrintConfig config = two_extruder_config();
+    config.set_deserialize_strict("bed_exclude_area", "70x70,80x70,80x80,70x80");
+    config.set_key_value("bed_exclude_volume_mode", new ConfigOptionEnum<BedExcludeVolumeMode>(BedExcludeVolumeMode::ToolheadOffset));
+    config.set_key_value("afc_bed_keepouts", new ConfigOptionString("100x100,130x100,130x130,100x130|0..5;140x0,150x0,150x10,140x10"));
+
+    SECTION("off by default") {
+        const auto groups = get_bed_excluded_regions_by_extruder(config);
+        REQUIRE(groups.size() == 2);
+        CHECK(groups[0].size() == 2);
+    }
+
+    SECTION("switched on") {
+        config.set_key_value("afc_keep_off_spots", new ConfigOptionBool(true));
+        const auto groups = get_bed_excluded_regions_by_extruder(config);
+        REQUIRE(groups.size() == 2);
+        REQUIRE(groups[0].size() == 4);
+        REQUIRE(groups[1].size() == 4);
+        for (size_t i = 1; i < 3; ++i) {
+            CHECK(groups[0][i].is_printer_spot());
+            CHECK_FALSE(groups[0][i].is_collision_volume());
+            CHECK_FALSE(groups[0][i].has_z_range);
+            CHECK(groups[0][i].z_min == 0.0);
+            CHECK(groups[0][i].z_max == 200.0);
+            // Bed-fixed: the second nozzle's offset does not move them.
+            CHECK(groups[0][i].polygon.points == groups[1][i].polygon.points);
+        }
+
+        const auto flattened = get_bed_excluded_regions(config);
+        CHECK(flattened.size() == 5);
+        CHECK(std::count_if(flattened.begin(), flattened.end(),
+            [](const BedExcludeRegion &region) { return region.is_printer_spot(); }) == 2);
+
+        FullPrintConfig full;
+        full.apply(config, true);
+        const auto full_groups = get_bed_excluded_regions_by_extruder(full);
+        REQUIRE(full_groups.size() == 2);
+        CHECK(full_groups[0].size() == 4);
+    }
+}
+
 TEST_CASE("Individual exclusion validation accepts omitted trailing extruders", "[ExclusionVolume][PrintConfig][MultiNozzle]")
 {
     DynamicPrintConfig dynamic = two_extruder_config();

@@ -440,6 +440,8 @@ public:
     void detect_afc_on_printer();
     // Orca: puts the change times an AFC printer's agent measured in its printer preset (afc_swap_times)
     void apply_measured_swap_times(const MachineObject& obj);
+    // Orca: offers Klipper's motion limits for an AFC printer preset's machine limits, once a session
+    void suggest_klipper_limits(const MachineObject& obj);
     // Orca: offers AFC's recommended settings for an AFC printer preset, once a session (afc_settings_check)
     void suggest_afc_settings();
 
@@ -920,8 +922,9 @@ private:
     void set_live_printer_agent(std::shared_ptr<IPrinterAgent> agent); // null clears the selection
     // Printer presets and hosts asked about AFC this session, as "<preset>|<host>".
     std::set<std::string> m_afc_probed;
-    // AFC printer presets offered AFC's recommended settings this session.
+    // AFC printer presets offered AFC's recommended settings, and Klipper's motion limits, this session.
     std::set<std::string> m_afc_suggested;
+    std::set<std::string> m_klipper_limits_suggested;
 
     bool            config_wizard_startup();
 	void            check_updates(const bool verbose);

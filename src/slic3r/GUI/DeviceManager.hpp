@@ -641,6 +641,14 @@ public:
     float measured_load_time {-1.f};
     float measured_unload_time {-1.f};
     float measured_tool_change_time {-1.f};
+    // Orca: a printer agent's motion limits from Klipper's [printer] section (klipper_limits: max_velocity,
+    // max_accel, max_z_velocity, max_z_accel, square_corner_velocity), which filament sync offers for the
+    // printer preset's machine limits; empty until it sends them.
+    std::map<std::string, double> agent_machine_limits;
+    // Orca: a printer agent's spots on the bed its filament system's macros use (afc_keepouts, in the
+    // bed_exclude_volumes format, "" none), which filament sync puts in the printer preset; false until it sends them.
+    bool        has_agent_bed_keepouts {false};
+    std::string agent_bed_keepouts;
     // Orca: a printer agent's nozzle size of each toolhead, by extruder number (0 unknown), for the print dialog
     std::vector<float> toolhead_nozzle_diameters;
     // Orca: a printer agent's toolheads on Printer Parts (toolhead_parts), by extruder number: the name its

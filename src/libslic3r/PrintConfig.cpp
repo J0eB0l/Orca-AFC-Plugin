@@ -1254,6 +1254,24 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("afc_keep_off_spots", coBool);
+    def->label = L("Keep parts off AFC's spots");
+    def->tooltip = L("Treats the spots on the bed where AFC purges, kicks the purged filament away and brushes the "
+                     "nozzle, as the printer's AFC macros set them, like the excluded bed area: the plate shows them, "
+                     "arranging keeps parts off them and a part placed on one is reported. Filament sync reads the "
+                     "spots from the printer.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    // AFC's spots on the bed as full-height areas in the bed_exclude_volumes format, which filament sync
+    // reads from a printer agent. Internal use only, no translation.
+    def = this->add("afc_bed_keepouts", coString);
+    def->label = "AFC keep-out areas";
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionString());
+
     def = this->add("print_host", coString);
     def->label = L("Hostname, IP or URL");
     // The URL is an example of the format to type, not a link, so it stays in the text.
@@ -14114,6 +14132,27 @@ static void append_bed_exclusion_volume_regions(
     }
 }
 
+// Orca: AFC's spots are bed-fixed keep-outs like the legacy excluded area, shared by every nozzle and
+// full height, since the head comes down onto them from wherever the print is.
+static void append_afc_bed_keepouts(
+    std::vector<BedExcludeRegion> &out,
+    const bool enabled,
+    const std::string &specs,
+    const double printable_height)
+{
+    if (!enabled || specs.empty())
+        return;
+    std::vector<BedExcludeRegion> regions;
+    append_bed_exclusion_volume_regions(regions, specs, printable_height);
+    for (BedExcludeRegion &region : regions) {
+        region.purpose     = BedExcludeRegion::Purpose::PrinterSpot;
+        region.z_min       = 0.0;
+        region.z_max       = printable_height;
+        region.has_z_range = false;
+        out.emplace_back(std::move(region));
+    }
+}
+
 static bool has_nonempty_string(const std::string &value)
 {
     return std::any_of(value.begin(), value.end(), [](const char c) { return !std::isspace(static_cast<unsigned char>(c)); });
@@ -14226,17 +14265,14 @@ static std::vector<BedExcludeRegion> flatten_bed_excluded_regions(
         return std::move(regions_by_extruder.front());
 
     std::vector<BedExcludeRegion> flattened;
-    // A shared legacy area is present in every resolved nozzle group so object
-    // validation sees it for every tool. Flatten it only once, while retaining
-    // every nozzle-specific collision volume.
-    bool material_keepout_added = false;
-    for (std::vector<BedExcludeRegion> &regions : regions_by_extruder) {
-        for (BedExcludeRegion &region : regions) {
-            if (!region.is_collision_volume()) {
-                if (material_keepout_added)
-                    continue;
-                material_keepout_added = true;
-            }
+    // Shared material keep-outs (the legacy area, AFC's spots) are present in every
+    // resolved nozzle group so object validation sees them for every tool. Flatten
+    // them from the first group only, while retaining every nozzle-specific
+    // collision volume.
+    for (size_t extruder_id = 0; extruder_id < regions_by_extruder.size(); ++extruder_id) {
+        for (BedExcludeRegion &region : regions_by_extruder[extruder_id]) {
+            if (!region.is_collision_volume() && extruder_id > 0)
+                continue;
             flattened.emplace_back(std::move(region));
         }
     }
@@ -14289,6 +14325,10 @@ std::vector<std::vector<BedExcludeRegion>> get_bed_excluded_regions_by_extruder(
     const BedExcludeVolumeMode active_mode = use_collision_volumes ? configured_mode : BedExcludeVolumeMode::Shared;
     std::vector<BedExcludeRegion> master_regions = parse_master_bed_excluded_regions(
         legacy_points, shared_specs, use_collision_volumes, active_mode, printable_height);
+    const ConfigOptionBool   *afc_keep_off = cfg.opt<ConfigOptionBool>("afc_keep_off_spots");
+    const ConfigOptionString *afc_keepouts = cfg.opt<ConfigOptionString>("afc_bed_keepouts");
+    append_afc_bed_keepouts(master_regions, afc_keep_off != nullptr && afc_keep_off->value,
+        afc_keepouts != nullptr ? afc_keepouts->value : std::string{}, std::max(0.0, printable_height));
     project_bed_material_keepouts(master_regions, cfg);
     const std::vector<Vec2d> offsets = offset_option != nullptr ? offset_option->values : std::vector<Vec2d>{};
     const size_t count = bed_exclusion_extruder_count(
@@ -14314,6 +14354,8 @@ std::vector<std::vector<BedExcludeRegion>> get_bed_excluded_regions_by_extruder(
     std::vector<BedExcludeRegion> master_regions = parse_master_bed_excluded_regions(
         cfg.bed_exclude_area.values, cfg.bed_exclude_volumes.value, use_collision_volumes,
         active_mode, printable_height);
+    append_afc_bed_keepouts(master_regions, cfg.afc_keep_off_spots.value, cfg.afc_bed_keepouts.value,
+        std::max(0.0, printable_height));
     project_bed_material_keepouts(master_regions, cfg);
     const size_t count = bed_exclusion_extruder_count(
         cfg.nozzle_diameter.size(), cfg.extruder_offset.size(), cfg.extruder_bed_exclude_volumes.size());

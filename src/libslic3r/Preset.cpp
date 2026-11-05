@@ -1622,6 +1622,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "best_object_pos", "head_wrap_detect_zone",
     "host_type", "print_host", "printhost_apikey", "flashforge_serial_number", "bbl_use_printhost", "printer_agent", "afc_enabled",
     "afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_settings_check", "afc_unit_order",
+    "afc_keep_off_spots", "afc_bed_keepouts",
     "print_host_webui",
     "printhost_cafile","printhost_port","printhost_authorization_type",
     "printhost_user", "printhost_password", "printhost_ssl_ignore_revoke", "thumbnails", "thumbnails_format",

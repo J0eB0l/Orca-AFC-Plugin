@@ -6756,6 +6756,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     }
     // Orca: an AFC printer's measured change times come with its filaments.
     wxGetApp().apply_measured_swap_times(*obj);
+    wxGetApp().suggest_klipper_limits(*obj);
     remove_broken_mixed_filaments();
     offer_mixed_filaments();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "begin pop_finsish_sync_ams_dialog";
@@ -8059,6 +8060,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     //BBS: add bed_exclude_area
     , config(Slic3r::DynamicPrintConfig::new_from_defaults_keys({
         "printable_area", "bed_exclude_area", "bed_exclude_volumes", "bed_exclude_volume_mode", "extruder_bed_exclude_volumes", "extruder_offset",
+        "afc_keep_off_spots", "afc_bed_keepouts",
         "wrapping_exclude_area", "extruder_printable_area", "bed_custom_texture", "bed_custom_model", "print_sequence",
         "extruder_clearance_radius",
         "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
@@ -21930,7 +21932,8 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         if (opt_key == "bed_exclude_volume_mode" || opt_key == "bed_exclude_area" ||
             opt_key == "bed_exclude_volumes" || opt_key == "extruder_bed_exclude_volumes" || opt_key == "extruder_offset" ||
             opt_key == "master_extruder_id" || opt_key == "nozzle_diameter" ||
-            opt_key == "printable_height" || opt_key == "extruder_colour")
+            opt_key == "printable_height" || opt_key == "extruder_colour" ||
+            opt_key == "afc_keep_off_spots" || opt_key == "afc_bed_keepouts")
             exclusion_preview_changed = true;
 
         if (opt_key == "printer_technology") {
@@ -21946,6 +21949,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         //BBS: add bed_exclude_area
         else if (opt_key == "printable_area" || opt_key == "bed_exclude_volume_mode" || opt_key == "bed_exclude_area"
             || opt_key == "bed_exclude_volumes" || opt_key == "extruder_bed_exclude_volumes" || opt_key == "extruder_offset"
+            || opt_key == "afc_keep_off_spots" || opt_key == "afc_bed_keepouts"
             || opt_key == "bed_custom_texture" || opt_key == "bed_custom_model"
             || opt_key == "extruder_clearance_height_to_lid"
             || opt_key == "extruder_clearance_height_to_rod") {
