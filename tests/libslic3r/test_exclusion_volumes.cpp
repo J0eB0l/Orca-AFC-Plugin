@@ -468,7 +468,8 @@ TEST_CASE("AFC's spots are full-height shared keep-outs only while switched on",
         REQUIRE(groups.size() == 2);
         REQUIRE(groups[0].size() == 4);
         REQUIRE(groups[1].size() == 4);
-        for (size_t i = 1; i < 3; ++i) {
+        // The shared area and the collision volume come first, then the spots.
+        for (size_t i = 2; i < 4; ++i) {
             CHECK(groups[0][i].is_printer_spot());
             CHECK_FALSE(groups[0][i].is_collision_volume());
             CHECK_FALSE(groups[0][i].has_z_range);
