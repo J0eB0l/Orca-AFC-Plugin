@@ -749,6 +749,8 @@ public:
         int              spool_id {0};
         int              nozzle_temp {0};
         int              bed_temp {0};
+        // False while its unit's link to the printer is down (a BridgeBox or ACE unit unplugged).
+        bool             online {true};
     };
     // Orca: a printer agent's units (afc_units) and the seconds a lane change takes on each, measured in
     // AFC.log or the agent's own figure for the kind of unit, for the suggested spool layout.

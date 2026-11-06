@@ -3494,6 +3494,7 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         lane.spool_id    = item.value("spool_id", 0);
                         lane.nozzle_temp = item.value("nozzle_temp", 0);
                         lane.bed_temp    = item.value("bed_temp", 0);
+                        lane.online      = item.value("online", true);
                         agent_lanes.push_back(std::move(lane));
                     }
                 }

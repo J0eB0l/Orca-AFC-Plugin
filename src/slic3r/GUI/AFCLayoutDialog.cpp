@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <boost/algorithm/string/predicate.hpp>
 #include <cstddef>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -92,7 +93,10 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         return false;
     }
 
-    out.agent_lanes = obj.agent_lanes;
+    // A unit that is not connected (set up but unplugged) has no lanes to load or move spools into.
+    out.agent_lanes.clear();
+    std::copy_if(obj.agent_lanes.begin(), obj.agent_lanes.end(), std::back_inserter(out.agent_lanes),
+                 [](const MachineObject::AgentLane& lane) { return lane.online; });
     std::map<std::string, double> unit_seconds;
     {
         std::vector<std::string> names;
