@@ -2010,7 +2010,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionString,             bed_exclude_volumes))
     ((ConfigOptionEnum<BedExcludeVolumeMode>, bed_exclude_volume_mode))
     ((ConfigOptionStrings,            extruder_bed_exclude_volumes))
-    // Orca: AFC's purge, kick and brush spots on the bed, kept free of parts when afc_keep_off_spots is on.
+    // Orca: AFC's purge, kick, cutter and brush spots on the bed, kept free of parts when afc_keep_off_spots is on.
     ((ConfigOptionBool,               afc_keep_off_spots))
     ((ConfigOptionString,             afc_bed_keepouts))
     ((ConfigOptionPoints,             head_wrap_detect_zone))
@@ -2565,7 +2565,7 @@ struct BedExcludeRegion {
     enum class Purpose {
         MaterialKeepout,
         CollisionVolume,
-        // Orca: a spot the printer's own macros use on the bed (AFC's purge, kick and brush), kept free
+        // Orca: a spot the printer's own macros use on the bed (AFC's purge, kick, cutter and brush), kept free
         // like a material keep-out and drawn on the plate.
         PrinterSpot
     };

@@ -1256,8 +1256,8 @@ void PrintConfigDef::init_common_params()
 
     def = this->add("afc_keep_off_spots", coBool);
     def->label = L("Keep parts off AFC's spots");
-    def->tooltip = L("Treats the spots on the bed where AFC purges, kicks the purged filament away and brushes the "
-                     "nozzle, as the printer's AFC macros set them, like the excluded bed area: the plate shows them, "
+    def->tooltip = L("Treats the spots on the bed where AFC purges, kicks the purged filament away, cuts the filament "
+                     "and brushes the nozzle, as the printer's AFC macros set them, like the excluded bed area: the plate shows them, "
                      "arranging keeps parts off them and a part placed on one is reported. Filament sync reads the "
                      "spots from the printer.");
     def->mode = comAdvanced;
