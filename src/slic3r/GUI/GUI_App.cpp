@@ -3247,32 +3247,46 @@ static void install_bundled_plugins(PluginManager& plugin_mgr, AppConfig& app_co
         if (app_config.get("bundled_plugins", key) == shipped.version)
             continue;
 
-        // The installed copy is the one under the same key, or a local plugin of the same name the user
-        // put in from a differently named wheel.
-        std::optional<PluginDescriptor> installed;
+        // The installed copies are the one under the same key and any local plugin of the same name the user
+        // put in from a differently named wheel. Any of them at the shipped version or newer is left alone.
+        std::vector<PluginDescriptor> copies;
         for (const PluginDescriptor& plugin : plugin_mgr.get_plugin_descriptors(true))
             if (!plugin.is_cloud_plugin() && !plugin.plugin_root.empty() &&
-                (plugin.plugin_key == key || (!installed && plugin.name == shipped.name)))
-                installed = plugin;
+                (plugin.plugin_key == key || plugin.name == shipped.name))
+                copies.push_back(plugin);
         const auto shipped_version = Semver::parse(shipped.version);
-        if (installed) {
-            const auto installed_version = Semver::parse(installed->installed_version.empty() ? installed->version :
-                                                                                                installed->installed_version);
-            if (installed_version && shipped_version && *installed_version >= *shipped_version) {
-                app_config.set("bundled_plugins", key, shipped.version);
-                continue;
-            }
-        }
-
-        PluginInstallState kept;
-        const bool keep_state = installed && read_install_state(fs::path(installed->plugin_root), kept);
-        // An older copy the user put in from a differently named wheel goes first: left beside the shipped
-        // one, the same plugin would load twice, and kept instead, the user never gets the newer version.
-        if (installed && installed->plugin_key != key && !plugin_mgr.delete_plugin(installed->plugin_key, error)) {
-            BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " could not replace " << installed->plugin_key
-                                     << ": " << error;
+        const bool up_to_date = std::any_of(copies.begin(), copies.end(), [&](const PluginDescriptor& plugin) {
+            const auto version = Semver::parse(plugin.installed_version.empty() ? plugin.version : plugin.installed_version);
+            return version && shipped_version && *version >= *shipped_version;
+        });
+        if (up_to_date) {
+            app_config.set("bundled_plugins", key, shipped.version);
             continue;
         }
+
+        // The shipped copy takes the state of the copy the user runs: the enabled one, else the one it replaces.
+        PluginInstallState kept;
+        bool               keep_state = false;
+        for (const bool enabled_only : {true, false})
+            for (const PluginDescriptor& plugin : copies) {
+                PluginInstallState state;
+                if (keep_state || (!enabled_only && plugin.plugin_key != key) ||
+                    !read_install_state(fs::path(plugin.plugin_root), state) || (enabled_only && !state.enabled))
+                    continue;
+                kept       = state;
+                keep_state = true;
+            }
+        // Older copies the user put in from differently named wheels go first: left beside the shipped one,
+        // the same plugin would load twice and the user could stay on an old copy.
+        bool removed = true;
+        for (const PluginDescriptor& plugin : copies)
+            if (plugin.plugin_key != key && !plugin_mgr.delete_plugin(plugin.plugin_key, error)) {
+                BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " could not replace " << plugin.plugin_key
+                                         << ": " << error;
+                removed = false;
+            }
+        if (!removed)
+            continue;
         PluginDescriptor descriptor;
         if (!plugin_mgr.install_plugin(entry.path(), descriptor, error)) {
             BOOST_LOG_TRIVIAL(error) << "Bundled plugin " << key << " failed to install: " << error;
