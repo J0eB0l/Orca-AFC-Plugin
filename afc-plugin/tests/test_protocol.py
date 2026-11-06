@@ -5,7 +5,7 @@ import copy
 import unittest
 
 import fake_orca  # noqa: F401  (puts orca_afc on the path)
-from orca_afc import protocol as p
+from orca_afc import protocol as p, trays
 from orca_afc.protocol import AFCError, Lane, Snapshot, U1PrintOptions
 
 
@@ -405,6 +405,15 @@ class DryerTest(unittest.TestCase):
         p.merge_dryer_status({"AFC_BambuAMS Bambu_AMS_1": {"has_heater": False, "ams_model": "lite"}}, s)
         self.assertIsNotNone(s.find_unit("Bambu_AMS_1").dryer)
         self.assertEqual(s.find_unit("Bambu_AMS_1").model, "lite")  # its model is still read
+        self.assertTrue(s.find_unit("Bambu_AMS_1").online)
+        # A unit whose bridge is down has no spools to offer, heater or not.
+        p.merge_dryer_status({"AFC_BambuAMS Bambu_AMS_1": {"has_heater": False, "bridge_online": False}}, s)
+        self.assertFalse(s.find_unit("Bambu_AMS_1").online)
+        p.merge_dryer_status({"AFC_ACE2 Ace2_1": {"ace_connected": False}}, s)
+        self.assertFalse(s.find_unit("Ace2_1").online)
+        lanes = {lane["name"]: lane for lane in trays.lanes_json(s, trays.Layout([]))}
+        self.assertFalse(any(lane["online"] for lane in lanes.values() if lane["unit"] in ("Bambu_AMS_1", "Ace2_1")))
+        self.assertTrue(all(lane["online"] for lane in lanes.values() if lane["unit"] == "Turtle_1"))
         self.assertEqual(p.to_json(s)["units"][0]["dryer"]["kind"], "ace")
 
     def test_first_ace_minutes_and_cap(self):

@@ -400,9 +400,11 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
     grams (-1 unknown), toolhead, the lane it runs out onto ("" for none), the
     lanes with the same filament (runout.same_filament()) and where the
     Device tab shows it, and its T numbers, Spoolman spool (0 none) and
-    temperatures (0 unknown)."""
+    temperatures (0 unknown), and whether its unit is connected (a BridgeBox
+    or ACE unit whose link is down has no spools to offer)."""
     out = []
     for lane in snapshot.lanes:
+        unit = snapshot.find_unit(lane.unit)
         ams_id, slot_id = shown.place(lane)
         same = [other.name for other in snapshot.lanes if other is not lane and runout.same_filament(lane, other)]
         out.append({"name": lane.name, "unit": lane.unit, "color": _color(lane.color), "type": lane.material,
@@ -413,7 +415,8 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
                     "ams_id": ams_id, "slot_id": slot_id,
                     # For the suggested spool layout, which writes a moved spool's lane back to AFC.
                     "tools": [tool_number(m) for m in lane.maps if tool_number(m) >= 0],
-                    "spool_id": lane.spool_id, "nozzle_temp": lane.nozzle_temp, "bed_temp": lane.bed_temp})
+                    "spool_id": lane.spool_id, "nozzle_temp": lane.nozzle_temp, "bed_temp": lane.bed_temp,
+                    "online": unit.online if unit else True})
     return out
 
 

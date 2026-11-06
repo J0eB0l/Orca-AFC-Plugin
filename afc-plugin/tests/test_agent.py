@@ -800,7 +800,8 @@ class DeviceTabTest(Case):
         self.assertEqual(lanes["lane2"], {"name": "lane2", "unit": "Turtle_1", "color": "00FF00FF", "type": "PETG",
                                           "family": "PETG", "remain_g": 40, "toolhead": 0, "extruder": "extruder", "loaded": True,
                                           "in_tool": False, "runout": "", "same": [], "ams_id": 0, "slot_id": 1,
-                                          "tools": [1], "spool_id": 12, "nozzle_temp": 215, "bed_temp": 60})
+                                          "tools": [1], "spool_id": 12, "nozzle_temp": 215, "bed_temp": 60,
+                                          "online": True})
         self.assertEqual((lanes["lane5"]["runout"], lanes["lane5"]["ams_id"], lanes["lane5"]["slot_id"]), ("lane1", 1, 0))
         # The tray shows the lane it runs out onto.
         self.assertEqual(push["ams"]["ams"][1]["tray"][0]["runout"], "lane1")

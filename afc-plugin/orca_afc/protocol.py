@@ -88,6 +88,7 @@ class Unit:
     lanes: list = field(default_factory=list)  # lane names in AFC order
     dryer: Dryer | None = None
     model: str = ""           # a Bambu unit's ams_model, e.g. "lite", from its own Klipper object
+    online: bool = True       # an ACE or BridgeBox unit's link to the printer, from its own Klipper object
 
 
 @dataclass
@@ -652,6 +653,7 @@ def merge_dryer_status(status, out: Snapshot) -> None:
             d.kind = "ace"
             d.model = prefix
             d.online = _bool(o, "ace_connected") if o.get("ace_connected") is not None else True
+            unit.online = d.online
             d.state = _str(o, "ace_dryer")
             state = d.state.upper()
             d.drying = bool(state) and state not in ("STOP", "STOPPED", "STOPPING", "IDLE") and "ERROR" not in state
@@ -668,6 +670,7 @@ def merge_dryer_status(status, out: Snapshot) -> None:
                 d.note = "Dryer reports " + d.state
         elif _is_bambu(prefix):
             unit.model = _str(o, "ams_model")
+            unit.online = _bool(o, "bridge_online") if o.get("bridge_online") is not None else True
             if "has_heater" in o and not _bool(o, "has_heater"):
                 continue  # AMS 1 / AMS lite: no heater
             d.kind = "bambu"
