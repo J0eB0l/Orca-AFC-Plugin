@@ -38,10 +38,8 @@ jobs:
         env:
           PUBLISHER: ${{ vars.RELEASE_PUBLISHER }}
         run: |
-          if [ -z "$PUBLISHER" ]; then
-            echo "::error::RELEASE_PUBLISHER repo variable is not set."
-            exit 1
-          fi
+          # Orca: a copy of the repo without the variable lets its owner publish.
+          PUBLISHER="${PUBLISHER:-${{ github.repository_owner }}}"
           if [ "${{ github.actor }}" != "$PUBLISHER" ]; then
             echo "::error::Only @$PUBLISHER may run this workflow (you are @${{ github.actor }})."
             exit 1
@@ -51,8 +49,11 @@ jobs:
       - name: Verify target is a draft release
         run: |
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1; then
-            echo "::error::Release '$TAG' not found. Create the draft (with this tag) first."
-            exit 1
+            # Orca: start the draft at the build's commit; the tag is made when the release is published.
+            sha=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$sha" \
+              --title "$TAG" --notes "Built by run $RUN_ID from $sha."
+            echo "Created draft release $TAG at $sha"
           fi
           is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
           if [ "$is_draft" != "true" ]; then
