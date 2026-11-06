@@ -2,11 +2,13 @@
 AFC_KICK pushes the purged filament along and the brush AFC_BRUSH wipes the
 nozzle on, as full-height areas in OrcaSlicer's bed_exclude_volumes format
 ("XxY, XxY, ... | ..."). The AFC build of OrcaSlicer keeps parts off them when
-"Keep parts off AFC's spots" is ticked (afc_keepouts in push_status).
+"Keep parts off AFC's spots" is ticked (afc_keepouts in push_status). The cutter
+path counts too (AFC_CUT moves to the pin and pushes into it at the print's
+height).
 
 Each macro reads its _AFC_<NAME>_VARS, updated by _AFC_<NAME>_VARS_<extruder>
 for that extruder, so every set of variables gives a spot. A spot is left out
-when AFC.cfg turns the macro off (poop, kick, wipe) or its location is still
+when AFC.cfg turns the macro off (poop, kick, wipe, tool_cut) or its location is still
 AFC's placeholder (-99), and is clipped to the axes' range from 0 up, where
 OrcaSlicer's bed is."""
 
@@ -14,10 +16,11 @@ import re
 
 MARGIN = 15.0        # mm around the purge spot and the kick path: the blob and the nozzle around it
 BRUSH_MARGIN = 5.0   # mm around the brush
+CUT_MARGIN = 10.0    # mm around the cutter path: the nozzle and the cutter lever
 
-MACROS = ("POOP", "KICK", "BRUSH")
-FLAGS = {"POOP": "poop", "KICK": "kick", "BRUSH": "wipe"}  # AFC.cfg's switch for each
-_NAME = re.compile(r"gcode_macro _AFC_(POOP|KICK|BRUSH)_VARS(_\S+)?", re.IGNORECASE)
+MACROS = ("POOP", "KICK", "BRUSH", "CUT_TIP")
+FLAGS = {"POOP": "poop", "KICK": "kick", "BRUSH": "wipe", "CUT_TIP": "tool_cut"}  # AFC.cfg's switch for each
+_NAME = re.compile(r"gcode_macro _AFC_(POOP|KICK|BRUSH|CUT_TIP)_VARS(_\S+)?", re.IGNORECASE)
 _DIRECTIONS = {"left": (-1, 0), "right": (1, 0), "front": (0, -1), "back": (0, 1)}
 
 
@@ -62,6 +65,16 @@ def spot(kind: str, variables: dict):
             return None
         dist = _number(variables.get("kick_move_dist"), 45.0)
         return _box(at[0], at[1], at[0] + step[0] * dist, at[1] + step[1] * dist, MARGIN)
+    if kind == "CUT_TIP":
+        # AFC_CUT parks pin_park_dist before the pin, then pushes cut_move_dist past it in cut_direction.
+        at = _point(variables.get("pin_loc_xy")) or _point([variables.get("pin_loc_x", -99), variables.get("pin_loc_y", -99)])
+        step = _DIRECTIONS.get(str(variables.get("cut_direction") or "").lower())
+        if not at or not step:
+            return None
+        park = _number(variables.get("pin_park_dist"), 6.0)
+        cut = _number(variables.get("cut_move_dist"), 0.0)
+        return _box(at[0] - step[0] * park, at[1] - step[1] * park, at[0] + step[0] * cut, at[1] + step[1] * cut,
+                    CUT_MARGIN)
     if kind == "BRUSH":
         at = _point(variables.get("brush_loc"))
         if not at:

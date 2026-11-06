@@ -5,6 +5,7 @@ import fake_orca  # noqa: F401
 from orca_afc import keepouts
 
 AFC = {"poop": True, "kick": True, "wipe": True}
+AFC_CUT = dict(AFC, tool_cut=True)
 POOP = {"purge_loc_xy": [345, 345]}
 KICK = {"kick_start_loc": [285, 345, 5], "kick_direction": "right", "kick_move_dist": 60}
 BRUSH = {"brush_loc": [100, 20, 0.9], "brush_width": 30, "brush_depth": 10}
@@ -16,9 +17,10 @@ def status(**macros):
 
 class BedKeepoutsTest(unittest.TestCase):
     def test_macro_objects(self):
-        names = ["gcode_macro _AFC_POOP_VARS", "gcode_macro _AFC_KICK_VARS_extruder1", "gcode_macro _AFC_PARK_VARS",
+        names = ["gcode_macro _AFC_POOP_VARS", "gcode_macro _AFC_KICK_VARS_extruder1", "gcode_macro _AFC_CUT_TIP_VARS",
+                 "gcode_macro _AFC_PARK_VARS",
                  "gcode_macro _CTC_PURGE_VARS", "extruder"]
-        self.assertEqual(keepouts.macro_objects(names), names[:2])
+        self.assertEqual(keepouts.macro_objects(names), names[:3])
 
     def test_kick_path_holds_the_purge_spot(self):
         # Printer 1: the purge spot sits inside the kick path, both clipped to the axes.
@@ -40,6 +42,16 @@ class BedKeepoutsTest(unittest.TestCase):
         # Printer 1's brush sits in front of the bed.
         brush = {"brush_loc": [232.85, -7.5, 0.9], "brush_width": 30, "brush_depth": 2}
         self.assertEqual(keepouts.bed_keepouts(status(brush=brush), AFC, [353.8, 351]), "")
+
+    def test_cutter_path(self):
+        # Printer 1: the pin at the left edge, cut toward the back, parked 15 mm in front of it.
+        cut = {"pin_loc_xy": [2, 175.5], "cut_direction": "back", "pin_park_dist": 15.0, "cut_move_dist": 13.5}
+        self.assertEqual(keepouts.bed_keepouts(status(cut_tip=cut), AFC_CUT, [353.8, 351]),
+                         "0x150.5, 12x150.5, 12x199, 0x199")
+        self.assertEqual(keepouts.bed_keepouts(status(cut_tip=cut), AFC, [353.8, 351]), "")
+        split = {"pin_loc_x": 300, "pin_loc_y": 20, "cut_direction": "right", "cut_move_dist": 5}
+        self.assertEqual(keepouts.bed_keepouts(status(cut_tip=split), AFC_CUT, [350, 350]),
+                         "284x10, 315x10, 315x30, 284x30")
 
     def test_toolhead_override(self):
         macros = status(poop=POOP)
