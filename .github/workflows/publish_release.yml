@@ -48,27 +48,38 @@ jobs:
 
       - name: Verify target is a draft release
         run: |
+          # Orca: start the draft at the build's commit; the tag is made when the release is published.
+          # The workflow token may not point a release at a commit whose workflow files no branch has,
+          # so when only .github/ changed since the build, the draft starts at the branch tip instead.
+          make_draft() {
+            local built tip only_ci at
+            built=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
+            tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headBranch --jq '.headBranch')" --jq '.sha')
+            at="$built"
+            if [ "$tip" != "$built" ]; then
+              only_ci=$(gh api "repos/$GITHUB_REPOSITORY/compare/$built...$tip" --jq '[.files[].filename | startswith(".github/")] | all')
+              [ "$only_ci" = "true" ] && at="$tip"
+            fi
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$at" \
+              --title "$TAG" --notes "Built by run $RUN_ID from $built."
+            echo "Created draft release $TAG at $at (built from $built)"
+          }
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/dev/null 2>&1; then
-            # Orca: start the draft at the build's commit; the tag is made when the release is published.
-            sha=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$sha" \
-              --title "$TAG" --notes "Built by run $RUN_ID from $sha."
-            echo "Created draft release $TAG at $sha"
+            make_draft
           fi
           is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
           if [ "$is_draft" != "true" ]; then
             echo "::error::Release '$TAG' is published, not a draft. Aborting to avoid touching a live release."
             exit 1
           fi
-          # Orca: a draft re-filled from a newer build must point at that build's commit. The workflow
-          # token may not move a release's target, so a draft made for another commit is made again.
+          # Orca: a draft re-filled from another build is made again for it, since the workflow token may
+          # not move a release's target.
           sha=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
-          target=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft and .name == \"$TAG\") | .target_commitish" | head -1)
-          if [ -n "$target" ] && [ "$target" != "$sha" ]; then
+          notes=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft and .name == \"$TAG\") | .body" | head -1)
+          # Only a draft still carrying this workflow's notes: one whose notes were written by hand is kept.
+          if [[ "$notes" == "Built by run "* && "$notes" != *" from $sha." ]]; then
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$sha" \
-              --title "$TAG" --notes "Built by run $RUN_ID from $sha."
-            echo "Made draft release $TAG again at $sha (was $target)"
+            make_draft
           fi
 
       - name: Verify source build run
