@@ -1491,6 +1491,11 @@ else:
                     extra["spool"] = trays.spool_json(lane, names, base)
                 if lane.name in picked:
                     extra["filament_preset"] = picked[lane.name]
+                elif not names and base:
+                    # A spool with nothing to name its own preset gets the best fit, mostly
+                    # "Generic <material>", as the sync's pick: matched by id instead, the sync lists
+                    # it as an unknown filament falling back on a generic preset.
+                    extra["filament_preset"] = base
                 extras[tray] = extra
             return ids, extras
 

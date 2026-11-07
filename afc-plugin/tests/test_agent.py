@@ -501,6 +501,15 @@ class DeviceTabTest(Case):
                          ("Polymaker", 215, 60, -1.0))
         self.assertNotIn("filament_preset", ams["ams"][0]["tray"][0])
 
+    def test_spool_with_nothing_to_name_gets_the_generic_preset(self):
+        """A plain spool syncs as the best fit by name, so the sync lists no unknown filament."""
+        lane = self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane1"]
+        lane.update(spool_vendor="", filament_name="", spool_id=None, extruder_temp=0, bed_temp=0)
+        self.connect()
+        tray = self.push()["ams"]["ams"][0]["tray"][0]
+        self.assertNotIn("spool", tray)
+        self.assertTrue(tray["filament_preset"].startswith("Generic PLA"), tray["filament_preset"])
+
     def test_popup_sets_the_lane_and_keeps_the_preset(self):
         self.connect()
         self.push()
