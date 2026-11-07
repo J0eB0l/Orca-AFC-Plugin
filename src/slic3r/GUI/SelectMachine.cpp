@@ -2818,6 +2818,31 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
         has_slice_warnings = true;
     }
 
+    // Orca AFC: printers outside the Bambu network have no model id to compare, so a plate sliced with
+    // one printer's preset could go to another printer and run that preset's start G-code there. Warn
+    // when the selected printer is set up in another visible printer preset.
+    if (m_print_type == PrintFromType::FROM_NORMAL && !wxGetApp().preset_bundle->use_bbl_network()) {
+        const PresetCollection& printers = wxGetApp().preset_bundle->printers;
+        auto prints_to_selected = [obj_](const Preset& preset) {
+            const auto* host = preset.config.option<ConfigOptionString>("print_host");
+            const auto* port = preset.config.option<ConfigOptionString>("printhost_port");
+            return host && !host->value.empty() &&
+                   MachineObject::dev_id_from_address(host->value, port ? port->value : std::string()) == obj_->get_dev_id();
+        };
+        const Preset& sliced = printers.get_edited_preset();
+        if (!prints_to_selected(sliced)) {
+            for (const Preset& preset : printers) {
+                if (preset.is_visible && preset.name != sliced.name && prints_to_selected(preset)) {
+                    // TRN %1% is the printer preset the plate was sliced with, %2% the one set up for the selected printer.
+                    confirm_text.push_back(ConfirmBeforeSendInfo(format_wxstr(_L("This plate was sliced with the printer preset \"%1%\", but the selected printer is set up in \"%2%\". Its start G-code and settings may not suit this printer."),
+                                                                              sliced.label(false), preset.label(false))));
+                    has_slice_warnings = true;
+                    break;
+                }
+            }
+        }
+    }
+
     //check blacklist
     for (auto i = 0; i < m_ams_mapping_result.size(); i++) {
 
