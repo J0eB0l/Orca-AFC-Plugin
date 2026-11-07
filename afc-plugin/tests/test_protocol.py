@@ -77,6 +77,15 @@ class WebhookTest(unittest.TestCase):
         self.assertIsNone(s.lane_for_tool(3))
         self.assertEqual(s.max_tool(), 5)
 
+    def test_td1_color(self):
+        """A TD-1 scan's color wins over the lane's own, as AFC's get_color() does."""
+        f = webhook_fixture()
+        f["status:"]["AFC"]["Turtle_1"]["lane1"]["td1_color"] = "1e90ff"
+        f["status:"]["AFC"]["Turtle_1"]["lane2"]["td1_color"] = ""
+        s = parsed(f)
+        self.assertEqual(s.find_lane("lane1").color, "#1E90FF")
+        self.assertEqual(s.find_lane("lane2").color, "#00FF00")
+
     def test_filament_id(self):
         fixture = webhook_fixture()
         lanes = fixture["status:"]["AFC"]["Turtle_1"]

@@ -291,7 +291,8 @@ def _fill_lane(st: dict, lane: Lane) -> None:
     lane.extruder_index = extruder_index_from_name(lane.extruder)
     if "map" in st:
         lane.maps.extend(m for m in _string_list(st["map"]) if m != "NONE")
-    lane.color = normalize_color(_str(st, "color"))
+    # A TD-1 scan wins over the lane's own color, as in AFC's AFCLane.get_color().
+    lane.color = normalize_color(_str(st, "td1_color")) or normalize_color(_str(st, "color"))
     if "multi_color_hexes" in st:
         lane.multi_colors.extend(c for c in map(normalize_color, _string_list(st["multi_color_hexes"])) if c)
     lane.material = _str(st, "material")
