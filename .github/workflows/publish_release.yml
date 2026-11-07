@@ -60,6 +60,9 @@ jobs:
             echo "::error::Release '$TAG' is published, not a draft. Aborting to avoid touching a live release."
             exit 1
           fi
+          # Orca: a draft re-filled from a newer build points at that build's commit.
+          sha=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$sha" --notes "Built by run $RUN_ID from $sha."
 
       - name: Verify source build run
         run: |
