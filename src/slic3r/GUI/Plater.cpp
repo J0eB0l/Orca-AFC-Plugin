@@ -1104,7 +1104,9 @@ void Sidebar::priv::layout_printer(bool isBBL, bool isDual)
     }
 
     //btn_connect_printer->Show(!isBBL);
-    m_printer_connect->Show(!isBBL);
+    // Orca AFC: printer agents still take the printer's address from its print host, so the Connection
+    // button stays for every printer off the Bambu network, printer agents on or not.
+    m_printer_connect->Show(!wxGetApp().preset_bundle->use_bbl_network());
     //btn_sync_printer->Show(isBBL);
     m_printer_bbl_sync->Show(isBBL);
 
@@ -3843,8 +3845,8 @@ void Sidebar::update_all_preset_comboboxes()
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
         //p->btn_connect_printer->Show();
-        // ORCA: hide the physical-printer connection button when printer agents are enabled
-        p->m_printer_connect->Show(!use_printer_agents);
+        // Orca AFC: kept with printer agents too, which still read the print host (see layout_printer).
+        p->m_printer_connect->Show();
 
         // ORCA: show/hide sync-ams button based on filament sync mode
         auto agent = wxGetApp().getAgent();
@@ -4029,8 +4031,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 
         bool isBBL = preset_bundle.is_bbl_vendor();
         bool is_dual_extruder = extruder_variants->size() == 2;
-        // why: agent mode drives the native device tab, so the sidebar lays out like BBL
-        // (no physical-printer connect button).
+        // why: agent mode drives the native device tab, so the sidebar lays out like BBL.
         p->layout_printer(preset_bundle.use_bbl_network() || wxGetApp().use_printer_agents(),
                           isBBL && is_dual_extruder);
 
