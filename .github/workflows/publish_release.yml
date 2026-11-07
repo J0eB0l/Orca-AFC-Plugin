@@ -60,9 +60,16 @@ jobs:
             echo "::error::Release '$TAG' is published, not a draft. Aborting to avoid touching a live release."
             exit 1
           fi
-          # Orca: a draft re-filled from a newer build points at that build's commit.
+          # Orca: a draft re-filled from a newer build must point at that build's commit. The workflow
+          # token may not move a release's target, so a draft made for another commit is made again.
           sha=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha --jq '.headSha')
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$sha" --notes "Built by run $RUN_ID from $sha."
+          target=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft and .name == \"$TAG\") | .target_commitish" | head -1)
+          if [ -n "$target" ] && [ "$target" != "$sha" ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease --target "$sha" \
+              --title "$TAG" --notes "Built by run $RUN_ID from $sha."
+            echo "Made draft release $TAG again at $sha (was $target)"
+          fi
 
       - name: Verify source build run
         run: |
