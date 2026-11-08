@@ -824,13 +824,23 @@ def to_json(s: Snapshot) -> dict:
 
 # ------------------------------------------------------------------ G-code from the page
 
-_EDIT_ORDER = ("spool_id", "map", "material", "filament_id", "color", "weight", "nozzle_temp", "bed_temp")
+_EDIT_ORDER = ("spool_id", "map", "material", "filament_id", "vendor", "filament_name", "color", "weight",
+               "nozzle_temp", "bed_temp")
+
+
+def is_safe_text(v, max_len: int = 64) -> bool:
+    """A vendor or filament name AFC may take in quotes: words, spaces and a few
+    marks, never a quote, a backslash or what ends a G-code line's arguments
+    (; # *). Empty is allowed: it clears the field."""
+    return isinstance(v, str) and len(v) <= max_len and re.fullmatch(r"[\w .+\-()&/,!]*", v) is not None
 
 
 def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> list:
     """G-code for a lane edit from the AFC page. `changes` may hold color
-    ("#RRGGBB"), material, filament_id (OrcaSlicer's, "" clears), weight (g),
-    spool_id (0 clears), map ("T5"), nozzle_temp, bed_temp. Values are checked and never interpolated raw."""
+    ("#RRGGBB"), material, filament_id (OrcaSlicer's, "" clears), vendor and
+    filament_name (one SET_FILAMENT_INFO; "" clears, a field left out stays),
+    weight (g), spool_id (0 clears), map ("T5"), nozzle_temp, bed_temp.
+    Values are checked and never interpolated raw."""
     if not is_safe_lane_name(lane_name) or snapshot.find_lane(lane_name) is None:
         raise AFCError("unknown lane")
     if not isinstance(changes, dict) or not changes:
@@ -860,6 +870,17 @@ def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> 
             if not isinstance(val, str) or (val and not _safe_value(val, 64)):
                 raise AFCError("filament id may only use letters, digits and + - _ .")
             out.append("SET_FILAMENT_ID" + lane_arg + (" ID=" + val if val else ""))
+        elif key in ("vendor", "filament_name"):
+            if key == "filament_name" and "vendor" in changes:
+                continue  # went out with the vendor
+            line = "SET_FILAMENT_INFO" + lane_arg
+            for field_name, param in (("vendor", "VENDOR"), ("filament_name", "NAME")):
+                if field_name in changes:
+                    text = changes[field_name]
+                    if not is_safe_text(text):
+                        raise AFCError(field_name.replace("_", " ") + " may only use letters, digits, spaces and + - _ . ( ) & / , !")
+                    line += " %s=\"%s\"" % (param, text)
+            out.append(line)
         elif key == "weight":
             if not _is_number(val) or val < 0 or val > 100000:
                 raise AFCError("weight must be 0-100000 g")

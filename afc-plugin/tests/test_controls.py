@@ -148,6 +148,26 @@ class TrayTest(unittest.TestCase):
                          ["SET_MATERIAL LANE=lane1 MATERIAL=PETG", "SET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8"])
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OF x;M112"}, True), [])
 
+    def test_popup_names_the_spool_where_afc_keeps_it(self):
+        lane1 = self.snap.lanes[0]
+        lane1.spool_id, lane1.vendor, lane1.filament_name = 0, "", ""
+        request = {"tray_info_idx": "OF5CgdDq", "tray_type": "PLA"}
+        info = ("Polymaker", "PolyLite PLA")
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, info),
+                         ['SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyLite PLA"'])
+        # Only what differs, and nothing for an unknown vendor (None) or a name AFC cannot take.
+        lane1.vendor = "Polymaker"
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, info),
+                         ['SET_FILAMENT_INFO LANE=lane1 NAME="PolyLite PLA"'])
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, (None, "My PLA")),
+                         ['SET_FILAMENT_INFO LANE=lane1 NAME="My PLA"'])
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, ("Polymaker", 'x";M112')), [])
+        # A Spoolman spool is named by Spoolman, and a reset leaves the name alone.
+        lane1.spool_id = 7
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, info), [])
+        lane1.spool_id = 0
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": ""}, True, info), [])
+
     def test_popup_reset_clears_the_id_of_a_lane_without_a_spool(self):
         lane1 = self.snap.lanes[0]
         lane1.filament_id = "OFDSrzZ8"

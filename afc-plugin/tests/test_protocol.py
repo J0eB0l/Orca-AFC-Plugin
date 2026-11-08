@@ -313,6 +313,18 @@ class GcodeTest(unittest.TestCase):
                          ["SET_MATERIAL LANE=lane2 MATERIAL=PLA", "SET_FILAMENT_ID LANE=lane2 ID=OF5CgdDq"])
         self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": ""}), ["SET_FILAMENT_ID LANE=lane2"])
 
+    def test_lane_edit_filament_info(self):
+        s = parsed()
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_name": "PolyLite PLA", "vendor": "Polymaker",
+                                                              "color": "#00ff00"}),
+                         ['SET_FILAMENT_INFO LANE=lane2 VENDOR="Polymaker" NAME="PolyLite PLA"',
+                          "SET_COLOR LANE=lane2 COLOR=00FF00"])
+        # A field left out stays as AFC has it; an empty one clears.
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_name": "Generic PLA", "vendor": ""}),
+                         ['SET_FILAMENT_INFO LANE=lane2 VENDOR="" NAME="Generic PLA"'])
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_name": "PLA Basic (Jade White)"}),
+                         ['SET_FILAMENT_INFO LANE=lane2 NAME="PLA Basic (Jade White)"'])
+
     def test_lane_edit_rejects(self):
         s = parsed()
         for lane, changes in (("lane2", {"material": "PLA\nM112"}), ("lane2", {"material": "PLA ;x"}),
@@ -320,7 +332,10 @@ class GcodeTest(unittest.TestCase):
                               ("lane2", {"color": "red"}), ("lane2", {"map": "T5 M112"}),
                               ("lane2", {"run": "M112"}), ("lane2", {}), ("lane2", {"weight": True}),
                               ("lane2", {"spool_id": 1.5}), ("lane2", {"nozzle_temp": 900}),
-                              ("lane2", {"filament_id": "OF x"}), ("lane2", {"filament_id": None})):
+                              ("lane2", {"filament_id": "OF x"}), ("lane2", {"filament_id": None}),
+                              ("lane2", {"vendor": 'Poly" X=1'}), ("lane2", {"filament_name": "PLA ;M112"}),
+                              ("lane2", {"filament_name": "PLA\nM112"}), ("lane2", {"vendor": "x" * 65}),
+                              ("lane2", {"vendor": None})):
             with self.subTest(lane=lane, changes=changes), self.assertRaises(AFCError):
                 p.build_lane_edit_gcode(s, lane, changes)
 

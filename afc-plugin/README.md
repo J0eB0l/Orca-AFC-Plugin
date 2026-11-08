@@ -164,7 +164,10 @@ Then:
   group turns this off.
 - On the Device tab, a tray's edit popup lists the printer's presets and sets
   the lane's color and material, which the tray shows at once; the preset picked there is what sync uses
-  until the lane gets another spool. In the AFC build of OrcaSlicer the popup
+  until the lane gets another spool. Where AFC has `SET_FILAMENT_INFO`, a lane
+  without a Spoolman spool also takes the preset's vendor and filament name
+  ("Polymaker", "PolyLite PLA"), so AFC's other screens show the spool by name
+  and AFC keeps it through a restart. In the AFC build of OrcaSlicer the popup
   also has the spool's Factor K, saved as its Spoolman `flow_k`. A lane
   without a Spoolman spool keeps its K in the plugin until OrcaSlicer closes,
   and sync and prints use it as they would a spool's. A tray's refresh button reads the spool's

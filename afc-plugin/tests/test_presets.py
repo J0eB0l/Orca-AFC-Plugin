@@ -255,5 +255,23 @@ class SpoolPresetNameTest(unittest.TestCase):
         self.assertEqual(presets.best(lane(vendor="Elegoo", product="Rapid"), RankTest.CANDIDATES), "Generic PLA @U1")
         self.assertEqual(presets.best(lane(material="ASA"), RankTest.CANDIDATES), "")
 
+
+class PickedSpoolInfoTest(unittest.TestCase):
+    CANDIDATES = [candidate("Polymaker PolyLite PLA @Voron", vendor="Polymaker"),
+                  candidate("Bambu PLA Basic @BBL X1C", vendor="Bambu Lab"),
+                  candidate("Generic PLA @System"),
+                  candidate("My Sunlu PLA", vendor="Sunlu")]
+
+    def test_vendor_and_name_as_spoolman_has_them(self):
+        info = lambda name: presets.picked_spool_info(name, self.CANDIDATES)
+        self.assertEqual(info("Polymaker PolyLite PLA @Voron"), ("Polymaker", "PolyLite PLA"))
+        self.assertEqual(info("Bambu PLA Basic @BBL X1C"), ("Bambu Lab", "PLA Basic"))
+        self.assertEqual(info("Generic PLA @System"), ("", "Generic PLA"))
+        self.assertEqual(info("My Sunlu PLA"), ("Sunlu", "My Sunlu PLA"))
+        # A preset the printer does not list: its vendor is unknown, so AFC keeps its own.
+        self.assertEqual(info("Elegoo PLA @Elegoo"), (None, "Elegoo PLA"))
+        self.assertEqual(info(""), (None, None))
+
+
 if __name__ == "__main__":
     unittest.main()

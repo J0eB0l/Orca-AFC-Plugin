@@ -538,12 +538,27 @@ class DeviceTabTest(Case):
         self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8\n"
                       "SET_COLOR LANE=lane1 COLOR=00FF00", self.fake.scripts)
 
+    def test_popup_names_a_plain_spool_in_afc(self):
+        self.fake.gcode_help[afc_agent.SET_FILAMENT_INFO] = "Sets filament vendor and name for a lane"
+        lane = self.fake.webhook["status:"]["AFC"]["Turtle_1"]["lane1"]
+        lane.update(spool_vendor="", filament_name="", spool_id=None)
+        self.connect()
+        self.push()
+        self.assertEqual(self.popup(tray_info_idx="OFDSrzZ8", filament_preset="Polymaker PolyLite PLA @Voron"), 0)
+        self.calls.messages("print", "push_status", 2)
+        self.assertIn('SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyLite PLA"', self.fake.scripts)
+        # AFC takes the name; the pick holds through it.
+        lane.update(spool_vendor="Polymaker", filament_name="PolyLite PLA")
+        tray = self.push(3)["ams"]["ams"][0]["tray"][0]
+        self.assertEqual(tray["filament_preset"], "Polymaker PolyLite PLA @Voron")
+
     def test_popup_sends_no_filament_id_to_an_afc_without_it(self):
         self.connect()
         self.push()
         self.assertEqual(self.popup(tray_info_idx="OFDSrzZ8"), 0)
         self.calls.messages("print", "push_status", 2)
-        self.assertFalse(any("SET_FILAMENT_ID" in script for script in self.fake.scripts))
+        self.assertFalse(any("SET_FILAMENT_ID" in script or "SET_FILAMENT_INFO" in script
+                             for script in self.fake.scripts))
 
     def test_preset_pick_ends_with_the_spool(self):
         self.connect()

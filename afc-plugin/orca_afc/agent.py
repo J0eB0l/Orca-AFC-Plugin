@@ -34,7 +34,7 @@ import time
 import traceback
 import urllib.parse
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import orca
 
@@ -666,6 +666,7 @@ _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)",
 
 
 SET_FILAMENT_ID = "SET_FILAMENT_ID"  # AFC keeps a lane's OrcaSlicer filament id
+SET_FILAMENT_INFO = "SET_FILAMENT_INFO"  # AFC keeps a lane's vendor and filament name without Spoolman
 FLOW_K_CALIBRATION = "AFC_CALIBRATE_LANE_FLOW_K"  # AFC autocal: measure the current lane's K and save it
 FLOW_K_NOTE = "AFC_autocal: "                     # how autocal answers it in the console
 _FLOW_K_STORED = re.compile(r"AFC_autocal: stored K=([0-9.]+) for (\S+)")
@@ -787,6 +788,7 @@ class _Printer:
     fans: list = field(default_factory=list)          # Klipper fans, for the fan popup (controls.find_fans())
     flow_calibration: bool = False                    # AFC autocal's FLOW_K_CALIBRATION command is there
     filament_ids: bool = False                        # AFC's SET_FILAMENT_ID is there (keeps a tray's preset id)
+    filament_info: bool = False                       # AFC's SET_FILAMENT_INFO is there (keeps a lane's vendor and name)
     chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
     readers: dict = field(default_factory=dict)       # RFID reader module -> {lane: slot}
@@ -794,7 +796,7 @@ class _Printer:
     by_unit: bool = False                             # OrcaSlicer syncs trays by the T number each reports: lay them out by AFC unit
     wide: bool = False                                # ... and reads the tray masks as 64 bits (trays.WIDE)
     dry_filaments: dict = field(default_factory=dict) # unit -> the filament the drying popup started it for
-    lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, spool_key())
+    lane_presets: dict = field(default_factory=dict)  # lane -> (preset picked in the tray popup, its spool_key()s)
     lane_k: dict = field(default_factory=dict)        # lane with no Spoolman spool -> (K set in the tray popup, spool_key(), autocal's K then)
     job: tuple = None                                 # (file, job_info(), when to ask again) of the print file
     camera: tuple = ("", "")                          # controls.camera(): the Device tab's camera mode and URL
@@ -1070,6 +1072,7 @@ else:
                 commands = printer.client.get("/printer/gcode/help")
                 printer.flow_calibration = isinstance(commands, dict) and FLOW_K_CALIBRATION in commands
                 printer.filament_ids = isinstance(commands, dict) and SET_FILAMENT_ID in commands
+                printer.filament_info = isinstance(commands, dict) and SET_FILAMENT_INFO in commands
             except MoonrakerError:
                 pass
             if not printer.model_id:
@@ -1469,9 +1472,9 @@ else:
             preset from, with the preset picked for the lane in the tray popup."""
             with self._lock:
                 candidates, cache = self._candidates, self._match
-                for name, (_, key) in list(printer.lane_presets.items()):
+                for name, (_, keys) in list(printer.lane_presets.items()):
                     lane = snapshot.find_lane(name)
-                    if lane is None or not lane.has_filament or spool_key(lane) != key:
+                    if lane is None or not lane.has_filament or spool_key(lane) not in keys:
                         del printer.lane_presets[name]
                 picked = {name: preset for name, (preset, _) in printer.lane_presets.items()}
             ids, extras = {}, {}
@@ -1766,15 +1769,21 @@ else:
         def _filament_setting(self, printer: _Printer, job: dict) -> int:
             """The tray popup: the lane takes its color and material, and the
             preset picked for it until it gets another spool (in AFC too, as
-            its filament id, where AFC has SET_FILAMENT_ID). A reset (no
+            its filament id, where AFC has SET_FILAMENT_ID, and as its vendor
+            and filament name, where AFC has SET_FILAMENT_INFO). A reset (no
             filament) drops the pick."""
             lane = controls.lane_of(printer.snapshot, self._layout(printer).tool(job.get("ams_id"), job.get("slot_id")))
             if lane is None:
                 return FAILED
             reset = not job.get("tray_info_idx")
             preset = job.get("filament_preset")
+            info = None
+            if printer.filament_info and not reset and isinstance(preset, str) and preset:
+                with self._lock:
+                    candidates = self._candidates
+                info = presets.picked_spool_info(preset, candidates)
             try:
-                script = controls.filament_setting_gcode(printer.snapshot, lane, job, printer.filament_ids) \
+                script = controls.filament_setting_gcode(printer.snapshot, lane, job, printer.filament_ids, info) \
                     if printer.filament_ids or not reset else []
             except AFCError:
                 return ERR_INVALID_RESULT
@@ -1782,7 +1791,13 @@ else:
                 if reset:
                     printer.lane_presets.pop(lane.name, None)
                 elif isinstance(preset, str) and preset:
-                    printer.lane_presets[lane.name] = (preset, spool_key(lane))
+                    # The pick holds through the vendor and name it sends, which change the
+                    # lane's spool_key() once AFC has them.
+                    after = lane
+                    if any(line.startswith(SET_FILAMENT_INFO + " ") for line in script):
+                        after = replace(lane, **{k: v for k, v in zip(("vendor", "filament_name"), info)
+                                                 if protocol.is_safe_text(v)})
+                    printer.lane_presets[lane.name] = (preset, (spool_key(lane), spool_key(after)))
             if not reset:
                 # Echoed as a Bambu printer does: OrcaSlicer shows the tray's new filament from the
                 # echo and holds it through the next three pushes, which would otherwise keep it.

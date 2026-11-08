@@ -322,6 +322,31 @@ def _without_vendor(name: str, vendor: str) -> str:
     return name
 
 
+def picked_spool_info(preset_name: str, candidates: list) -> tuple:
+    """(vendor, filament name) for AFC's SET_FILAMENT_INFO from the preset picked
+    in the tray popup: "Polymaker PolyLite PLA @System" -> ("Polymaker",
+    "PolyLite PLA"). The vendor is the preset's filament_vendor, none for
+    "Generic"; the name is the preset's without its "@..." and without the
+    vendor, or the vendor's first word ("Bambu Lab" off "Bambu PLA Basic"), as
+    Spoolman names a filament. The vendor is None when the preset is not one
+    of `candidates` (unknown, so AFC's is kept); both are None for no preset."""
+    base = clean_preset_part((preset_name or "").split("@", 1)[0])
+    if not base:
+        return None, None
+    vendor = next((c.vendor for c in candidates if c.name == preset_name), None)
+    if vendor is None:
+        return None, base
+    vendor = re.sub(r"[\x00- ]+", " ", vendor).strip()
+    if _is_unknown(vendor) or vendor.lower() == "generic":
+        return "", base
+    name = base
+    for prefix in (vendor, vendor.split(" ", 1)[0]):
+        name = _without_vendor(name, prefix)
+        if name != base:
+            break
+    return vendor, name or base
+
+
 def _names_material(name: str, material: str) -> bool:
     """A word of `name` starts with the material: "PLA" in "PolyLite PLA" or "Tough PLA-CF"."""
     material = material.lower()
