@@ -13141,6 +13141,72 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
     }
 }
 
+// Orca AFC: a preset picked in the sidebar for slot `idx` sets the lane in that slot's tray, as the tray's edit
+// popup on the Device tab does (Multimaterial > AFC "Send filament picks to AFC"). The slot's tray is the one
+// load_ams_list() badges it with: the idx-th tray that holds a filament or keeps an empty lane's place, which is
+// how filament sync fills the slots. Only a slot that still shows its tray's color is taken to hold that tray,
+// so slots never synced from this printer, or recolored since, leave the lanes alone. So do an empty lane's
+// place, a slot past the trays, the preset the tray already has, and a pick of one of the trays' own
+// filaments, which maps the slot to that tray rather than changing a lane.
+static void send_filament_pick_to_afc(size_t idx, const std::string &preset_name)
+{
+    PresetBundle             *bundle  = wxGetApp().preset_bundle;
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    const auto               *afc     = printer.option<ConfigOptionBool>("afc_enabled");
+    const auto               *send    = printer.option<ConfigOptionBool>("afc_send_filament_picks");
+    if (afc == nullptr || !afc->value || (send != nullptr && !send->value))
+        return;
+    DeviceManager *dev = wxGetApp().getDeviceManager();
+    MachineObject *obj = dev != nullptr ? dev->get_selected_machine() : nullptr;
+    if (obj == nullptr || !obj->is_connected())
+        return;
+
+    const DynamicPrintConfig *tray  = nullptr;
+    size_t                    index = 0;
+    for (const auto &entry : bundle->filament_ams_list) {
+        const bool has_filament   = !entry.second.opt_string("filament_id", 0u).empty();
+        const bool is_placeholder = entry.second.has("filament_slot_placeholder") &&
+                                    entry.second.opt_bool("filament_slot_placeholder", 0u);
+        if (!has_filament && !is_placeholder)
+            continue;
+        if (index++ == idx) {
+            if (has_filament && !is_placeholder)
+                tray = &entry.second;
+            break;
+        }
+    }
+    const Preset *preset = bundle->filaments.find_preset(preset_name);
+    if (tray == nullptr || preset == nullptr ||
+        (tray->has("filament_preset") && tray->opt_string("filament_preset", 0u) == preset->name))
+        return;
+    const auto *slot_colors = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    std::string color = slot_colors != nullptr && idx < slot_colors->values.size() ? slot_colors->values[idx] : std::string();
+    if (color.size() != 7 || color.front() != '#' || !boost::iequals(color, tray->opt_string("filament_colour", 0u)))
+        return;
+    int ams_id = -1, slot_id = -1;
+    try {
+        ams_id  = std::stoi(tray->opt_string("ams_id", 0u));
+        slot_id = std::stoi(tray->opt_string("slot_id", 0u));
+    } catch (...) {
+        return;
+    }
+
+    // The base preset carries the filament id sync matches trays by; a user preset inherits it.
+    const Preset *base = bundle->filaments.get_preset_base(*preset);
+    if (base == nullptr)
+        base = preset;
+    const auto *types = preset->config.option<ConfigOptionStrings>("filament_type");
+    const auto *lows  = preset->config.option<ConfigOptionInts>("nozzle_temperature_range_low");
+    const auto *highs = preset->config.option<ConfigOptionInts>("nozzle_temperature_range_high");
+    if (types == nullptr || types->values.empty())
+        return;
+    obj->command_ams_filament_settings(ams_id, slot_id, base->filament_id, base->setting_id,
+                                       boost::to_upper_copy(color.substr(1)) + "FF", types->values.front(),
+                                       lows != nullptr && !lows->values.empty() ? lows->values.front() : 0,
+                                       highs != nullptr && !highs->values.empty() ? highs->values.front() : 0,
+                                       {}, 2, preset->name);
+}
+
 void Plater::priv::on_select_preset(wxCommandEvent &evt)
 {
     PlaterPresetComboBox* combo = static_cast<PlaterPresetComboBox*>(evt.GetEventObject());
@@ -13209,6 +13275,8 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
         auto select_flag = combo->GetFlag(selection);
         combo->set_sync_badge(select_flag == (int)PresetComboBox::FilamentAMSType::FROM_AMS);
         q->on_filament_change(idx);
+        if (select_flag != (int)PresetComboBox::FilamentAMSType::FROM_AMS && idx >= 0)
+            send_filament_pick_to_afc(size_t(idx), preset_name);
     }
     bool select_preset = !combo->selection_is_changed_according_to_physical_printers();
     // TODO: ?

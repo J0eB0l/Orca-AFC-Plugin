@@ -1254,6 +1254,16 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("afc_send_filament_picks", coBool);
+    def->label = L("Send filament picks to AFC");
+    def->tooltip = L("A filament preset picked in the sidebar for a slot synced from one of the printer's lanes, and "
+                     "still in that lane's color, sets the lane in AFC as the tray's edit popup on the Device tab does: "
+                     "its material and filament id, and the vendor and filament name of a spool that has no Spoolman "
+                     "spool. Untick it to plan a print in the sidebar without changing the lanes.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("afc_keep_off_spots", coBool);
     def->label = L("Keep parts off AFC's spots");
     def->tooltip = L("Treats the spots on the bed where AFC purges, kicks the purged filament away, cuts the filament "
