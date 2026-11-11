@@ -49,6 +49,7 @@ struct Plan
 {
     std::vector<int>  lane_of; // per filament, the lane it prints from, -1 not printed (or no lane left)
     std::vector<Move> moves;
+    double            cost{0.}; // the seconds of moves and loads, a printed filament left without a lane costing 1e9
 };
 
 // The grouping engine numbers its groups in no particular order: toolhead_of with each group (0 to
@@ -62,5 +63,12 @@ std::vector<int> fit_toolheads(const std::vector<Lane>& lanes, const std::vector
 // the print does not use costs one move to clear. The spools cleared go to the lanes the moved spools
 // left, else to empty lanes, else off the printer.
 Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, const std::vector<int>& loads, double move_seconds);
+
+// toolhead_of improved one filament at a time: each printed filament tried on every other toolhead, and
+// each pair of printed filaments on different toolheads swapped, while that lowers the cost of placing
+// them (place()) with each filament's loads on its new toolhead (count_changes()). The grouping engine
+// ignores where the spools are and breaks its ties anyhow, so this settles a tie on the spools' side.
+std::vector<int> improve(const std::vector<Lane>& lanes, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                         const std::vector<int>& toolhead_of, double move_seconds, int heads);
 
 } // namespace Slic3r::AFCLayout

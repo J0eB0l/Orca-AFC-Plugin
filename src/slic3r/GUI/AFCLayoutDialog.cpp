@@ -61,10 +61,21 @@ std::string rgb(const std::string& color)
     return "#" + hex;
 }
 
+// The material family the agent compares (its material_key): the leading word in upper case without a
+// trailing '+', so a "PLA+" or "pla basic" spool holds a PLA filament.
+std::string family(const std::string& material)
+{
+    std::string word = material.substr(0, material.find_first_of(" -_"));
+    std::transform(word.begin(), word.end(), word.begin(), ::toupper);
+    while (!word.empty() && word.back() == '+')
+        word.pop_back();
+    return word;
+}
+
 bool same_filament(const MachineObject::AgentLane& lane, const PrintConfig& config, int filament)
 {
     return rgb(lane.color) == rgb(config.filament_colour.get_at(filament)) &&
-           boost::iequals(lane.type, config.filament_type.get_at(filament));
+           family(lane.type) == family(config.filament_type.get_at(filament));
 }
 
 } // namespace
@@ -149,17 +160,22 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
     for (const AFCLayout::Lane& lane : out.lanes)
         if (lane.toolhead >= 0)
             ++lanes_per_head[lane.toolhead];
-    out.suggested = ToolOrdering::get_afc_toolhead_groups(&print, layer_filaments, lanes_per_head);
-    if (out.suggested.size() != filaments)
-        out.suggested = out.current;
-    out.now   = AFCLayout::count_changes(layer_filaments, out.current);
-    out.after = AFCLayout::count_changes(layer_filaments, out.suggested);
-    out.suggested = AFCLayout::fit_toolheads(out.lanes, out.suggested, out.after.loads, MOVE_SECONDS, int(heads));
-    // The grouping counts flushes; a toolhead's lane changes decide, and a tie keeps the spools where they are.
-    if (out.after.lane_changes >= out.now.lane_changes) {
-        out.suggested = out.current;
-        out.after     = out.now;
+    // The slice's grouping and the engine's, each improved on the spools' side; the cheaper plan of
+    // moves and loads wins, and a tie keeps the slice's, so a regroup never costs more than it saves.
+    auto plan_cost = [&](const std::vector<int>& toolhead_of) {
+        return AFCLayout::place(out.lanes, toolhead_of, AFCLayout::count_changes(layer_filaments, toolhead_of).loads, MOVE_SECONDS).cost;
+    };
+    out.now       = AFCLayout::count_changes(layer_filaments, out.current);
+    out.suggested = AFCLayout::improve(out.lanes, layer_filaments, out.current, MOVE_SECONDS, int(heads));
+    std::vector<int> engine = ToolOrdering::get_afc_toolhead_groups(&print, layer_filaments, lanes_per_head);
+    if (engine.size() == filaments) {
+        engine = AFCLayout::fit_toolheads(out.lanes, engine, AFCLayout::count_changes(layer_filaments, engine).loads,
+                                          MOVE_SECONDS, int(heads));
+        engine = AFCLayout::improve(out.lanes, layer_filaments, engine, MOVE_SECONDS, int(heads));
+        if (plan_cost(engine) < plan_cost(out.suggested) - 1e-6)
+            out.suggested = engine;
     }
+    out.after = AFCLayout::count_changes(layer_filaments, out.suggested);
     out.plan = AFCLayout::place(out.lanes, out.suggested, out.after.loads, MOVE_SECONDS);
     return true;
 }

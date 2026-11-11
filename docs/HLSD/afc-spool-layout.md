@@ -15,14 +15,20 @@ The Filament Grouping box of the preview legend offers it as "Suggest spool layo
 `ToolOrdering::get_afc_toolhead_groups` runs the grouping engine Bambu uses for its two-nozzle
 printers (`FilamentGroup`, flush mode) on the print's layer filaments, with each toolhead holding at
 most as many filaments as it has lanes. Every lane change adds a fixed cost to the flush matrix, so a
-grouping that changes lanes less wins even when the matrix purges little. The dialog keeps the
-current grouping when the engine's would change lanes more often by its own count
-(`AFCLayout::count_changes`, each toolhead starting a layer on the filament it holds and ending on
-one the next layer uses), or ties with it.
+grouping that changes lanes less wins even when the matrix purges little.
 
 The engine numbers its groups in no particular order, so `AFCLayout::fit_toolheads` then gives each
 group the toolhead where its spools cost the least to place, by a minimum-cost assignment of groups to
 toolheads over the lane costs below. A group whose spools already sit on a toolhead stays there.
+
+The engine counts flushes and ignores where the spools are, and among groupings that change lanes
+equally often it picks one anyhow. So the dialog does not take its grouping as it is.
+`AFCLayout::improve` moves one printed filament to another toolhead, or swaps two on different
+toolheads, while that lowers the cost of the whole plan: the moves and loads `AFCLayout::place` prices
+below, each toolhead's loads counted by `AFCLayout::count_changes` (each toolhead starting a layer on
+the filament it holds and ending on one the next layer uses). The dialog improves both the slice's
+grouping and the engine's and keeps the cheaper plan, the slice's on a tie. A regroup whose moves by
+hand cost more than the lane changes it saves is therefore not suggested, and a tie never swaps spools.
 
 How much regrouping helps depends on the print. A plate with many colors on few toolheads changes
 lanes about as often however they are grouped; one whose colors fall into layers or regions gains
@@ -44,7 +50,8 @@ measured (`AFCLayout::rank_units`).
 
 A project filament is known to be in a lane when the lane is mapped to its T number, as a filament
 sync leaves it (slot n prints as T(n-1)), and holds its color and material; otherwise the first loaded
-lane with that color and material holds it.
+lane with that color and material holds it. Materials compare by family, as the agent does: the
+leading word in upper case without a trailing '+', so a "PLA+" spool holds a PLA filament.
 
 ## Sync layout to AFC
 

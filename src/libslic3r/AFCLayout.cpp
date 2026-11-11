@@ -197,9 +197,12 @@ Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, 
     const std::vector<int> current = current_lanes(lanes, toolhead_of.size());
     std::set<int>          heads(toolhead_of.begin(), toolhead_of.end());
     heads.erase(-1);
-    for (int head : heads)
-        for (const auto& [filament, lane] : fill_toolhead(lanes, toolhead_of, current, loads, move_seconds, head, head).first)
+    for (int head : heads) {
+        const auto [lane_of, cost] = fill_toolhead(lanes, toolhead_of, current, loads, move_seconds, head, head);
+        for (const auto& [filament, lane] : lane_of)
             plan.lane_of[filament] = lane;
+        plan.cost += cost;
+    }
 
     std::vector<bool> taken(lanes.size(), false);
     for (int lane : plan.lane_of)
@@ -230,6 +233,46 @@ Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, 
         plan.moves.push_back({lanes[to].filament, to, place_to});
     }
     return plan;
+}
+
+std::vector<int> improve(const std::vector<Lane>& lanes, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                         const std::vector<int>& toolhead_of, double move_seconds, int heads)
+{
+    auto cost = [&](const std::vector<int>& heads_of) {
+        return place(lanes, heads_of, count_changes(layer_filaments, heads_of).loads, move_seconds).cost;
+    };
+    std::vector<int> best      = toolhead_of;
+    double           best_cost = cost(best);
+    std::vector<int> printed_filaments;
+    for (size_t f = 0; f < best.size(); ++f)
+        if (best[f] >= 0)
+            printed_filaments.push_back(int(f));
+    for (bool better = true; better;) {
+        better = false;
+        auto try_it = [&](std::vector<int>& candidate) {
+            const double c = cost(candidate);
+            if (c < best_cost - 1e-6) {
+                best      = candidate;
+                best_cost = c;
+                better    = true;
+            }
+        };
+        for (int f : printed_filaments)
+            for (int head = 0; head < heads; ++head)
+                if (head != best[f]) {
+                    std::vector<int> candidate = best;
+                    candidate[f]               = head;
+                    try_it(candidate);
+                }
+        for (size_t a = 0; a < printed_filaments.size(); ++a)
+            for (size_t b = a + 1; b < printed_filaments.size(); ++b)
+                if (best[printed_filaments[a]] != best[printed_filaments[b]]) {
+                    std::vector<int> candidate = best;
+                    std::swap(candidate[printed_filaments[a]], candidate[printed_filaments[b]]);
+                    try_it(candidate);
+                }
+    }
+    return best;
 }
 
 } // namespace Slic3r::AFCLayout

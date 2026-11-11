@@ -91,3 +91,28 @@ TEST_CASE("fit_toolheads keeps a group on the toolhead that holds its spools", "
     // The empty toolheads take a spool each before the one whose lane must be cleared.
     CHECK(plan.moves.size() == 2);
 }
+
+TEST_CASE("improve keeps the spools when a regroup saves fewer lane changes than it moves", "[AFCLayout]")
+{
+    // Both spools on toolhead 0; toolhead 1 has an empty lane. Printing filament 1 on toolhead 1 saves
+    // one lane change but costs a move by hand.
+    const std::vector<Lane> lanes{{"lane0", "A", 0, 0, true, 60.}, {"lane1", "A", 0, 1, true, 60.},
+                                  {"lane2", "B", 1, -1, false, 60.}};
+    CHECK(improve(lanes, {{0}, {1}}, {0, 0}, 60., 2) == std::vector<int>{0, 0});
+    // Many lane changes between them pay for the move.
+    const std::vector<int> heads = improve(lanes, {{0}, {1}, {0}, {1}, {0}, {1}}, {0, 0}, 60., 2);
+    CHECK(heads[0] != heads[1]);
+}
+
+TEST_CASE("improve undoes a swap of filaments that changes nothing", "[AFCLayout]")
+{
+    // Every layer prints all four filaments, so any two per toolhead count the same lane changes; the
+    // grouping engine swapped 1 and 2, which would move two spools for nothing.
+    const std::vector<Lane> lanes{{"lane0", "A", 0, 0, true, 60.}, {"lane1", "A", 0, 1, true, 60.},
+                                  {"lane2", "B", 1, 2, true, 60.}, {"lane3", "B", 1, 3, true, 60.}};
+    const std::vector<std::vector<unsigned int>> layers{{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}};
+    const std::vector<int> heads = improve(lanes, layers, {0, 1, 0, 1}, 60., 2);
+    const Plan plan = place(lanes, heads, count_changes(layers, heads).loads, 60.);
+    CHECK(plan.moves.empty());
+    CHECK(plan.cost == place(lanes, {0, 0, 1, 1}, count_changes(layers, {0, 0, 1, 1}).loads, 60.).cost);
+}
