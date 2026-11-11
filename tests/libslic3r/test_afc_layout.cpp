@@ -13,7 +13,8 @@ TEST_CASE("count_changes counts each toolhead's loads", "[AFCLayout]")
     const std::vector<int> heads{0, 0, 1};
     const Changes          changes = count_changes({{0, 2}, {0, 1, 2}, {1, 2}, {0}}, heads);
     // Toolhead 0: 0, then 0 kept and 1 loaded (ending on 1, which the next layer uses), then 1, then 0.
-    CHECK(changes.loads == std::vector<int>{2, 1, 1});
+    // The first loads (0 on toolhead 0, 2 on toolhead 1) change no lane.
+    CHECK(changes.loads == std::vector<int>{1, 1, 0});
     CHECK(changes.lane_changes == 2);
     // On one toolhead every change of filament is a lane change.
     CHECK(count_changes({{0, 2}, {0, 1, 2}, {1, 2}, {0}}, {0, 0, 0}).lane_changes == 5);
@@ -92,16 +93,28 @@ TEST_CASE("fit_toolheads keeps a group on the toolhead that holds its spools", "
     CHECK(plan.moves.size() == 2);
 }
 
-TEST_CASE("improve keeps the spools when a regroup saves fewer lane changes than it moves", "[AFCLayout]")
+TEST_CASE("improve moves a spool only when the time it saves outweighs the move", "[AFCLayout]")
 {
     // Both spools on toolhead 0; toolhead 1 has an empty lane. Printing filament 1 on toolhead 1 saves
-    // one lane change but costs a move by hand.
+    // two lane changes of a minute.
     const std::vector<Lane> lanes{{"lane0", "A", 0, 0, true, 60.}, {"lane1", "A", 0, 1, true, 60.},
                                   {"lane2", "B", 1, -1, false, 60.}};
-    CHECK(improve(lanes, {{0}, {1}}, {0, 0}, 60., 2) == std::vector<int>{0, 0});
-    // Many lane changes between them pay for the move.
-    const std::vector<int> heads = improve(lanes, {{0}, {1}, {0}, {1}, {0}, {1}}, {0, 0}, 60., 2);
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}};
+    CHECK(improve(lanes, layers, {0, 0}, 200., 2) == std::vector<int>{0, 0});
+    const std::vector<int> heads = improve(lanes, layers, {0, 0}, 0.01, 2);
     CHECK(heads[0] != heads[1]);
+}
+
+TEST_CASE("improve leaves a spool a toolhead never swaps out in a slow unit", "[AFCLayout]")
+{
+    // Filament 1 is the only one on toolhead 1, in a slow unit, beside an empty lane of a quick one. It
+    // loads once whichever lane feeds it, so moving it gains nothing.
+    const std::vector<Lane> lanes{{"lane0", "A", 0, 0, true, 60.}, {"lane1", "Slow", 1, 1, true, 120.},
+                                  {"lane2", "Quick", 1, -1, false, 40.}};
+    const std::vector<std::vector<unsigned int>> layers{{0, 1}, {0, 1}};
+    const std::vector<int> heads = improve(lanes, layers, {0, 1}, 0.01, 2);
+    CHECK(heads == std::vector<int>{0, 1});
+    CHECK(place(lanes, heads, count_changes(layers, heads).loads, 0.01).moves.empty());
 }
 
 TEST_CASE("improve undoes a swap of filaments that changes nothing", "[AFCLayout]")
@@ -111,8 +124,8 @@ TEST_CASE("improve undoes a swap of filaments that changes nothing", "[AFCLayout
     const std::vector<Lane> lanes{{"lane0", "A", 0, 0, true, 60.}, {"lane1", "A", 0, 1, true, 60.},
                                   {"lane2", "B", 1, 2, true, 60.}, {"lane3", "B", 1, 3, true, 60.}};
     const std::vector<std::vector<unsigned int>> layers{{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}};
-    const std::vector<int> heads = improve(lanes, layers, {0, 1, 0, 1}, 60., 2);
-    const Plan plan = place(lanes, heads, count_changes(layers, heads).loads, 60.);
+    const std::vector<int> heads = improve(lanes, layers, {0, 1, 0, 1}, 0.01, 2);
+    const Plan plan = place(lanes, heads, count_changes(layers, heads).loads, 0.01);
     CHECK(plan.moves.empty());
-    CHECK(plan.cost == place(lanes, {0, 0, 1, 1}, count_changes(layers, {0, 0, 1, 1}).loads, 60.).cost);
+    CHECK(plan.cost == place(lanes, {0, 0, 1, 1}, count_changes(layers, {0, 0, 1, 1}).loads, 0.01).cost);
 }

@@ -30,9 +30,10 @@ Changes count_changes(const std::vector<std::vector<unsigned int>>& layer_filame
             for (int filament : filaments) {
                 if (filament == start)
                     continue;
-                ++out.loads[filament];
-                if (holding)
+                if (holding) {
+                    ++out.loads[filament];
                     ++out.lane_changes;
+                }
                 holding = true;
                 if (end < 0 || next.count(filament))
                     end = filament;

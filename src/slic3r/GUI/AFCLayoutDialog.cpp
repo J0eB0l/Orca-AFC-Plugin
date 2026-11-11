@@ -45,8 +45,9 @@ namespace afc_layout {
 
 namespace {
 
-// A spool move by hand, in seconds of lane changes it is worth.
-constexpr double MOVE_SECONDS = 60.;
+// A spool move by hand happens before the print starts, so it costs no print time; this token cost only
+// breaks ties, so of the layouts that print equally fast the one moving the fewest spools wins.
+constexpr double MOVE_SECONDS = 0.01;
 // The lane change time of a unit the printer gave none for.
 constexpr double UNKNOWN_SECONDS = 75.;
 
@@ -161,7 +162,7 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         if (lane.toolhead >= 0)
             ++lanes_per_head[lane.toolhead];
     // The slice's grouping and the engine's, each improved on the spools' side; the cheaper plan of
-    // moves and loads wins, and a tie keeps the slice's, so a regroup never costs more than it saves.
+    // moves and loads wins, and a tie keeps the slice's, so no spool moves unless the print gets faster.
     auto plan_cost = [&](const std::vector<int>& toolhead_of) {
         return AFCLayout::place(out.lanes, toolhead_of, AFCLayout::count_changes(layer_filaments, toolhead_of).loads, MOVE_SECONDS).cost;
     };

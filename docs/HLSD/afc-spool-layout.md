@@ -27,8 +27,8 @@ equally often it picks one anyhow. So the dialog does not take its grouping as i
 toolheads, while that lowers the cost of the whole plan: the moves and loads `AFCLayout::place` prices
 below, each toolhead's loads counted by `AFCLayout::count_changes` (each toolhead starting a layer on
 the filament it holds and ending on one the next layer uses). The dialog improves both the slice's
-grouping and the engine's and keeps the cheaper plan, the slice's on a tie. A regroup whose moves by
-hand cost more than the lane changes it saves is therefore not suggested, and a tie never swaps spools.
+grouping and the engine's and keeps the cheaper plan, the slice's on a tie. So no spool is moved unless the
+print gets faster for it, and a tie never swaps spools.
 
 How much regrouping helps depends on the print. A plate with many colors on few toolheads changes
 lanes about as often however they are grouped; one whose colors fall into layers or regions gains
@@ -37,9 +37,11 @@ the most.
 ## Lanes
 
 `AFCLayout::place` gives each printed filament a lane on its toolhead by a minimum-cost assignment
-(Hungarian method) per toolhead. A spool moved by hand costs a minute of lane changes, each load costs
-the lane change time of the lane's unit, and a lane holding a spool the print does not use costs one
-more move to clear it. A spool cleared goes to a lane a moved spool left, else to an empty lane, else
+(Hungarian method) per toolhead. Each lane change into a filament costs the lane change time of the
+lane's unit, the time the print spends on it. A toolhead's first load is no lane change: it loads once
+whatever lane feeds it, so a filament its toolhead never swaps out gains nothing from a quicker unit. Spools are moved before the print starts, so a move costs no print time; it costs
+a hundredth of a second only to break ties, so of the layouts that print equally fast the one moving the
+fewest spools wins. A lane holding a spool the print does not use costs one more move to clear it. A spool cleared goes to a lane a moved spool left, else to an empty lane, else
 off the printer.
 
 The unit times come from the printer agent (`afc_units`): its lanes' median load plus median unload in

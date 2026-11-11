@@ -20,8 +20,8 @@ struct Lane
 };
 
 // Lane changes over a print's layers with its filaments on toolhead_of (-1 not printed): how many
-// times each filament is loaded (its first load included) and how many changes the toolheads make
-// after their first load. Each toolhead starts a layer on the filament it holds when the layer uses it
+// times each filament is loaded in place of another on its toolhead, and how many changes that makes
+// in all. A toolhead's first load is no lane change: whatever lane feeds it, it loads once. Each toolhead starts a layer on the filament it holds when the layer uses it
 // and ends it on one the next layer uses, which no order of a layer's filaments beats.
 struct Changes
 {
