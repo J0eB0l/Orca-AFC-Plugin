@@ -265,6 +265,13 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
     auto*     sizer = new wxBoxSizer(wxVERTICAL);
 
     const bool moves = !m_suggestion.plan.moves.empty();
+    // The spools can already sit in the best lanes while the slice still prints a filament on another
+    // tool, as a filament the sync did not fill has no toolhead: then only the slice changes.
+    bool regroup = false;
+    for (size_t f = 0; f < m_suggestion.suggested.size() && !moves; ++f)
+        if (f < m_suggestion.current.size() && m_suggestion.current[f] >= 0 && m_suggestion.suggested[f] >= 0 &&
+            m_suggestion.suggested[f] != m_suggestion.current[f])
+            regroup = true;
     // TRN %1%: lane changes the print makes with its spools where they are, %2%: with the suggested layout.
     auto* summary = add_label(this, Label::Head_14,
                               format_wxstr(_L("Lane changes: %1% now, %2% with this layout."), m_suggestion.now.lane_changes,
@@ -275,6 +282,8 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
                             moves ? _L("Move the spools as listed and let AFC see them, then click Sync layout to AFC. Each lane "
                                        "takes the spool its old lane had, unless it reads the spool's tag, and the plate is "
                                        "sliced again with each filament on its new tool.") :
+                            regroup ? _L("The spools are already in the best lanes for this print. Click Apply to slice it again "
+                                         "with each filament on the tool its lane feeds.") :
                                     _L("The spools are already in the best lanes for this print."),
                             HINT_COLOUR);
     intro->Wrap(width);
@@ -307,10 +316,11 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
     sizer->Add(rows, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
 
     // TRN Buttons of the suggested spool layout of an AFC printer
-    auto* buttons = moves ? new DialogButtons(this, {L("Sync layout to AFC"), "Cancel"}, _L("Sync layout to AFC")) :
-                            new DialogButtons(this, {L("Close")}, _L("Close"));
-    if (moves) {
-        buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { sync(); });
+    auto* buttons = moves   ? new DialogButtons(this, {L("Sync layout to AFC"), "Cancel"}, _L("Sync layout to AFC")) :
+                    regroup ? new DialogButtons(this, {"Apply", "Cancel"}, _L("Apply")) :
+                              new DialogButtons(this, {L("Close")}, _L("Close"));
+    if (moves || regroup) {
+        buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this, moves](wxCommandEvent&) { moves ? sync() : regroup_tools(); });
         buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
     } else
         buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CLOSE); });
@@ -342,6 +352,11 @@ void AFCLayoutDialog::sync()
         return;
 
     obj->command_afc_layout(afc_layout::moves_json(m_suggestion, m_print));
+    regroup_tools();
+}
+
+void AFCLayoutDialog::regroup_tools()
+{
     std::vector<int> toolheads = m_suggestion.suggested;
     EndModal(wxID_OK);
     wxGetApp().CallAfter([toolheads] {

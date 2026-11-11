@@ -53,6 +53,8 @@ public:
 private:
     AFCLayoutDialog(wxWindow* parent, const Print& print, const MachineObject& obj, afc_layout::Suggestion suggestion);
     void sync();
+    // Slices the plate again with each filament on its suggested tool.
+    void regroup_tools();
     void on_dpi_changed(const wxRect& suggested_rect) override;
 
     const Print&           m_print;
