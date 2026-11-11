@@ -6196,7 +6196,6 @@ if (is_marlin_flavor)
         optgroup->append_single_option_line("afc_swap_times");
         optgroup->append_single_option_line("afc_spool_check");
         optgroup->append_single_option_line("afc_toolhead_check");
-        optgroup->append_single_option_line("afc_send_filament_picks");
         optgroup->append_single_option_line("afc_settings_check");
         optgroup->append_single_option_line("afc_keep_off_spots");
         create_line_with_widget(optgroup.get(), "afc_unit_order", "", [this](wxWindow* parent) {
@@ -6923,8 +6922,7 @@ void TabPrinter::toggle_options()
         toggle_option("purge_in_prime_tower", (bSEMM || m_config->opt_bool("multi_extruder_multi_material")) && supports_wipe_tower_2, -1,
             _L("Enable single extruder multimaterial mode or Multi-material per toolhead, with wipe tower Type 2 on a non-Bambu printer, to use this setting."));
 
-        for (auto el : {"afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_send_filament_picks", "afc_settings_check",
-                        "afc_keep_off_spots", "afc_unit_order"})
+        for (auto el : {"afc_swap_times", "afc_spool_check", "afc_toolhead_check", "afc_settings_check", "afc_keep_off_spots", "afc_unit_order"})
             toggle_line(el, m_config->opt_bool("afc_enabled"));
 
         // IDEX/IQEX: show carriage config options only when is_imex is enabled
