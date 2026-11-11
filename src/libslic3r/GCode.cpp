@@ -1492,11 +1492,14 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         }
 
         std::string toolchange_command;
-        if (tcr.priming || (new_filament_id >= 0 && gcodegen.writer().need_toolchange(new_filament_id)))
+        if (tcr.priming || (new_filament_id >= 0 && gcodegen.writer().need_toolchange(new_filament_id))) {
+            const int old_extruder_id = gcodegen.writer().filament() ? (int) gcodegen.writer().filament()->extruder_id() : -1;
             // Orca: null-safe, layer-aware nozzle lookup — group_result may be null on
             // non-multi-nozzle paths (the helper falls back to the extruder id).
             toolchange_command = gcodegen.writer().toolchange(new_filament_id,
                 nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx));
+            gcodegen.forget_lane_change_retraction(old_extruder_id);
+        }
         if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_filament_id))
             toolchange_gcode_str += toolchange_command;
         else {
@@ -8419,6 +8422,21 @@ std::optional<GCode::ToolchangePositionState> GCode::capture_toolchange_position
     };
 }
 
+// AFC unloads the outgoing lane and loads the incoming one up to the nozzle tip, so the incoming filament
+// is not retracted, whatever toolchange retraction it recorded when it last left the nozzle; unretracting
+// that would push a blob onto the prime tower. A tool switch keeps the retraction: that filament waited
+// in its own nozzle, retracted.
+void GCode::forget_lane_change_retraction(int old_extruder_id)
+{
+    if (m_print == nullptr)
+        return;
+    const auto* afc_enabled = m_print->full_print_config().option<ConfigOptionBool>("afc_enabled");
+    Extruder*   filament    = m_writer.filament();
+    if (afc_enabled != nullptr && afc_enabled->value && !m_config.single_extruder_multi_material && filament != nullptr &&
+        old_extruder_id >= 0 && int(filament->extruder_id()) == old_extruder_id)
+        filament->set_retracted(0., 0.);
+}
+
 void GCode::synchronize_toolchange_position(const ToolchangePositionState &before, const std::string &emitted_gcode)
 {
     if (m_writer.filament() == nullptr)
@@ -11410,6 +11428,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     std::string toolchange_command = m_writer.toolchange(new_filament_id, next_nozzle_id);
     if (Extruder *fil = m_writer.filament())
         fil->set_config_index((int)get_filament_config_index((int)fil->id()));
+    forget_lane_change_retraction(old_extruder_id);
     // See imex_suppresses_bare_toolchange() — only suppress the print-start initial
     // T<n> in parallel modes (the user's imex_mode_gcode + machine_start_gcode owns
     // tool activation there). Mid-print T<n> emits normally; Print::validate blocks

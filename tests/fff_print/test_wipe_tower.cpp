@@ -655,6 +655,38 @@ TEST_CASE("Purge in prime tower flushes a lane change on a toolhead and only pri
     CHECK_THAT(tower_purge("0,0", false), Catch::Matchers::WithinRel(unknown, 1e-3));
 }
 
+// The longest unretract in the G-code of tower_purge's print with both
+// filaments on toolhead 0 and a 5 mm toolchange retraction.
+static double longest_unretract_after_lane_change(bool afc_enabled)
+{
+    DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+                                    { "multi_extruder_multi_material", "1" },
+                                    { "purge_in_prime_tower", "1" },
+                                    { "filament_toolhead", "0,0" },
+                                    { "use_relative_e_distances", "1" },
+                                    { "retraction_length", "0.5,0.5" },
+                                    { "retract_length_toolchange", "5,5" },
+                                    { "gcode_comments", "1" },
+                                    { "afc_enabled", afc_enabled ? "1" : "0" } });
+    const std::string gcode = slice_with_prime_tower(config);
+    double      longest = 0.;
+    GCodeReader parser;
+    parser.parse_buffer(gcode, [&](GCodeReader &self, const GCodeReader::GCodeLine &line) {
+        if (line.extruding(self) && line.raw().find("unretract") != std::string_view::npos)
+            longest = std::max(longest, double(line.dist_E(self)));
+    });
+    return longest;
+}
+
+TEST_CASE("An AFC lane change does not unretract the toolchange retraction", "[WipeTower]")
+{
+    // AFC loads the incoming lane to the nozzle tip, so the 5 mm the filament retracted when it last left is
+    // not pushed back out onto the tower.
+    CHECK(longest_unretract_after_lane_change(false) > 4.9);
+    CHECK(longest_unretract_after_lane_change(true) < 1.);
+}
+
 TEST_CASE("A Snapmaker U1 flushes a fifth of the lane change volume on the prime tower", "[WipeTower]")
 {
     // A U1 forms tips instead of cutting, so a lane change flushes 56 mm3 of the 280 mm3, still more than

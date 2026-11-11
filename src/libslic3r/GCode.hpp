@@ -876,6 +876,9 @@ protected:
     std::optional<ToolchangePositionState> capture_toolchange_position();
     void synchronize_toolchange_position(const ToolchangePositionState &before,
                                          const std::string             &emitted_gcode);
+    // Orca: after a lane change on an AFC toolhead (the outgoing filament, on old_extruder_id, and the
+    // incoming one on the same toolhead), forget the incoming filament's recorded retraction.
+    void forget_lane_change_retraction(int old_extruder_id);
 
     std::unique_ptr<CoolingBuffer>      m_cooling_buffer;
     std::unique_ptr<SpiralVase>         m_spiral_vase;
