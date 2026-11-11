@@ -57,6 +57,11 @@ sync leaves it (slot n prints as T(n-1)), and holds its color and material; othe
 lane with that color and material holds it. Materials compare by family, as the agent does: the
 leading word in upper case without a trailing '+', so a "PLA+" spool holds a PLA filament.
 
+A printed filament that no loaded lane holds, or that the slice puts on another toolhead than its lane
+feeds, means the project's slots were not synced from these lanes, so "now" and the moves would be
+counted from slots that no longer match the spools. The dialog names those filaments and asks for a
+filament sync first.
+
 ## Sync layout to AFC
 
 The spools moved, Sync layout to AFC sends `afc_layout` with every lane a spool went to: the T number

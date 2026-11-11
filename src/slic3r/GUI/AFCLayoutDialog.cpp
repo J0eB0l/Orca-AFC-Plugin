@@ -14,6 +14,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/DialogButtons.hpp"
 #include "Widgets/Label.hpp"
+#include "Widgets/StateColor.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -36,6 +37,7 @@
 #include <wx/listbox.h>
 #include <wx/utils.h>
 #include <wx/sizer.h>
+#include <wx/string.h>
 #include <wx/statbmp.h>
 #include <wx/window.h>
 
@@ -168,6 +170,16 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         if (lane.filament >= 0 && size_t(lane.filament) < held.size() && held[lane.filament] >= 0 && lane.toolhead >= 0)
             held[lane.filament] = lane.toolhead;
     out.now = AFCLayout::count_changes(layer_filaments, held);
+    // A printed filament no loaded lane holds, or sliced onto another toolhead than its lane feeds, means the
+    // project's slots were not synced from these lanes, so "now" and the moves are counted from stale slots.
+    out.unsynced.clear();
+    for (size_t f = 0; f < out.current.size(); ++f) {
+        if (out.current[f] < 0)
+            continue;
+        auto lane = std::find_if(out.lanes.begin(), out.lanes.end(), [f](const AFCLayout::Lane& l) { return l.filament == int(f); });
+        if (lane == out.lanes.end() || (lane->toolhead >= 0 && lane->toolhead != out.current[f]))
+            out.unsynced.push_back(int(f));
+    }
 
     // The slice's grouping, the spools' own and the engine's, each improved on the spools' side; the
     // cheapest plan of lane changes wins, moves only breaking ties, and a tie keeps the slice's.
@@ -230,6 +242,7 @@ namespace {
 
 const char* const TEXT_COLOUR = "#323A3D";
 const char* const HINT_COLOUR = "#6B6B6B";
+const char* const WARN_COLOUR = "#F09A17";
 
 Label* add_label(wxWindow* parent, const wxFont& font, const wxString& text, const wxColour& colour)
 {
@@ -307,6 +320,22 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
                                            m_suggestion.after.lane_changes),
                               TEXT_COLOUR);
     sizer->Add(summary, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
+    if (!m_suggestion.unsynced.empty()) {
+        wxString numbers;
+        for (int f : m_suggestion.unsynced)
+            numbers += (numbers.empty() ? "" : ", ") + wxString::Format("%d", f + 1);
+        // TRN %1%: filament numbers, such as "3" or "3, 4".
+        auto* stale = add_label(this, Label::Body_14,
+                                format_wxstr(_L_PLURAL("Filament %1% does not match the printer's lanes. Sync the filaments from "
+                                                       "the printer first, so this counts from the spools where they sit.",
+                                                       "Filaments %1% do not match the printer's lanes. Sync the filaments from "
+                                                       "the printer first, so this counts from the spools where they sit.",
+                                                       unsigned(m_suggestion.unsynced.size())),
+                                             numbers),
+                                StateColor::darkModeColorFor(WARN_COLOUR));
+        stale->Wrap(width);
+        sizer->Add(stale, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    }
     auto* intro = add_label(this, Label::Body_14,
                             moves ? _L("Move the spools as listed and let AFC see them, then click Sync layout to AFC. Each lane "
                                        "takes the spool its old lane had, unless it reads the spool's tag, and the plate is "

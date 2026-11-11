@@ -30,6 +30,7 @@ struct Suggestion
     std::vector<int>                      suggested;   // ... and with the layout
     AFCLayout::Changes                    now, after;
     AFCLayout::Plan                       plan;
+    std::vector<int>                      unsynced;    // printed filaments no lane holds, or sliced off their lane's toolhead
 };
 
 // The layout for the plate's print on the printer's lanes, with its units ranked after `preferred`
