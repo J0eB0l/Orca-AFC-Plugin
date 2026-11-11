@@ -26,9 +26,11 @@ equally often it picks one anyhow. So the dialog does not take its grouping as i
 `AFCLayout::improve` moves one printed filament to another toolhead, or swaps two on different
 toolheads, while that lowers the cost of the whole plan: the moves and loads `AFCLayout::place` prices
 below, each toolhead's loads counted by `AFCLayout::count_changes` (each toolhead starting a layer on
-the filament it holds and ending on one the next layer uses). The dialog improves both the slice's
-grouping and the engine's and keeps the cheaper plan, the slice's on a tie. So no spool is moved unless the
-print gets faster for it, and a tie never swaps spools.
+the filament it holds and ending on one the next layer uses). The dialog improves three groupings, the
+slice's, the one the spools sit in (each filament on the toolhead its lane feeds) and the engine's, and
+keeps the cheapest plan, the slice's on a tie. So no spool is moved unless the print gets faster for it,
+and a tie never swaps spools. The lane changes it shows as "now" are those of the spools where they sit,
+since AFC prints a filament on the toolhead its lane feeds whatever tool the slice gave it.
 
 How much regrouping helps depends on the print. A plate with many colors on few toolheads changes
 lanes about as often however they are grouped; one whose colors fall into layers or regions gains

@@ -161,20 +161,32 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
     for (const AFCLayout::Lane& lane : out.lanes)
         if (lane.toolhead >= 0)
             ++lanes_per_head[lane.toolhead];
-    // The slice's grouping and the engine's, each improved on the spools' side; the cheaper plan of
-    // moves and loads wins, and a tie keeps the slice's, so no spool moves unless the print gets faster.
+    // Lane changes now: each filament on the toolhead its spool's lane feeds, as AFC would print it, so a
+    // move that splits two spools sharing a toolhead shows what it saves.
+    std::vector<int> held = out.current;
+    for (const AFCLayout::Lane& lane : out.lanes)
+        if (lane.filament >= 0 && size_t(lane.filament) < held.size() && held[lane.filament] >= 0 && lane.toolhead >= 0)
+            held[lane.filament] = lane.toolhead;
+    out.now = AFCLayout::count_changes(layer_filaments, held);
+
+    // The slice's grouping, the spools' own and the engine's, each improved on the spools' side; the
+    // cheapest plan of lane changes wins, moves only breaking ties, and a tie keeps the slice's.
     auto plan_cost = [&](const std::vector<int>& toolhead_of) {
         return AFCLayout::place(out.lanes, toolhead_of, AFCLayout::count_changes(layer_filaments, toolhead_of).loads, MOVE_SECONDS).cost;
     };
-    out.now       = AFCLayout::count_changes(layer_filaments, out.current);
-    out.suggested = AFCLayout::improve(out.lanes, layer_filaments, out.current, MOVE_SECONDS, int(heads));
+    std::vector<std::vector<int>> starts{out.current, held};
     std::vector<int> engine = ToolOrdering::get_afc_toolhead_groups(&print, layer_filaments, lanes_per_head);
-    if (engine.size() == filaments) {
-        engine = AFCLayout::fit_toolheads(out.lanes, engine, AFCLayout::count_changes(layer_filaments, engine).loads,
-                                          MOVE_SECONDS, int(heads));
-        engine = AFCLayout::improve(out.lanes, layer_filaments, engine, MOVE_SECONDS, int(heads));
-        if (plan_cost(engine) < plan_cost(out.suggested) - 1e-6)
-            out.suggested = engine;
+    if (engine.size() == filaments)
+        starts.push_back(AFCLayout::fit_toolheads(out.lanes, engine, AFCLayout::count_changes(layer_filaments, engine).loads,
+                                                  MOVE_SECONDS, int(heads)));
+    double best = 0.;
+    for (size_t i = 0; i < starts.size(); ++i) {
+        std::vector<int> candidate = AFCLayout::improve(out.lanes, layer_filaments, starts[i], MOVE_SECONDS, int(heads));
+        const double     cost      = plan_cost(candidate);
+        if (i == 0 || cost < best - 1e-6) {
+            out.suggested = std::move(candidate);
+            best          = cost;
+        }
     }
     out.after = AFCLayout::count_changes(layer_filaments, out.suggested);
     out.plan = AFCLayout::place(out.lanes, out.suggested, out.after.loads, MOVE_SECONDS);
