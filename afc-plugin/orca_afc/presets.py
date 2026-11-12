@@ -503,9 +503,11 @@ def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
         return ""
     ids.learn(candidates)
     named = set(name_words(lane.filament_name))
-    # Product words any preset of the material has: one the spool names
-    # rules out a preset without it ("ePLA-Silk Bronze" is not "eSUN PLA+").
-    known = set().union(*(product_words(c, lane) for c in of_material(lane, candidates)))
+    # Product words any system preset of the material has: one the spool
+    # names rules out a preset without it ("ePLA-Silk Bronze" is not "eSUN
+    # PLA+"). Not a user preset's, as one named for a spool ("Bambu Lab Jade
+    # White PLA #3") would make its colors product words.
+    known = set().union(*(product_words(c, lane) for c in of_material(lane, candidates) if c.system))
     found, most = "", -1
     for candidate in rank(lane, candidates, hidden=True):
         if not candidate.base_system:

@@ -233,6 +233,11 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(product_id("eSun", "ePLA-Silk Bronze"), "")
         # A vendor is matched by whole words of a preset's name.
         self.assertEqual(product_id("Ba", "Jade White"), "")
+        # A user preset named for a spool does not make its colors product words.
+        spool = Candidate(name="Bambu Lab Jade White PLA #3", type="PLA", vendor="Bambu Lab", system=False,
+                          file=candidates[0].file, base="Bambu PLA Basic @System", base_system=True)
+        self.assertEqual(presets.product_id(lane("PLA", "Bambu Lab", "Jade White"), candidates + [spool], ids),
+                         "OFbasic1")
         # The sync picks that product before Spoolman holds its id.
         matte = lane("PLA", "Bambu Lab", "Matte Scarlet Red")
         self.assertEqual(presets.match(matte, candidates, ids), "OFmatte1")
