@@ -97,6 +97,19 @@ class CollectTest(unittest.TestCase):
                           ("My PETG", "PETG", "Me", False, "Generic PETG", False, "Generic PETG", "petg.json", True),
                           ("Breakaway", "PLA", "", False, "", True, "Breakaway", "breakaway.json", True)])
 
+    def test_a_left_out_preset_says_why_in_the_miss_reason(self):
+        Preset = fake_orca.Preset
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA", "filament_vendor": "Bambu Lab"}, name="Bambu PLA Basic @BBL X1C",
+                   is_system=True, is_compatible=False),
+            Preset({"filament_type": "PLA", "filament_vendor": "Bambu Lab"}, name="Bambu PLA Basic @System",
+                   is_system=True, is_compatible=False),
+        ])
+        candidates = presets.collect(bundle)
+        lane = Lane(material="PLA", vendor="Bambu Lab", filament_name="Jade White")
+        self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
+                         "Bambu PLA Basic @System: not compatible with this printer")
+
     def test_user_presets_stand_for_their_system_preset(self):
         Preset = fake_orca.Preset
         bundle = fake_orca.PresetBundle(filaments=[

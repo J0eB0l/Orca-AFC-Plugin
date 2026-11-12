@@ -85,20 +85,30 @@ def _base(filaments, preset):
     return preset
 
 
+# The filament presets the last collect() left out and why, as (name, vendor,
+# type, reason), so the Filament IDs sheet can say why a vendor has none.
+dropped: list = []
+
+
 def collect(bundle) -> list:
     """The filament presets compatible with the selected printer that the
     sync can pick: the visible ones, and the hidden system ones, which
     OrcaSlicer's own sync picks by filament id too and then ticks. Runs on
     OrcaSlicer's UI thread."""
-    out = []
+    out, left = [], []
     filaments = bundle.filaments
     for index in range(filaments.size()):
         preset = filaments.preset(index)
-        if (preset is None or not preset.is_compatible or preset.is_default
-                or not (preset.is_visible or preset.is_system)):
+        if preset is None or preset.is_default:
             continue
         base = _base(filaments, preset)
-        if base is None or not base.is_compatible:
+        why = ("not compatible with this printer" if not preset.is_compatible
+               else "a hidden user preset" if not (preset.is_visible or preset.is_system)
+               else "its parent is missing" if base is None
+               else "its system preset is not compatible" if not base.is_compatible else "")
+        if why:
+            left.append((str(preset.name), _first(preset.config_value("filament_vendor")),
+                         _first(preset.config_value("filament_type")).upper(), why))
             continue
         out.append(Candidate(
             name=str(preset.name),
@@ -112,6 +122,7 @@ def collect(bundle) -> list:
             base_system=bool(base.is_system),
             visible=bool(preset.is_visible),
         ))
+    dropped[:] = left
     return out
 
 
@@ -502,6 +513,12 @@ def product_miss(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     ids.learn(candidates)
     of_vendor = [c for c in of_material(lane, candidates) if c.base_system and _of_vendor(c, vendor)]
     if not of_vendor:
+        kinds = set(lane_types(lane))
+        left = [d for d in dropped if d[2] in kinds and (d[1].lower() == vendor
+                                                         or set(name_words(vendor)) <= set(name_words(d[0])))]
+        if left:
+            name, _, _, why = min(left, key=lambda d: (not d[0].endswith("@System"), d[0]))
+            return "%s: %s" % (name, why)
         return "No %s %s preset fits this printer" % (lane.vendor, lane.material)
     names = ", ".join(c.name for c in of_vendor[:2])
     if not any(ids.of(c) for c in of_vendor):
