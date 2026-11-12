@@ -97,6 +97,18 @@ class CollectTest(unittest.TestCase):
                           ("My PETG", "PETG", "Me", False, "Generic PETG", False, "Generic PETG", "petg.json", True),
                           ("Breakaway", "PLA", "", False, "", True, "Breakaway", "breakaway.json", True)])
 
+    def test_a_vendor_comes_quoted_as_orcaslicer_serializes_it(self):
+        # OrcaSlicer hands a list of strings over serialized: ["Bambu Lab"] is '"Bambu Lab"'.
+        Preset = fake_orca.Preset
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA", "filament_vendor": '"Bambu Lab"'}, name="Bambu PLA Basic @System",
+                   is_system=True),
+            Preset({"filament_type": "PLA;PLA", "filament_vendor": "Elegoo;Elegoo"}, name="Elegoo PLA @System",
+                   is_system=True),
+        ])
+        self.assertEqual([(c.vendor, c.type) for c in presets.collect(bundle)],
+                         [("Bambu Lab", "PLA"), ("Elegoo", "PLA")])
+
     def test_a_left_out_preset_says_why_in_the_miss_reason(self):
         Preset = fake_orca.Preset
         bundle = fake_orca.PresetBundle(filaments=[

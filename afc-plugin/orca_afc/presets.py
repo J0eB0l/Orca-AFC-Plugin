@@ -63,10 +63,23 @@ class Candidate:
 
 
 def _first(value) -> str:
-    """A setting OrcaSlicer hands over as one value or a per-extruder list."""
+    """A setting OrcaSlicer hands over as one value or a per-extruder list.
+    A list of strings comes serialized: values joined by ";", each one with a
+    space, quote or ";" in it quoted C-style (["Bambu Lab"] is '"Bambu Lab"')."""
     if isinstance(value, (list, tuple)):
         value = value[0] if value else ""
-    return "" if value is None else str(value)
+    text = "" if value is None else str(value)
+    if not text.startswith('"'):
+        return text.split(";", 1)[0]
+    out, i = [], 1
+    while i < len(text) and text[i] != '"':
+        if text[i] == "\\" and i + 1 < len(text):
+            i += 1
+            out.append({"n": "\n", "r": "\r"}.get(text[i], text[i]))
+        else:
+            out.append(text[i])
+        i += 1
+    return "".join(out)
 
 
 def _base(filaments, preset):
