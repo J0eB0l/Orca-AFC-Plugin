@@ -497,4 +497,5 @@ def _plan_row(filament, candidates: list, ids) -> dict | None:
         preset = found[0].name if found else ""
     return {"filament": filament["id"], "name": " ".join(x for x in (lane.vendor, lane.filament_name) if x) or "#%d" % filament["id"],
             "material": lane.material, "filament_id": filament_id, "preset": preset,
+            "why": "" if filament_id else presets.product_miss(lane, candidates, ids),
             "state": "has" if has else "fill" if filament_id else "none"}

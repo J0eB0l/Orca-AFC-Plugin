@@ -238,6 +238,12 @@ class FilamentIdTest(unittest.TestCase):
                           file=candidates[0].file, base="Bambu PLA Basic @System", base_system=True)
         self.assertEqual(presets.product_id(lane("PLA", "Bambu Lab", "Jade White"), candidates + [spool], ids),
                          "OFbasic1")
+        # Why a spool gets none, for the Filament IDs sheet.
+        self.assertEqual(presets.product_miss(lane("PLA", "Inland", "Red"), candidates, ids),
+                         "No Inland PLA preset fits this printer")
+        self.assertEqual(presets.product_miss(lane("PLA", "eSun", "ePLA-Silk Bronze"), candidates, ids),
+                         "Its name is none of eSUN PLA+ @System")
+        self.assertEqual(presets.product_miss(lane("PLA", "", "Red"), candidates, ids), "Spoolman names no vendor")
         # The sync picks that product before Spoolman holds its id.
         matte = lane("PLA", "Bambu Lab", "Matte Scarlet Red")
         self.assertEqual(presets.match(matte, candidates, ids), "OFmatte1")

@@ -486,6 +486,29 @@ def product_words(candidate: Candidate, lane: Lane) -> set:
     return set(name_words(candidate.name)) - skip
 
 
+def _of_vendor(candidate: Candidate, vendor: str) -> bool:
+    """Whether a preset is the spool vendor's: by its vendor, or the whole
+    words of the vendor's name in its own ("Bambu" for "Bambu PLA Basic")."""
+    return candidate.vendor.lower() == vendor or set(name_words(vendor)) <= set(name_words(candidate.name))
+
+
+def product_miss(lane: Lane, candidates: list, ids: FilamentIds) -> str:
+    """Why product_id() found no id for the lane's spool, for the Filament
+    IDs sheet: no preset of its vendor and material fits this printer, none
+    of them carries an id, or its name names none of their products."""
+    vendor = (lane.vendor or "").strip().lower()
+    if not vendor or vendor == "generic":
+        return "Spoolman names no vendor"
+    ids.learn(candidates)
+    of_vendor = [c for c in of_material(lane, candidates) if c.base_system and _of_vendor(c, vendor)]
+    if not of_vendor:
+        return "No %s %s preset fits this printer" % (lane.vendor, lane.material)
+    names = ", ".join(c.name for c in of_vendor[:2])
+    if not any(ids.of(c) for c in of_vendor):
+        return "No filament ID on %s" % names
+    return "Its name is none of %s" % names
+
+
 def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     """The id to save on the lane's Spoolman filament: that of a preset that
     is, or comes from, a system preset of the spool's vendor whose product
@@ -512,7 +535,7 @@ def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     for candidate in rank(lane, candidates, hidden=True):
         if not candidate.base_system:
             continue
-        if candidate.vendor.lower() != vendor and not set(name_words(vendor)) <= set(name_words(candidate.name)):
+        if not _of_vendor(candidate, vendor):
             continue
         wanted = product_words(candidate, lane)
         if len(wanted) <= most or not wanted <= named or (named & known) - wanted:

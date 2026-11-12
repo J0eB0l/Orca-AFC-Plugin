@@ -449,7 +449,7 @@
       if (r.state !== last) { html += '<div class="section-label">' + label[r.state] + '</div>'; last = r.state; }
       html += '<div class="fid-row"><div class="who"><b>' + esc(r.name) + '</b><span class="hint">' + esc(r.material || '') + '</span></div>' +
         '<div class="then">' + (r.filament_id ? esc(r.preset || 'no preset of this printer') + ' <span class="pill' + (r.state === 'fill' ? ' accent' : '') + '">' +
-        esc(r.filament_id) + '</span>' : '') + '</div></div>';
+        esc(r.filament_id) + '</span>' : '<span class="hint">' + esc(r.why || '') + '</span>') + '</div></div>';
     }
     html += '</div><div class="sheet-foot"><button class="btn primary" id="fid-fill"' + (fill.length ? '' : ' disabled') + '>' +
       (fill.length ? 'Give ' + fill.length + ' filament' + (fill.length === 1 ? '' : 's') + ' an ID' : 'Nothing to fill') + '</button></div></div>';
