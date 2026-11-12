@@ -43,6 +43,9 @@ LIBRARY = "OrcaFilamentLibrary"
 # Words that make a spool support material, so support presets may fit it.
 SUPPORT_WORDS = {"support", "breakaway"}
 
+# Words a preset name holds for the plain product of its vendor and material.
+PLAIN_WORDS = {"basic", "generic"}
+
 
 @dataclass
 class Candidate:
@@ -423,45 +426,85 @@ def by_id(lane: Lane, candidates: list, ids: FilamentIds) -> list:
     return sorted(found, key=lambda c: (not c.system, c.name))
 
 
+def by_product(lane: Lane, candidates: list, ids: FilamentIds) -> list:
+    """For a spool that names no filament id, the presets carrying the id
+    product_id() would save for it, system presets first, so a filament
+    Spoolman names by its color ("Matte Scarlet Red") syncs as its product
+    before Spoolman holds the id."""
+    if lane_id(lane):
+        return []
+    wanted = product_id(lane, candidates, ids)
+    if not wanted:
+        return []
+    found = [c for c in of_material(lane, candidates) if ids.of(c) == wanted]
+    return sorted(found, key=lambda c: (not c.system, c.name))
+
+
 def best(lane: Lane, candidates: list, ids: FilamentIds | None = None) -> str:
     """The name of the preset that fits the lane's spool best: the one a
     spool's own preset is copied from. "" when none is of its material."""
-    found = (by_id(lane, candidates, ids) if ids else []) or rank(lane, candidates) or generic(lane, candidates)
+    found = ((by_id(lane, candidates, ids) or by_product(lane, candidates, ids)) if ids else []) \
+        or rank(lane, candidates) or generic(lane, candidates)
     return found[0].name if found else ""
 
 
 def match(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     """The filament id the sync should pick for a loaded lane: the id its
-    Spoolman filament holds when a preset carries it, else the best scored
+    Spoolman filament holds when a preset carries it, else the one
+    product_id() reads from its vendor and name, else the best scored
     preset's, else the generic one's, else UNKNOWN_FILAMENT_ID so the sync
     still falls back on the material."""
     ids.learn(candidates)
-    for candidate in by_id(lane, candidates, ids) + rank(lane, candidates) + generic(lane, candidates):
+    found = by_id(lane, candidates, ids) + by_product(lane, candidates, ids)
+    for candidate in found + rank(lane, candidates) + generic(lane, candidates):
         filament_id = ids.of(candidate)
         if filament_id:
             return filament_id
     return UNKNOWN_FILAMENT_ID
 
 
+def product_words(candidate: Candidate, lane: Lane) -> set:
+    """The words of a preset's name that name its product, which a spool must
+    name too: "Bambu PLA Matte" asks for "matte", "Polymaker PolyLite PLA"
+    for "polylite", and "Bambu PLA Basic" for nothing, as "basic" is what a
+    spool named only by its color is."""
+    skip = set(name_words(candidate.vendor)) | set(name_words(lane.vendor or "")) | PLAIN_WORDS
+    for kind in [candidate.type] + lane_types(lane):
+        skip.update(name_words(kind))
+    return set(name_words(candidate.name)) - skip
+
+
 def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
-    """The id to save on the lane's Spoolman filament: that of the best
-    scored preset that is, or comes from, a system preset and names both the
-    spool's vendor and its product. "" when none does, as a generic or
-    another product's id would keep OrcaSlicer on that preset for good. A
-    Bambu tag's id that a preset carries comes first."""
+    """The id to save on the lane's Spoolman filament: that of a preset that
+    is, or comes from, a system preset of the spool's vendor whose product
+    words (product_words()) the spool's name all holds, and no product word
+    of another preset of its material, the one naming the most of them, the
+    best scored on a tie. "Matte Scarlet Red" gets "Bambu
+    PLA Matte", "Jade White" "Bambu PLA Basic". "" when none does, as a
+    generic or another product's id would keep OrcaSlicer on that preset for
+    good. A Bambu tag's id that a preset carries comes first."""
     translated = "" if lane.filament_id else bambu_ids.to_orca(lane.bambu_id)
     if translated and by_id(lane, candidates, ids):
         return translated
     vendor = (lane.vendor or "").strip().lower()
-    product = (lane.filament_name or "").strip().lower()
-    if not vendor or vendor == "generic" or not product:
+    if not vendor or vendor == "generic" or not (lane.filament_name or "").strip():
         return ""
     ids.learn(candidates)
+    named = set(name_words(lane.filament_name))
+    # Product words any preset of the material has: one the spool names
+    # rules out a preset without it ("ePLA-Silk Bronze" is not "eSUN PLA+").
+    known = set().union(*(product_words(c, lane) for c in of_material(lane, candidates)))
+    found, most = "", -1
     for candidate in rank(lane, candidates):
-        name = candidate.name.lower()
-        if candidate.base_system and product in name and (candidate.vendor.lower() == vendor or vendor in name):
-            filament_id = ids.of(candidate)
-            if filament_id:
-                return filament_id
-    return ""
+        if not candidate.base_system:
+            continue
+        if candidate.vendor.lower() != vendor and not set(name_words(vendor)) <= set(name_words(candidate.name)):
+            continue
+        wanted = product_words(candidate, lane)
+        if len(wanted) <= most or not wanted <= named or (named & known) - wanted:
+            continue
+        filament_id = ids.of(candidate)
+        if filament_id:
+            found, most = filament_id, len(wanted)
+    return found
 

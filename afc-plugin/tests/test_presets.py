@@ -202,6 +202,38 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.product_id(lane(vendor="Sunlu", product="PLA"), candidates, ids), "")
         self.assertEqual(presets.product_id(lane(vendor="", product="PolyLite"), candidates, ids), "")
 
+    def test_product_id_reads_the_product_from_a_color_name(self):
+        # Spoolman's filament database names a filament by its color.
+        def system(name, filament_id, vendor="Bambu Lab", kind="PLA"):
+            path = self.write(os.path.join(self.system, "V", "filament", name + ".json"), {"filament_id": filament_id})
+            return Candidate(name=name + " @System", type=kind, vendor=vendor, system=True, file=path, base_system=True)
+
+        candidates = [system("Bambu PLA Basic", "OFbasic1"), system("Bambu PLA Matte", "OFmatte1"),
+                      system("Bambu Support For PLA", "OFsupp01"), system("Bambu ABS", "OFabs001", kind="ABS"),
+                      system("eSUN PLA+", "OFesun01", vendor="eSUN"), system("eSUN PLA-Silk", "OFesilk1", vendor="eSUN",
+                                                                            kind="PLA-SILK"),
+                      system("Generic PLA Silk", "OFgsilk1", vendor="Generic"),
+                      system("Generic PLA", "OFDSrzZ8", vendor="Generic")]
+        ids = FilamentIds()
+
+        def product_id(vendor, product, material="PLA"):
+            return presets.product_id(lane(material, vendor, product), candidates, ids)
+
+        self.assertEqual(product_id("Bambu Lab", "Jade White"), "OFbasic1")
+        self.assertEqual(product_id("Bambu Lab", "Matte Scarlet Red"), "OFmatte1")
+        self.assertEqual(product_id("Bambu Lab", "Support for PLA White"), "OFsupp01")
+        self.assertEqual(product_id("Bambu Lab", "Bambu Green", "ABS"), "OFabs001")
+        self.assertEqual(product_id("Bambu", "Bambu Basic"), "OFbasic1")
+        self.assertEqual(product_id("eSun", "PLA+ Grey", "PLA+"), "OFesun01")
+        # A product word no preset of the vendor has: not its plain preset.
+        self.assertEqual(product_id("eSun", "ePLA-Silk Bronze"), "")
+        # A vendor is matched by whole words of a preset's name.
+        self.assertEqual(product_id("Ba", "Jade White"), "")
+        # The sync picks that product before Spoolman holds its id.
+        matte = lane("PLA", "Bambu Lab", "Matte Scarlet Red")
+        self.assertEqual(presets.match(matte, candidates, ids), "OFmatte1")
+        self.assertEqual(presets.best(matte, candidates, ids), "Bambu PLA Matte @System")
+
     def test_a_bambu_tag_id_translates_to_the_preset_carrying_ours(self):
         from orca_afc import bambu_ids
         self.addCleanup(bambu_ids.set_map, {})

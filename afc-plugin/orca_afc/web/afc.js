@@ -439,7 +439,7 @@
     const fill = rows.filter((r) => r.state === 'fill');
     let html = '<div class="drawer wide" id="drawer"><div class="sheet-head"><span class="logo">' + icon('afc') + '</span>' +
       '<div class="grow"><h2>Filament IDs</h2><span class="hint">OrcaSlicer picks a spool\'s preset by the filament ID on its Spoolman filament. ' +
-      'A filament with no ID gets the ID of the system preset that names its vendor and product. IDs already there stay.</span></div>' +
+      'A filament with no ID gets the ID of its vendor\'s system preset for the product its name holds; a name that is only a color gets the vendor\'s plain preset. IDs already there stay.</span></div>' +
       '<button class="btn icon ghost" id="close" title="Close">' + icon('close') + '</button></div><div class="sheet-body">';
     if (fidRows === null) html += '<div class="hint">Reading Spoolman…</div>';
     else if (!rows.length) html += '<div class="hint">Spoolman has no filaments.</div>';
