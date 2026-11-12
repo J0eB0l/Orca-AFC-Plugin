@@ -75,9 +75,11 @@ std::string family(const std::string& material)
     return word;
 }
 
-bool same_filament(const MachineObject::AgentLane& lane, const PrintConfig& config, int filament)
+// A lane AFC knows no color for syncs to a slot with no color either, so with `colorless` such a lane
+// holds the filament on its material alone.
+bool same_filament(const MachineObject::AgentLane& lane, const PrintConfig& config, int filament, bool colorless = false)
 {
-    return rgb(lane.color) == rgb(config.filament_colour.get_at(filament)) &&
+    return (rgb(lane.color) == rgb(config.filament_colour.get_at(filament)) || (colorless && rgb(lane.color).empty())) &&
            family(lane.type) == family(config.filament_type.get_at(filament));
 }
 
@@ -136,7 +138,7 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         auto seconds  = unit_seconds.find(agent.unit);
         lane.seconds  = seconds != unit_seconds.end() ? seconds->second : UNKNOWN_SECONDS;
         for (int tool : agent.tools)
-            if (agent.loaded && tool >= 0 && size_t(tool) < filaments && !placed.count(tool) && same_filament(agent, config, tool)) {
+            if (agent.loaded && tool >= 0 && size_t(tool) < filaments && !placed.count(tool) && same_filament(agent, config, tool, true)) {
                 lane.filament = tool;
                 placed.insert(tool);
                 break;
@@ -170,14 +172,19 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         if (lane.filament >= 0 && size_t(lane.filament) < held.size() && held[lane.filament] >= 0 && lane.toolhead >= 0)
             held[lane.filament] = lane.toolhead;
     out.now = AFCLayout::count_changes(layer_filaments, held);
-    // A printed filament no loaded lane holds, or sliced onto another toolhead than its lane feeds, means the
-    // project's slots were not synced from these lanes, so "now" and the moves are counted from stale slots.
+    // A printed filament that a loaded lane mapped to its T number does not hold, or sliced onto another
+    // toolhead than its lane feeds, means the project's slots were not synced from these lanes, so "now" and
+    // the moves are counted from stale slots. A filament whose T number has no loaded lane is left out: a
+    // sync cannot fill it, and the moves already ask for its spool.
     out.unsynced.clear();
     for (size_t f = 0; f < out.current.size(); ++f) {
         if (out.current[f] < 0)
             continue;
         auto lane = std::find_if(out.lanes.begin(), out.lanes.end(), [f](const AFCLayout::Lane& l) { return l.filament == int(f); });
-        if (lane == out.lanes.end() || (lane->toolhead >= 0 && lane->toolhead != out.current[f]))
+        const bool syncable = std::any_of(out.agent_lanes.begin(), out.agent_lanes.end(), [f](const MachineObject::AgentLane& l) {
+            return l.loaded && std::find(l.tools.begin(), l.tools.end(), int(f)) != l.tools.end();
+        });
+        if (lane == out.lanes.end() ? syncable : lane->toolhead >= 0 && lane->toolhead != out.current[f])
             out.unsynced.push_back(int(f));
     }
 
