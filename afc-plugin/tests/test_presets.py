@@ -108,7 +108,19 @@ class CollectTest(unittest.TestCase):
         candidates = presets.collect(bundle)
         lane = Lane(material="PLA", vendor="Bambu Lab", filament_name="Jade White")
         self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
-                         "Bambu PLA Basic @System: not compatible with this printer")
+                         'Bambu PLA Basic @System: vendor "Bambu Lab", type "PLA", system, not compatible')
+        # One whose vendor reads otherwise is still named, with what it reads.
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA", "filament_vendor": "Generic"}, name="Bambu PLA Basic @System",
+                   is_system=True, is_visible=False),
+        ])
+        candidates = presets.collect(bundle)
+        self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
+                         'Bambu PLA Basic @System: vendor "Generic", type "PLA", system, hidden')
+        # With nothing of the vendor at all, it says how many presets it saw.
+        lane = Lane(material="PLA", vendor="Inland", filament_name="Red")
+        self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
+                         "No Inland PLA preset fits this printer (of 1 presets)")
 
     def test_user_presets_stand_for_their_system_preset(self):
         Preset = fake_orca.Preset
@@ -252,8 +264,8 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.product_id(lane("PLA", "Bambu Lab", "Jade White"), candidates + [spool], ids),
                          "OFbasic1")
         # Why a spool gets none, for the Filament IDs sheet.
-        self.assertEqual(presets.product_miss(lane("PLA", "Inland", "Red"), candidates, ids),
-                         "No Inland PLA preset fits this printer")
+        self.assertTrue(presets.product_miss(lane("PLA", "Inland", "Red"), candidates, ids).startswith(
+            "No Inland PLA preset fits this printer"))
         self.assertEqual(presets.product_miss(lane("PLA", "eSun", "ePLA-Silk Bronze"), candidates, ids),
                          "Its name is none of eSUN PLA+ @System")
         self.assertEqual(presets.product_miss(lane("PLA", "", "Red"), candidates, ids), "Spoolman names no vendor")
