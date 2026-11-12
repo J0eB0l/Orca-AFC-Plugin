@@ -89,10 +89,13 @@ class CollectTest(unittest.TestCase):
             Preset({"filament_type": "PLA", "filament_is_support": "1"}, name="Breakaway", file="breakaway.json"),
         ])
         found = presets.collect(bundle)
-        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits, c.support, c.base, c.file) for c in found],
-                         [("Generic PLA", "PLA", "Generic", True, "", False, "Generic PLA", "pla.json"),
-                          ("My PETG", "PETG", "Me", False, "Generic PETG", False, "Generic PETG", "petg.json"),
-                          ("Breakaway", "PLA", "", False, "", True, "Breakaway", "breakaway.json")])
+        # A hidden system preset comes too, for the sync to pick by its filament id.
+        self.assertEqual([(c.name, c.type, c.vendor, c.system, c.inherits, c.support, c.base, c.file, c.visible)
+                          for c in found],
+                         [("Generic PLA", "PLA", "Generic", True, "", False, "Generic PLA", "pla.json", True),
+                          ("Generic PETG", "PETG", "", True, "", False, "Generic PETG", "petg.json", False),
+                          ("My PETG", "PETG", "Me", False, "Generic PETG", False, "Generic PETG", "petg.json", True),
+                          ("Breakaway", "PLA", "", False, "", True, "Breakaway", "breakaway.json", True)])
 
     def test_user_presets_stand_for_their_system_preset(self):
         Preset = fake_orca.Preset
@@ -109,7 +112,8 @@ class CollectTest(unittest.TestCase):
         ])
         # The sync never picks a preset whose system preset does not fit the printer.
         self.assertEqual([(c.name, c.base, c.file) for c in presets.collect(bundle)],
-                         [("My PLA #13", "Generic PLA @System", "generic.json")])
+                         [("My PLA #13", "Generic PLA @System", "generic.json"),
+                          ("Generic PLA @System", "Generic PLA @System", "generic.json")])
 
 
 class FilamentIdTest(unittest.TestCase):
@@ -149,7 +153,7 @@ class FilamentIdTest(unittest.TestCase):
             Preset({"filament_type": "PLA"}, name="Spool 7", file=root),
         ])
         ids = FilamentIds()
-        self.assertEqual([ids.of(c) for c in presets.collect(bundle)], ["OFDSrzZ8", "P5ba6812"])
+        self.assertEqual([ids.of(c) for c in presets.collect(bundle)], ["OFDSrzZ8", "OFDSrzZ8", "P5ba6812"])
 
     def test_loops_and_missing_files(self):
         a = self.write(os.path.join(self.system, "V", "filament", "a.json"), {"inherits": "b"})
@@ -233,6 +237,27 @@ class FilamentIdTest(unittest.TestCase):
         matte = lane("PLA", "Bambu Lab", "Matte Scarlet Red")
         self.assertEqual(presets.match(matte, candidates, ids), "OFmatte1")
         self.assertEqual(presets.best(matte, candidates, ids), "Bambu PLA Matte @System")
+
+    def test_a_hidden_system_preset_is_picked_only_by_its_filament_id(self):
+        # Presets not ticked in the filament list still give a color-named
+        # filament its product's id, and the sync picks one by that id.
+        def system(name, filament_id, vendor="Bambu Lab", visible=False):
+            path = self.write(os.path.join(self.system, "V", "filament", name + ".json"), {"filament_id": filament_id})
+            return Candidate(name=name + " @System", type="PLA", vendor=vendor, system=True, file=path,
+                             base_system=True, visible=visible)
+
+        candidates = [system("Bambu PLA Basic", "OFbasic1"), system("Bambu PLA Matte", "OFmatte1"),
+                      system("Generic PLA", "OFDSrzZ8", vendor="Generic", visible=True)]
+        ids = FilamentIds()
+        jade = lane("PLA", "Bambu Lab", "Jade White")
+        self.assertEqual(presets.product_id(jade, candidates, ids), "OFbasic1")
+        self.assertEqual(presets.best(jade, candidates, ids), "Bambu PLA Basic @System")
+        jade.filament_id = "OFbasic1"
+        self.assertEqual(presets.match(jade, candidates, ids), "OFbasic1")
+        # By name alone a hidden preset is never picked.
+        named = lane("PLA", "Bambu Lab", "Bambu PLA Matte")
+        self.assertEqual([c.name for c in presets.rank(named, candidates)], [])
+        self.assertEqual(presets.generic(named, candidates)[0].name, "Generic PLA @System")
 
     def test_a_bambu_tag_id_translates_to_the_preset_carrying_ours(self):
         from orca_afc import bambu_ids

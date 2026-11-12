@@ -59,6 +59,7 @@ class Candidate:
     support: bool = False  # filament_is_support
     base: str = ""     # that preset's name: this one's, or the system preset it comes from
     base_system: bool = False  # whether that preset is a system preset
+    visible: bool = True  # ticked in the filament list; a hidden one is picked only by its filament id
 
 
 def _first(value) -> str:
@@ -85,13 +86,16 @@ def _base(filaments, preset):
 
 
 def collect(bundle) -> list:
-    """The visible filament presets compatible with the selected printer that
-    the sync can pick. Runs on OrcaSlicer's UI thread."""
+    """The filament presets compatible with the selected printer that the
+    sync can pick: the visible ones, and the hidden system ones, which
+    OrcaSlicer's own sync picks by filament id too and then ticks. Runs on
+    OrcaSlicer's UI thread."""
     out = []
     filaments = bundle.filaments
     for index in range(filaments.size()):
         preset = filaments.preset(index)
-        if preset is None or not preset.is_visible or not preset.is_compatible or preset.is_default:
+        if (preset is None or not preset.is_compatible or preset.is_default
+                or not (preset.is_visible or preset.is_system)):
             continue
         base = _base(filaments, preset)
         if base is None or not base.is_compatible:
@@ -106,6 +110,7 @@ def collect(bundle) -> list:
             support=_first(preset.config_value("filament_is_support")).split(",")[0].strip().lower() in ("1", "true"),
             base=str(base.name),
             base_system=bool(base.is_system),
+            visible=bool(preset.is_visible),
         ))
     return out
 
@@ -152,15 +157,21 @@ def of_material(lane: Lane, candidates: list) -> list:
     return []
 
 
-def rank(lane: Lane, candidates: list) -> list:
-    """Presets of the lane's material its spool names, best first. Empty
-    when the spool's vendor and product match no preset."""
+def shown(candidates: list) -> list:
+    """The presets ticked in the filament list, the only ones picked by name."""
+    return [c for c in candidates if c.visible]
+
+
+def rank(lane: Lane, candidates: list, hidden: bool = False) -> list:
+    """Presets of the lane's material its spool names, best first, of the
+    ticked ones unless `hidden`. Empty when the spool's vendor and product
+    match no preset."""
     vendor = (lane.vendor or "").strip().lower()
     product = (lane.filament_name or "").strip().lower()
     words = spool_words(lane)
 
     scored = []
-    for c in of_material(lane, candidates):
+    for c in of_material(lane, candidates if hidden else shown(candidates)):
         name = c.name.lower()
         score = 0
         if product and product in name:
@@ -185,7 +196,7 @@ def generic(lane: Lane, candidates: list) -> list:
         extra = sum(1 for word in name_words(c.name) if word not in words)
         return not c.name.lower().startswith("generic "), not c.system, extra, c.name
 
-    return sorted(of_material(lane, candidates), key=key)
+    return sorted(of_material(lane, shown(candidates)), key=key)
 
 
 class FilamentIds:
@@ -417,27 +428,28 @@ def lane_id(lane: Lane) -> str:
 
 def by_id(lane: Lane, candidates: list, ids: FilamentIds) -> list:
     """The presets of the lane's material that carry the filament id its
-    spool names (lane_id()), system presets first. Empty without one."""
+    spool names (lane_id()), ticked and system presets first. Empty without
+    one."""
     wanted = lane_id(lane)
     if not wanted:
         return []
     ids.learn(candidates)
     found = [c for c in of_material(lane, candidates) if ids.of(c) == wanted]
-    return sorted(found, key=lambda c: (not c.system, c.name))
+    return sorted(found, key=lambda c: (not c.visible, not c.system, c.name))
 
 
 def by_product(lane: Lane, candidates: list, ids: FilamentIds) -> list:
     """For a spool that names no filament id, the presets carrying the id
-    product_id() would save for it, system presets first, so a filament
-    Spoolman names by its color ("Matte Scarlet Red") syncs as its product
-    before Spoolman holds the id."""
+    product_id() would save for it, ticked and system presets first, so a
+    filament Spoolman names by its color ("Matte Scarlet Red") syncs as its
+    product before Spoolman holds the id."""
     if lane_id(lane):
         return []
     wanted = product_id(lane, candidates, ids)
     if not wanted:
         return []
     found = [c for c in of_material(lane, candidates) if ids.of(c) == wanted]
-    return sorted(found, key=lambda c: (not c.system, c.name))
+    return sorted(found, key=lambda c: (not c.visible, not c.system, c.name))
 
 
 def best(lane: Lane, candidates: list, ids: FilamentIds | None = None) -> str:
@@ -495,7 +507,7 @@ def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     # rules out a preset without it ("ePLA-Silk Bronze" is not "eSUN PLA+").
     known = set().union(*(product_words(c, lane) for c in of_material(lane, candidates)))
     found, most = "", -1
-    for candidate in rank(lane, candidates):
+    for candidate in rank(lane, candidates, hidden=True):
         if not candidate.base_system:
             continue
         if candidate.vendor.lower() != vendor and not set(name_words(vendor)) <= set(name_words(candidate.name)):
