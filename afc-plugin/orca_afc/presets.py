@@ -98,12 +98,6 @@ def _base(filaments, preset):
     return preset
 
 
-# The filament presets the last collect() left out and why, as (name, vendor,
-# type, reason), so the Filament IDs sheet can say why a vendor has none.
-dropped: list = []
-# Every filament preset the last collect() saw, as (name, vendor, type, flags),
-# for the sheet to show how OrcaSlicer hands over one it never picked.
-seen: list = []
 
 
 def collect(bundle) -> list:
@@ -111,25 +105,15 @@ def collect(bundle) -> list:
     sync can pick: the visible ones, and the hidden system ones, which
     OrcaSlicer's own sync picks by filament id too and then ticks. Runs on
     OrcaSlicer's UI thread."""
-    out, left, every = [], [], []
+    out = []
     filaments = bundle.filaments
     for index in range(filaments.size()):
         preset = filaments.preset(index)
         if preset is None or preset.is_default:
             continue
         base = _base(filaments, preset)
-        every.append((str(preset.name), _first(preset.config_value("filament_vendor")),
-                      _first(preset.config_value("filament_type")).upper(),
-                      "%s%s%s" % ("system" if preset.is_system else "user",
-                                  "" if preset.is_compatible else ", not compatible",
-                                  "" if preset.is_visible else ", hidden")))
-        why = ("not compatible with this printer" if not preset.is_compatible
-               else "a hidden user preset" if not (preset.is_visible or preset.is_system)
-               else "its parent is missing" if base is None
-               else "its system preset is not compatible" if not base.is_compatible else "")
-        if why:
-            left.append((str(preset.name), _first(preset.config_value("filament_vendor")),
-                         _first(preset.config_value("filament_type")).upper(), why))
+        if (not preset.is_compatible or not (preset.is_visible or preset.is_system)
+                or base is None or not base.is_compatible):
             continue
         out.append(Candidate(
             name=str(preset.name),
@@ -143,8 +127,6 @@ def collect(bundle) -> list:
             base_system=bool(base.is_system),
             visible=bool(preset.is_visible),
         ))
-    dropped[:] = left
-    seen[:] = every
     return out
 
 
@@ -527,31 +509,20 @@ def _of_vendor(candidate: Candidate, vendor: str) -> bool:
 
 def product_miss(lane: Lane, candidates: list, ids: FilamentIds) -> str:
     """Why product_id() found no id for the lane's spool, for the Filament
-    IDs sheet: no preset of its vendor and material fits this printer, none
-    of them carries an id, or its name names none of their products."""
+    IDs sheet: Spoolman names no brand, OrcaSlicer has no preset of its brand
+    and material for this printer, those presets carry no id, or its name
+    names none of their products."""
     vendor = (lane.vendor or "").strip().lower()
     if not vendor or vendor == "generic":
-        return "Spoolman names no vendor"
+        return "No brand in Spoolman"
     ids.learn(candidates)
     of_vendor = [c for c in of_material(lane, candidates) if c.base_system and _of_vendor(c, vendor)]
     if not of_vendor:
-        kinds = set(lane_types(lane))
-        left = [d for d in dropped if d[2] in kinds and (d[1].lower() == vendor
-                                                         or set(name_words(vendor)) <= set(name_words(d[0])))]
-        word = name_words(vendor)[:1]
-        named = [d for d in seen if d[0].endswith("@System") and set(word) <= set(name_words(d[0]))
-                 and (d[2] in kinds or kinds & set(w.upper() for w in name_words(d[0])))]
-        if named:
-            name, its_vendor, its_type, flags = min(named, key=lambda d: (d[2] not in kinds, len(d[0]), d[0]))
-            return "%s: vendor \"%s\", type \"%s\", %s" % (name, its_vendor, its_type, flags)
-        if left:
-            name, _, _, why = min(left, key=lambda d: (not d[0].endswith("@System"), d[0]))
-            return "%s: %s" % (name, why)
-        return "No %s %s preset fits this printer (of %d presets)" % (lane.vendor, lane.material, len(seen))
-    names = ", ".join(c.name for c in of_vendor[:2])
+        return "OrcaSlicer has no %s %s preset for this printer" % (lane.vendor, lane.material)
+    names = ", ".join(c.name.split(" @")[0] for c in of_vendor[:2])
     if not any(ids.of(c) for c in of_vendor):
-        return "No filament ID on %s" % names
-    return "Its name is none of %s" % names
+        return "OrcaSlicer's %s presets have no filament ID" % names
+    return "The name matches none of OrcaSlicer's %s %s presets (%s)" % (lane.vendor, lane.material, names)
 
 
 def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:

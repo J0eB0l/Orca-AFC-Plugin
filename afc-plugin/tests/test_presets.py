@@ -109,30 +109,16 @@ class CollectTest(unittest.TestCase):
         self.assertEqual([(c.vendor, c.type) for c in presets.collect(bundle)],
                          [("Bambu Lab", "PLA"), ("Elegoo", "PLA")])
 
-    def test_a_left_out_preset_says_why_in_the_miss_reason(self):
+    def test_a_preset_that_does_not_fit_the_printer_gives_no_id(self):
         Preset = fake_orca.Preset
         bundle = fake_orca.PresetBundle(filaments=[
-            Preset({"filament_type": "PLA", "filament_vendor": "Bambu Lab"}, name="Bambu PLA Basic @BBL X1C",
-                   is_system=True, is_compatible=False),
             Preset({"filament_type": "PLA", "filament_vendor": "Bambu Lab"}, name="Bambu PLA Basic @System",
                    is_system=True, is_compatible=False),
         ])
         candidates = presets.collect(bundle)
         lane = Lane(material="PLA", vendor="Bambu Lab", filament_name="Jade White")
         self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
-                         'Bambu PLA Basic @System: vendor "Bambu Lab", type "PLA", system, not compatible')
-        # One whose vendor reads otherwise is still named, with what it reads.
-        bundle = fake_orca.PresetBundle(filaments=[
-            Preset({"filament_type": "PLA", "filament_vendor": "Generic"}, name="Bambu PLA Basic @System",
-                   is_system=True, is_visible=False),
-        ])
-        candidates = presets.collect(bundle)
-        self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
-                         'Bambu PLA Basic @System: vendor "Generic", type "PLA", system, hidden')
-        # With nothing of the vendor at all, it says how many presets it saw.
-        lane = Lane(material="PLA", vendor="Inland", filament_name="Red")
-        self.assertEqual(presets.product_miss(lane, candidates, FilamentIds()),
-                         "No Inland PLA preset fits this printer (of 1 presets)")
+                         "OrcaSlicer has no Bambu Lab PLA preset for this printer")
 
     def test_user_presets_stand_for_their_system_preset(self):
         Preset = fake_orca.Preset
@@ -276,11 +262,11 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.product_id(lane("PLA", "Bambu Lab", "Jade White"), candidates + [spool], ids),
                          "OFbasic1")
         # Why a spool gets none, for the Filament IDs sheet.
-        self.assertTrue(presets.product_miss(lane("PLA", "Inland", "Red"), candidates, ids).startswith(
-            "No Inland PLA preset fits this printer"))
+        self.assertEqual(presets.product_miss(lane("PLA", "Inland", "Red"), candidates, ids),
+                         "OrcaSlicer has no Inland PLA preset for this printer")
         self.assertEqual(presets.product_miss(lane("PLA", "eSun", "ePLA-Silk Bronze"), candidates, ids),
-                         "Its name is none of eSUN PLA+ @System")
-        self.assertEqual(presets.product_miss(lane("PLA", "", "Red"), candidates, ids), "Spoolman names no vendor")
+                         "The name matches none of OrcaSlicer's eSun PLA presets (eSUN PLA+)")
+        self.assertEqual(presets.product_miss(lane("PLA", "", "Red"), candidates, ids), "No brand in Spoolman")
         # The sync picks that product before Spoolman holds its id.
         matte = lane("PLA", "Bambu Lab", "Matte Scarlet Red")
         self.assertEqual(presets.match(matte, candidates, ids), "OFmatte1")
