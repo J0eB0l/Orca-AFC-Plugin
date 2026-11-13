@@ -3698,6 +3698,10 @@ bool PartPlate::check_filament_printable(const DynamicPrintConfig &config, wxStr
             std::string filament_type = filament_types[filament_id];
             int filament_printable_status = filament_printables[filament_id];
             int extruder_idx = filament_map[filament_id] - 1;
+            // Orca: the mask is made for two nozzles (default 3). A toolhead past the second is only checked when
+            // the filament's mask has bits for it, so a printer with more toolheads isn't refused every filament.
+            if (extruder_idx >= 2 && (filament_printable_status >> 2) == 0)
+                continue;
             if (!(filament_printable_status >> extruder_idx & 1)) {
                 error_message = wxString::Format(extruder_idx == 0 ? _L("The left nozzle cannot print %s.") : _L("The right nozzle cannot print %s."),
                                                  filament_type);
