@@ -264,7 +264,7 @@ bool Print::has_tpu_filament() const
 
 // Called by Print::apply().
 // This method only accepts PrintConfig option keys.
-bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* new_config */, const std::vector<t_config_option_key> &opt_keys)
+bool Print::invalidate_state_by_config_options(const ConfigOptionResolver &new_config, const std::vector<t_config_option_key> &opt_keys)
 {
     if (opt_keys.empty())
         return false;
@@ -650,6 +650,18 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             invalidated |= this->invalidate_all_steps();
             // Continue with the other opt_keys to possibly invalidate any object specific steps.
         }
+    }
+
+    // Orca: with Multi-material per toolhead, a filament's line widths follow the nozzle of the toolhead
+    // it prints on (nozzle_diameter_for_filament), so moving filaments between toolheads of different
+    // nozzle sizes has to regenerate the paths, not only the wipe tower.
+    if (std::any_of(opt_keys.begin(), opt_keys.end(), [](const t_config_option_key &key) { return key == "filament_toolhead" || key == "filament_map"; })) {
+        const auto *memm    = dynamic_cast<const ConfigOptionBool *>(new_config.option("multi_extruder_multi_material"));
+        const auto *nozzles = dynamic_cast<const ConfigOptionFloats *>(new_config.option("nozzle_diameter"));
+        if (memm && memm->value && nozzles && !this->is_BBL_printer() &&
+            std::any_of(nozzles->values.begin(), nozzles->values.end(), [nozzles](double d) { return std::abs(d - nozzles->values.front()) > EPSILON; }))
+            osteps.insert(osteps.end(), {posPerimeters, posEstimateCurledExtrusions, posInfill, posSupportMaterial, posSimplifyPath,
+                                         posSimplifyInfill, posSimplifySupportPath});
     }
 
     sort_remove_duplicates(steps);

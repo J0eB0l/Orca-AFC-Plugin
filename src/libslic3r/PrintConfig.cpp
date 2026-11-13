@@ -148,9 +148,21 @@ size_t get_extruder_index(const GCodeConfig& config, unsigned int filament_id)
 double nozzle_diameter_for_filament(const PrintConfig& config, int filament_id, bool is_bbl_printer)
 {
     int extruder = filament_id;
-    if (is_bbl_printer && config.nozzle_diameter.size() > 1 &&
-        filament_id >= 1 && static_cast<size_t>(filament_id - 1) < config.filament_map.size())
-        extruder = config.filament_map.get_at(filament_id - 1);
+    if (config.nozzle_diameter.size() > 1 && filament_id >= 1) {
+        const size_t index = size_t(filament_id - 1);
+        if (is_bbl_printer) {
+            if (index < config.filament_map.size())
+                extruder = config.filament_map.get_at(index);
+        } else if (config.multi_extruder_multi_material.value) {
+            // Orca: the toolhead ToolOrdering prints the filament on: the toolhead of its AFC lane
+            // (filament_toolhead), else a manual map. Otherwise filament n is extruder n.
+            const int toolhead = index < config.filament_toolhead.size() ? config.filament_toolhead.get_at(index) : -1;
+            if (toolhead >= 0 && size_t(toolhead) < config.nozzle_diameter.size())
+                extruder = toolhead + 1;
+            else if (config.filament_map_mode.value == fmmManual && index < config.filament_map.size())
+                extruder = config.filament_map.get_at(index);
+        }
+    }
     return config.nozzle_diameter.get_at(extruder - 1);
 }
 

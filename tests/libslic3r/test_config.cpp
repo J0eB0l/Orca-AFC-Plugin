@@ -1992,3 +1992,31 @@ TEST_CASE("The print speed table keeps a bed outline when the extruders share no
     CHECK(outline.min == Point(0, 0));
     CHECK(outline.max == Point(scaled(350.), scaled(350.)));
 }
+
+TEST_CASE("A filament's nozzle diameter is the nozzle of the toolhead it prints on", "[Config]")
+{
+    // Three toolheads with 0.4, 0.6 and 0.8 nozzles, fed by a filament switcher; filament 1 sits on
+    // a lane of toolhead 3, filament 2's lane toolhead is unknown and the manual map puts it on toolhead 2.
+    PrintConfig config;
+    config.nozzle_diameter.values              = {0.4, 0.6, 0.8};
+    config.multi_extruder_multi_material.value = true;
+    config.filament_toolhead.values            = {2, -1, -1};
+    config.filament_map.values                 = {1, 2, 1};
+    config.filament_map_mode.value             = fmmManual;
+
+    CHECK_THAT(nozzle_diameter_for_filament(config, 1, false), Catch::Matchers::WithinAbs(0.8, 1e-9));
+    CHECK_THAT(nozzle_diameter_for_filament(config, 2, false), Catch::Matchers::WithinAbs(0.6, 1e-9));
+    CHECK_THAT(nozzle_diameter_for_filament(config, 3, false), Catch::Matchers::WithinAbs(0.4, 1e-9));
+
+    SECTION("in the automatic map mode filament n prints on extruder n unless its lane names a toolhead")
+    {
+        config.filament_map_mode.value = fmmAutoForFlush;
+        CHECK_THAT(nozzle_diameter_for_filament(config, 2, false), Catch::Matchers::WithinAbs(0.6, 1e-9));
+        CHECK_THAT(nozzle_diameter_for_filament(config, 3, false), Catch::Matchers::WithinAbs(0.8, 1e-9));
+    }
+    SECTION("without a filament switcher filament n is extruder n")
+    {
+        config.multi_extruder_multi_material.value = false;
+        CHECK_THAT(nozzle_diameter_for_filament(config, 1, false), Catch::Matchers::WithinAbs(0.4, 1e-9));
+    }
+}
