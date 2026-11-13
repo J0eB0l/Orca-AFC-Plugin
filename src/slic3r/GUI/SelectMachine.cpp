@@ -4774,6 +4774,12 @@ void SelectMachineDialog::CheckWarningSpoolTemps(MachineObject* obj_)
         const int margin = low == high ? one_temp_margin : 0;
         if (temp >= low - margin && temp <= high + margin)
             continue;
+        // AFC often knows one temperature for a spool (a Bambu tag's lowest, or Spoolman's), while the
+        // spool's own preset gives the range its maker recommends: a file inside that range is fine.
+        const auto preset = wxGetApp().preset_bundle->get_filament_by_filament_id(tray.setting_id);
+        if (preset && preset->nozzle_temp_range_low > 0 && temp >= preset->nozzle_temp_range_low &&
+            temp <= preset->nozzle_temp_range_high)
+            continue;
         if (!msg.empty())
             msg += "\n";
         const wxString lane = tray.tool >= 0 ? wxString::Format("T%d", tray.tool) : wxString("?");
