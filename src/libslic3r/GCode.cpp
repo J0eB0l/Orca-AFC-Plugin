@@ -1492,8 +1492,11 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         }
 
         std::string toolchange_command;
+        double      outgoing_retracted = -1.;
         if (tcr.priming || (new_filament_id >= 0 && gcodegen.writer().need_toolchange(new_filament_id))) {
             const int old_extruder_id = gcodegen.writer().filament() ? (int) gcodegen.writer().filament()->extruder_id() : -1;
+            outgoing_retracted = gcodegen.writer().filament() ?
+                gcodegen.writer().get_extruder_retracted_length((int) gcodegen.writer().filament()->id()) : 0.;
             // Orca: null-safe, layer-aware nozzle lookup — group_result may be null on
             // non-multi-nozzle paths (the helper falls back to the extruder id).
             toolchange_command = gcodegen.writer().toolchange(new_filament_id,
@@ -1505,6 +1508,8 @@ static std::vector<Vec2d> get_path_of_change_filament(const Print& print)
         else {
             // We have informed the m_writer about the current extruder_id, we can ignore the generated G-code.
         }
+        if (outgoing_retracted >= 0. && new_filament_id >= 0)
+            gcodegen.add_afc_retracts(toolchange_gcode_str, unsigned(new_filament_id), outgoing_retracted);
 
         // The change G-code may move the carriage even when the incoming
         // filament uses the same physical nozzle (the common AMS case).
@@ -8437,6 +8442,33 @@ void GCode::forget_lane_change_retraction(int old_extruder_id)
         filament->set_retracted(0., 0.);
 }
 
+// The G-code retracts the outgoing filament before a change and unretracts the incoming one by what the slice
+// planned for it: nothing after a lane change, its own retraction after a tool switch. When AFC's lane map
+// makes the change the other kind (a remap, or a runout to a lane on another toolhead), AFC evens the
+// difference out from RETRACT (the outgoing filament's retraction) and UNRETRACT (the incoming unretraction,
+// without restart extra) on the T line. Other firmware never sees them.
+void GCode::add_afc_retracts(std::string &gcode, unsigned int new_filament_id, double outgoing_retracted)
+{
+    if (m_print == nullptr || m_writer.get_gcode_flavor() != gcfKlipper || m_config.single_extruder_multi_material)
+        return;
+    const auto *afc_enabled = m_print->full_print_config().option<ConfigOptionBool>("afc_enabled");
+    if (afc_enabled == nullptr || !afc_enabled->value)
+        return;
+    // The last line that is the T of the incoming filament, as custom_gcode_changes_tool reads one.
+    const std::string command = m_writer.toolchange_prefix() + std::to_string(new_filament_id);
+    for (size_t pos = gcode.rfind(command); pos != std::string::npos; pos = pos == 0 ? std::string::npos : gcode.rfind(command, pos - 1)) {
+        const size_t line_start = gcode.rfind('\n', pos) == std::string::npos ? 0 : gcode.rfind('\n', pos) + 1;
+        const size_t end        = pos + command.size();
+        if (gcode.find_first_not_of(" \t", line_start) != pos || (end < gcode.size() && !std::isspace((unsigned char) gcode[end]) && gcode[end] != ';'))
+            continue;
+        char params[64];
+        std::snprintf(params, sizeof(params), " RETRACT=%.3f UNRETRACT=%.3f", outgoing_retracted,
+                      m_writer.get_extruder_retracted_length(int(new_filament_id)));
+        gcode.insert(end, params);
+        return;
+    }
+}
+
 void GCode::synchronize_toolchange_position(const ToolchangePositionState &before, const std::string &emitted_gcode)
 {
     if (m_writer.filament() == nullptr)
@@ -11425,6 +11457,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
 
     //BBS: don't add T[next extruder] if there is no T cmd on filament change
      //We inform the writer about what is happening, but we may not use the resulting gcode.
+    const double outgoing_retracted = m_writer.filament() ? m_writer.get_extruder_retracted_length((int) m_writer.filament()->id()) : 0.;
     std::string toolchange_command = m_writer.toolchange(new_filament_id, next_nozzle_id);
     if (Extruder *fil = m_writer.filament())
         fil->set_config_index((int)get_filament_config_index((int)fil->id()));
@@ -11440,6 +11473,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     else {
         // user provided his own toolchange gcode, no need to do anything
     }
+    add_afc_retracts(gcode, new_filament_id, outgoing_retracted);
 
     // Set the temperature if the wipe tower didn't (not needed for non-single extruder MM)
     if (m_config.single_extruder_multi_material && !m_config.enable_prime_tower) {
