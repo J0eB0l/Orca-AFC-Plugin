@@ -779,6 +779,7 @@ public:
 	bool 		supports_printer_technology(const PrinterTechnology /* tech */) const override { return true; }
 
 	void		set_extruder_volume_type(int extruder_id, NozzleVolumeType type);
+	void		set_extruder_nozzle_diameter(int extruder_id, double diameter);
 	void		on_value_change(const std::string& opt_key, const boost::any& value) override;
 
 	wxSizer*	create_bed_shape_widget(wxWindow* parent);

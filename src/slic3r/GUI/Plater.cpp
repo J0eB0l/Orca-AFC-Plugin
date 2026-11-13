@@ -778,7 +778,8 @@ struct ExtruderGroup : StaticBox
         static wxFont diameter_font() { return Label::Body_12; }
 
         Label *    prefix         = nullptr;
-        Label *    diameter_label = nullptr; // read-only nozzle diameter of this extruder
+        Label *    diameter_label = nullptr; // nozzle diameter of a single-row card, read only
+        ComboBox * diameter_combo = nullptr; // nozzle diameter of one extruder of a multi-row card
         ComboBox * flow           = nullptr;
     };
 
@@ -809,8 +810,9 @@ struct ExtruderGroup : StaticBox
     // Show `count` nozzle rows, one per extruder, each prefixed with T<index> when count > 1.
     void   SetNozzleRowCount(size_t count);
     size_t NozzleRowCount() const { return nozzle_row_count; }
-    // Nozzle diameter readout of the shown rows, one value per extruder. A listing card cannot edit
-    // it: the diameter belongs to the machine variant the printer preset selects, not to the extruder.
+    // Nozzle diameter of the shown rows, one value per extruder. A single row only reads it out, as
+    // its diameter is the machine variant the printer preset selects; on a multi-row card each row
+    // picks its own extruder's diameter, written to the edited printer preset.
     void   SetRowDiameters(const std::vector<double> &diameters);
 
     NozzleRow create_nozzle_row();
@@ -851,6 +853,7 @@ struct ExtruderGroup : StaticBox
         for (const NozzleRow &row : rows) {
             row.prefix->SetFont(NozzleRow::prefix_font());
             row.diameter_label->SetFont(NozzleRow::diameter_font());
+            row.diameter_combo->Rescale();
             row.flow->Rescale();
         }
         update_row_widths();
@@ -1681,6 +1684,23 @@ ExtruderGroup::NozzleRow ExtruderGroup::create_nozzle_row()
     row.diameter_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#363636")));
     row.diameter_label->Hide();
 
+    auto combo_dia = new ComboBox(this, wxID_ANY, wxString(""), wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+    combo_dia->GetDropDown().SetUseContentWidth(true);
+    combo_dia->SetToolTip(_L("Nozzle diameter"));
+    combo_dia->Hide();
+    combo_dia->Bind(wxEVT_COMBOBOX, [row_index, combo_dia](wxCommandEvent &) {
+        double value = 0.;
+        if (!combo_dia->GetValue().ToCDouble(&value))
+            return;
+        // Deferred so the printer preset is edited outside this combo's own event.
+        wxGetApp().CallAfter([row_index, value]() {
+            if (auto printer_tab = dynamic_cast<TabPrinter *>(wxGetApp().get_tab(Preset::TYPE_PRINTER)))
+                printer_tab->set_extruder_nozzle_diameter(int(row_index), value);
+        });
+    });
+    row.diameter_combo = combo_dia;
+    use_nozzle_row_font(combo_dia);
+
     auto combo_flow = new ComboBox(this, wxID_ANY, wxString(""), wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
     combo_flow->GetDropDown().SetUseContentWidth(true);
     combo_flow->Bind(wxEVT_COMBOBOX, [this, row_index, combo_flow](wxCommandEvent &evt) {
@@ -1707,6 +1727,7 @@ ExtruderGroup::NozzleRow ExtruderGroup::create_nozzle_row()
     if (row_index == 0)
         row_sizer->Add(combo_diameter, 1, wxRIGHT, FromDIP(5));
     row_sizer->Add(row.diameter_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
+    row_sizer->Add(row.diameter_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
     row_sizer->Add(row.flow, 1);
     // Row-major: T1 T2 on the first line, T3 T4 on the second, and so on.
     row_columns[row_index % 2]->Add(row_sizer, 0, wxEXPAND | wxBOTTOM, FromDIP(5));
@@ -1734,11 +1755,27 @@ void ExtruderGroup::update_row_widths()
 
 void ExtruderGroup::SetRowDiameters(const std::vector<double> &diameters)
 {
+    // The common nozzle sizes, plus whatever size an extruder already has.
+    std::vector<double> sizes{0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2};
+    sizes.insert(sizes.end(), diameters.begin(), diameters.end());
+    std::sort(sizes.begin(), sizes.end());
+    std::vector<std::string> choices;
+    for (double d : sizes)
+        if (choices.empty() || choices.back() != get_diameter_string(d))
+            choices.push_back(get_diameter_string(d));
+
     for (size_t i = 0; i < std::min(nozzle_row_count, diameters.size()); ++i) {
         // Spelled like the calibration dialogs spell a nozzle diameter, "0.4 mm".
-        const wxString text = from_u8(get_diameter_string(diameters[i]));
+        const std::string value = get_diameter_string(diameters[i]);
+        const wxString text = from_u8(value);
         rows[i].diameter_label->SetLabelText(text);
         rows[i].diameter_label->SetToolTip(text + " mm");
+
+        ComboBox *combo = rows[i].diameter_combo;
+        combo->Clear();
+        for (const std::string &choice : choices)
+            combo->Append(from_u8(choice));
+        combo->SetSelection(int(std::find(choices.begin(), choices.end(), value) - choices.begin()));
     }
     update_row_widths();
     Layout();
@@ -1759,12 +1796,15 @@ void ExtruderGroup::SetNozzleRowCount(size_t count)
         if (i >= rows.size())
             rows.push_back(create_nozzle_row());
         rows[i].prefix->Show(row_count > 1);
-        rows[i].diameter_label->Show(group_index < 0); // the dual left/right cards show combo_diameter
+        // The dual left/right cards show combo_diameter instead.
+        rows[i].diameter_label->Show(group_index < 0 && row_count == 1);
+        rows[i].diameter_combo->Show(group_index < 0 && row_count > 1);
         // The flow combo's own visibility is decided with its choices, see update_extruder_variant.
     }
     for (size_t i = row_count; i < rows.size(); ++i) {
         rows[i].prefix->Hide();
         rows[i].diameter_label->Hide();
+        rows[i].diameter_combo->Hide();
         rows[i].flow->Hide();
     }
 

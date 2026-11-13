@@ -8805,6 +8805,19 @@ void TabPrinter::set_extruder_volume_type(int extruder_id, NozzleVolumeType type
 
 }
 
+// Edits one extruder's nozzle diameter as its field on the Extruder page would, from the sidebar.
+void TabPrinter::set_extruder_nozzle_diameter(int extruder_id, double diameter)
+{
+    std::vector<double> diameters = m_config->option<ConfigOptionFloats>("nozzle_diameter")->values;
+    if (extruder_id < 0 || size_t(extruder_id) >= diameters.size() || std::abs(diameters[extruder_id] - diameter) < EPSILON)
+        return;
+    diameters[extruder_id] = diameter;
+    DynamicPrintConfig new_conf = *m_config;
+    new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(diameters));
+    load_config(new_conf);
+    on_value_change((boost::format("nozzle_diameter#%1%") % extruder_id).str(), diameter);
+}
+
 // Return a callback to create a TabPrinter widget to edit bed shape
 wxSizer* TabPrinter::create_bed_shape_widget(wxWindow* parent)
 {
