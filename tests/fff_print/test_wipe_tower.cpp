@@ -684,11 +684,17 @@ TEST_CASE("A filament's lane toolhead overrides the project's manual filament ma
     // A project grouped both filaments on toolhead 1 by hand, but AFC reports their lanes on toolheads 1 and 2: the
     // filaments print where their lanes feed, so each change is a tool switch.
     DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_num_extruders(2);
     config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
                                     { "multi_extruder_multi_material", "1" },
+                                    { "nozzle_diameter", "0.4,0.4" },
+                                    { "printer_extruder_id", "1,2" },
+                                    { "printer_extruder_variant", "Direct Drive Standard,Direct Drive Standard" },
+                                    { "extruder_printable_height", "0,0" },
                                     { "filament_map_mode", "Manual" },
                                     { "filament_map", "1,1" },
                                     { "filament_toolhead", "0,1" } });
+    size_flush_to_nozzles(config);
     Print print;
     Model model;
     init_print({ cube(10) }, print, model, config);
