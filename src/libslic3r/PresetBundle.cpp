@@ -5540,10 +5540,26 @@ Preset *PresetBundle::get_similar_printer_preset(std::string printer_model, std:
     }
     if (printer_variant.empty())
         printer_variant = printer_variant_old;
+    // ORCA: a user printer has no alias to swap the variant in, so its sibling of the wanted variant is
+    // the one sharing the longest name with it ("My printer" -> "My printer 0.6 nozzle"), not the first
+    // system preset of that model.
+    const Preset &selected = printers.get_selected_preset();
+    Preset       *best     = nullptr;
+    size_t        best_len = 0;
     for (auto& preset : printer_presets) {
-        if (preset.second->config.opt_string("printer_variant") == printer_variant)
+        if (preset.second->config.opt_string("printer_variant") != printer_variant)
+            continue;
+        if (selected.is_system)
             return preset.second;
+        const std::string &name = preset.second->name;
+        const size_t len = std::mismatch(name.begin(), name.begin() + std::min(name.size(), selected.name.size()), selected.name.begin()).first - name.begin();
+        if (best == nullptr || len > best_len) {
+            best     = preset.second;
+            best_len = len;
+        }
     }
+    if (best != nullptr)
+        return best;
     return printer_presets.begin()->second;
 }
 
