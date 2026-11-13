@@ -1770,6 +1770,14 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
     if (mode == FilamentMapMode::fmmManual && !has_multiple_nozzle) {
         auto manual_filament_map = print_config.filament_map.values;
         std::transform(manual_filament_map.begin(), manual_filament_map.end(), manual_filament_map.begin(), [](int v) { return v - 1; });
+        // Orca: with Multi-material per toolhead, a filament synced from a lane prints on the toolhead that lane
+        // feeds (filament_toolhead, from AFC), whatever toolhead the project's own map names.
+        if (has_multiple_extruder && !print->is_BBL_printer() && print_config.multi_extruder_multi_material.value) {
+            const std::vector<int>& lane_toolheads = print_config.filament_toolhead.values;
+            for (size_t i = 0; i < manual_filament_map.size() && i < lane_toolheads.size(); ++i)
+                if (lane_toolheads[i] >= 0 && size_t(lane_toolheads[i]) < extruder_nums)
+                    manual_filament_map[i] = lane_toolheads[i];
+        }
         auto result = LayeredNozzleGroupResult::create(manual_filament_map, nozzle_list, used_filaments);
         return result ? *result : LayeredNozzleGroupResult();
     }

@@ -679,6 +679,24 @@ static double longest_unretract_after_lane_change(bool afc_enabled)
     return longest;
 }
 
+TEST_CASE("A filament's lane toolhead overrides the project's manual filament map", "[WipeTower]")
+{
+    // A project grouped both filaments on toolhead 1 by hand, but AFC reports their lanes on toolheads 1 and 2: the
+    // filaments print where their lanes feed, so each change is a tool switch.
+    DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+                                    { "multi_extruder_multi_material", "1" },
+                                    { "filament_map_mode", "Manual" },
+                                    { "filament_map", "1,1" },
+                                    { "filament_toolhead", "0,1" } });
+    Print print;
+    Model model;
+    init_print({ cube(10) }, print, model, config);
+    print.apply(model, config);
+    print.process();
+    CHECK(print.get_filament_maps() == std::vector<int>{ 1, 2 });
+}
+
 TEST_CASE("An AFC lane change does not unretract the toolchange retraction", "[WipeTower]")
 {
     // AFC loads the incoming lane to the nozzle tip, so the 5 mm the filament retracted when it last left is

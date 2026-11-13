@@ -21164,9 +21164,10 @@ void Plater::reslice()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, started slicing for plate %1%") % p->partplate_list.get_curr_plate_index();
 }
 
-// Orca: the prime tower flushes the lane changes the plate was sliced for (Print::flushes_lane_changes_on_tower), so
-// when the trays picked put a filament on another toolhead, the plate is sliced again for those toolheads before the
-// print goes on.
+// Orca: with Multi-material per toolhead, the slice decides which filament changes are lane changes on one toolhead
+// and which are tool switches: their retractions, and with Purge in prime tower their flushes. So when the trays
+// picked put a filament on another toolhead than it was sliced for, the plate is sliced again for those toolheads
+// before the print goes on.
 bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolheads, std::function<void(bool)> resume)
 {
     if (plate_idx != p->partplate_list.get_curr_plate_index())
@@ -21178,17 +21179,27 @@ bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolhe
     }
     PartPlate   *plate = p->partplate_list.get_curr_plate();
     const Print *print = plate->fff_print();
-    if (print == nullptr || !print->flushes_lane_changes_on_tower())
+    if (print == nullptr)
+        return false;
+    const PrintConfig &config = print->config();
+    if (config.nozzle_diameter.values.size() < 2 || !config.multi_extruder_multi_material.value || config.single_extruder_multi_material.value)
         return false;
 
-    const std::vector<int> &sliced = print->config().filament_toolhead.values;
-    std::vector<int>       &heads  = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    // The toolhead each filament was sliced on (filament_map is 1-based once sliced), and the lane toolheads the
+    // prime tower planned its lane change flushes with.
+    const std::vector<int> &sliced  = config.filament_map.values;
+    const std::vector<int> &planned = config.filament_toolhead.values;
+    std::vector<int>       &heads   = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    const bool              tower   = print->flushes_lane_changes_on_tower();
     bool                    changed = !plate->is_slice_result_valid();
     for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
-        if (toolheads[i] >= 0 && toolheads[i] != (i < sliced.size() ? sliced[i] : -1)) {
-            heads[i] = toolheads[i];
-            changed  = true;
-        }
+        if (toolheads[i] >= 0 && (toolheads[i] != (i < sliced.size() ? sliced[i] - 1 : -1) ||
+                                  (tower && toolheads[i] != (i < planned.size() ? planned[i] : -1))))
+            changed = true;
+    if (changed)
+        for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
+            if (toolheads[i] >= 0)
+                heads[i] = toolheads[i];
     if (!changed)
         return false;
 

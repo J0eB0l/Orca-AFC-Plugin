@@ -3684,8 +3684,8 @@ void SelectMachineDialog::on_send_print()
     sending_mode();
     m_status_bar->enable_cancel_button();
 
-    // Orca: the trays picked can put a filament on another toolhead than the plate was sliced for. When the prime tower
-    // flushes lane changes, the plate is sliced again for them and the print goes on once that is done.
+    // Orca: the trays picked can put a filament on another toolhead than the plate was sliced for. Then the plate is
+    // sliced again for them, so lane changes and tool switches retract and flush right, and the print goes on after.
     const auto resume = [this](bool sliced) {
         const bool waiting = m_waiting_reslice;
         m_waiting_reslice  = false;
@@ -3701,8 +3701,7 @@ void SelectMachineDialog::on_send_print()
     if (m_print_type == PrintFromType::FROM_NORMAL &&
         m_plater->reslice_for_toolheads(m_print_plate_idx, picked_toolheads(m_ams_mapping_result, obj_->GetFilaSystem().get()), resume)) {
         m_waiting_reslice = true;
-        // TRN A lane change is a toolhead switching to another tray of the filament switcher that feeds it
-        m_status_bar->set_status_text(_L("Slicing again for the trays picked, so the prime tower flushes their lane changes"));
+        m_status_bar->set_status_text(_L("Slicing again for the toolheads of the trays picked"));
         return;
     }
 
