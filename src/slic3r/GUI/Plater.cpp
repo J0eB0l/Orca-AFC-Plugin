@@ -776,6 +776,14 @@ struct ExtruderGroup : StaticBox
         // Fonts of the prefix and the diameter readout, applied when the row is created and again by Rescale().
         static wxFont prefix_font()   { return Label::Body_12.Bold(); }
         static wxFont diameter_font() { return Label::Body_12; }
+        // The size box sits at its best width in the row, which an empty read-only combo does not
+        // have (it was 0, so the box vanished): fit the widest size it lists, "0.25", and the arrow.
+        static void size_diameter_combo(ComboBox *combo)
+        {
+            const int width = combo->GetTextExtent("0.25").x + combo->FromDIP(34);
+            combo->SetMinSize(wxSize(width, combo->GetMinSize().y));
+            combo->SetSize(wxSize(width, combo->GetSize().y));
+        }
 
         Label *    prefix         = nullptr;
         Label *    diameter_label = nullptr; // nozzle diameter of a single-row card, read only
@@ -854,6 +862,7 @@ struct ExtruderGroup : StaticBox
             row.prefix->SetFont(NozzleRow::prefix_font());
             row.diameter_label->SetFont(NozzleRow::diameter_font());
             row.diameter_combo->Rescale();
+            NozzleRow::size_diameter_combo(row.diameter_combo);
             row.flow->Rescale();
         }
         update_row_widths();
@@ -1700,6 +1709,7 @@ ExtruderGroup::NozzleRow ExtruderGroup::create_nozzle_row()
     });
     row.diameter_combo = combo_dia;
     use_nozzle_row_font(combo_dia);
+    NozzleRow::size_diameter_combo(combo_dia);
 
     auto combo_flow = new ComboBox(this, wxID_ANY, wxString(""), wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
     combo_flow->GetDropDown().SetUseContentWidth(true);
