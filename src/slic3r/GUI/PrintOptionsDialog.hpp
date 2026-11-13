@@ -93,6 +93,7 @@ private:
     {
         ComboBox*          type {nullptr};
         ComboBox*          diameter {nullptr};
+        ComboBox*          flow {nullptr};
         std::vector<float> sizes; // the size box's choices, in order (0 unknown)
     };
     std::string      m_dev_id;

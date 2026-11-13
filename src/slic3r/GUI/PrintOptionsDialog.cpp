@@ -1927,6 +1927,8 @@ MachineObject* selected_machine(const std::string& dev_id)
 }
 
 const std::vector<std::string> agent_nozzle_types = {"", "hardened_steel", "stainless_steel", "tungsten_carbide", "brass"};
+// The flows Printer Parts saves, OrcaSlicer's nozzle_volume_type names ("" unknown).
+const std::vector<std::string> agent_nozzle_flows = {"", "Standard", "High Flow"};
 } // namespace
 
 AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
@@ -1937,7 +1939,7 @@ AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
     SetFont(Label::Body_14);
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
-    auto* grid  = new wxFlexGridSizer(3, FromDIP(10), FromDIP(15));
+    auto* grid  = new wxFlexGridSizer(4, FromDIP(10), FromDIP(15));
     grid->AddGrowableCol(0);
 
     const auto caption = [this](const wxString& text) {
@@ -1949,6 +1951,7 @@ AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
     grid->AddSpacer(0);
     grid->Add(caption(_L_CONTEXT(L_CONTEXT("Type", "Nozzle Type"), "Nozzle Type")), 0, wxALIGN_CENTER_VERTICAL);
     grid->Add(caption(_L_CONTEXT(L_CONTEXT("Diameter", "Nozzle Diameter"), "Nozzle Diameter")), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(caption(_L_CONTEXT("Flow", "Nozzle Flow")), 0, wxALIGN_CENTER_VERTICAL);
 
     const auto type_name = [](const std::string& type) -> wxString {
         if (type == "hardened_steel") return _L("Hardened Steel");
@@ -1984,11 +1987,18 @@ AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
 
         grid->Add(name, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
         grid->Add(row.type, 0, wxALIGN_CENTER_VERTICAL);
+        row.flow = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(140), -1), 0, nullptr, wxCB_READONLY);
+        for (const std::string& flow : agent_nozzle_flows)
+            row.flow->Append(flow.empty() ? _L("Unknown") : _L(flow));
+        const auto flow_at = std::find(agent_nozzle_flows.begin(), agent_nozzle_flows.end(), toolhead.flow);
+        row.flow->SetSelection(flow_at == agent_nozzle_flows.end() ? 0 : int(flow_at - agent_nozzle_flows.begin()));
+
         grid->Add(row.diameter, 0, wxALIGN_CENTER_VERTICAL);
+        grid->Add(row.flow, 0, wxALIGN_CENTER_VERTICAL);
         m_rows.push_back(row);
     }
 
-    auto* tips = new Label(this, _L("Saved on the printer. A nozzle size of Unknown goes back to the size in the printer's configuration."), LB_AUTO_WRAP);
+    auto* tips = new Label(this, _L("Saved on the printer, and copied into the printer preset when you sync filaments. A nozzle size of Unknown goes back to the size in the printer's configuration."), LB_AUTO_WRAP);
     tips->SetFont(Label::Body_13);
     tips->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
     tips->SetMaxSize(wxSize(FromDIP(480), -1));
@@ -2023,9 +2033,11 @@ void AgentPartsDialog::apply()
         const int   size_sel = row.diameter->GetSelection();
         std::string type     = type_sel >= 0 && type_sel < int(agent_nozzle_types.size()) ? agent_nozzle_types[type_sel] : std::string();
         float       diameter = size_sel >= 0 && size_sel < int(row.sizes.size()) ? row.sizes[size_sel] : 0.f;
+        const int   flow_sel = row.flow->GetSelection();
+        std::string flow     = flow_sel >= 0 && flow_sel < int(agent_nozzle_flows.size()) ? agent_nozzle_flows[flow_sel] : std::string();
         const MachineObject::AgentToolhead& toolhead = obj->agent_toolheads[i];
-        if (type != toolhead.type || std::abs(diameter - toolhead.diameter) > 0.001f)
-            obj->command_set_toolhead_nozzle(int(i), diameter, type);
+        if (type != toolhead.type || flow != toolhead.flow || std::abs(diameter - toolhead.diameter) > 0.001f)
+            obj->command_set_toolhead_nozzle(int(i), diameter, type, flow);
     }
 }
 
@@ -2034,6 +2046,7 @@ void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
     for (Row& row : m_rows) {
         row.type->Rescale();
         row.diameter->Rescale();
+        row.flow->Rescale();
     }
     GetSizer()->SetSizeHints(this);
     Refresh();

@@ -652,13 +652,14 @@ public:
     // Orca: a printer agent's nozzle size of each toolhead, by extruder number (0 unknown), for the print dialog
     std::vector<float> toolhead_nozzle_diameters;
     // Orca: a printer agent's toolheads on Printer Parts (toolhead_parts), by extruder number: the name its
-    // filament system gives each, its nozzle size (0 unknown) and type (NozzleTypeStrToEumn's name, "" unknown),
-    // which command_set_toolhead_nozzle sets.
+    // filament system gives each, its nozzle size (0 unknown), type (NozzleTypeStrToEumn's name, "" unknown)
+    // and flow ("Standard" or "High Flow", "" unknown), which command_set_toolhead_nozzle sets.
     struct AgentToolhead
     {
         std::string name;
         float       diameter {0.f};
         std::string type;
+        std::string flow;
     };
     std::vector<AgentToolhead> agent_toolheads;
     // Orca: the printer console's open prompt (agent_prompt), which the Calibration window shows for a printer
@@ -897,7 +898,7 @@ public:
     int command_clean_print_error(std::string task_id, int print_error);
     int command_clean_print_error_uiop(int print_error);
     int command_clear_agent_message();
-    int command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type);
+    int command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type, const std::string& flow);
     int command_clear_agent_log();
     // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
     // lanes with the same filament linked ("match") or none ("clear").

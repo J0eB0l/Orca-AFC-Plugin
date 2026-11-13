@@ -1520,13 +1520,14 @@ int MachineObject::command_clear_agent_message()
 }
 
 // Orca: drops the errors and warnings the Assistant page lists from the printer agent's log (agent_log).
-int MachineObject::command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type)
+int MachineObject::command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type, const std::string& flow)
 {
     json j;
     j["print"]["command"]         = "set_toolhead_nozzle";
     j["print"]["extruder_index"]  = extruder;
     j["print"]["nozzle_diameter"] = diameter;
     j["print"]["nozzle_type"]     = type;
+    j["print"]["nozzle_flow"]     = flow;
     j["print"]["sequence_id"]     = std::to_string(MachineObject::m_sequence_id++);
     return this->publish_json(j);
 }
@@ -3397,6 +3398,7 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         toolhead.name     = part.value("name", std::string());
                         toolhead.diameter = part.contains("diameter") && part["diameter"].is_number() ? part["diameter"].get<float>() : 0.f;
                         toolhead.type     = part.value("type", std::string());
+                        toolhead.flow     = part.value("flow", std::string());
                         agent_toolheads.push_back(toolhead);
                     }
                 }

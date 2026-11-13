@@ -26,6 +26,7 @@
 #include "libslic3r_version.h"
 #include "BuildCommit.hpp"
 #include "Downloader.hpp"
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -4525,9 +4526,10 @@ void GUI_App::detect_afc_on_printer()
 }
 
 // Orca: filament sync on an AFC printer also takes the lane load, lane unload and tool swap times its
-// agent measured, so the time estimate counts the printer's own lane and tool changes, and the spots on
-// the bed AFC's macros use, which "Keep parts off AFC's spots" keeps free. A user preset with no other
-// edits is saved with them, as detect_afc_on_printer() saves its tick.
+// agent measured, so the time estimate counts the printer's own lane and tool changes, the spots on
+// the bed AFC's macros use, which "Keep parts off AFC's spots" keeps free, and each toolhead's nozzle
+// (size, type and flow) from Printer Parts, so the slicer matches what the printer has. A user preset
+// with no other edits is saved with them, as detect_afc_on_printer() saves its tick.
 void GUI_App::apply_measured_swap_times(const MachineObject& obj)
 {
     if (!preset_bundle)
@@ -4553,15 +4555,67 @@ void GUI_App::apply_measured_swap_times(const MachineObject& obj)
         times.set_key_value("afc_bed_keepouts", new ConfigOptionString(obj.agent_bed_keepouts));
         changed = true;
     }
+    // Each toolhead's nozzle as Printer Parts reports it (agent_toolheads, by extruder number): its size,
+    // and its type on every flow variant of that extruder. Unknown values keep the preset's.
+    const auto* diameters   = preset.config.option<ConfigOptionFloats>("nozzle_diameter");
+    const auto* types       = preset.config.option<ConfigOptionEnumsGenericNullable>("nozzle_type");
+    const auto* variant_ids = preset.config.option<ConfigOptionInts>("printer_extruder_id");
+    const size_t heads      = std::min(obj.agent_toolheads.size(), diameters ? diameters->size() : size_t(0));
+    if (diameters) {
+        auto* sizes = new ConfigOptionFloats(*diameters);
+        for (size_t i = 0; i < heads; ++i)
+            if (obj.agent_toolheads[i].diameter > 0.f)
+                sizes->values[i] = std::round(double(obj.agent_toolheads[i].diameter) * 1000.) / 1000.;
+        if (sizes->values != diameters->values) {
+            times.set_key_value("nozzle_diameter", sizes);
+            changed = true;
+        } else
+            delete sizes;
+    }
+    if (types && variant_ids) {
+        auto* kinds = new ConfigOptionEnumsGenericNullable(*types);
+        for (size_t j = 0; j < kinds->values.size() && j < variant_ids->values.size(); ++j) {
+            const int head = variant_ids->values[j] - 1;
+            if (head < 0 || size_t(head) >= heads)
+                continue;
+            const auto known = NozzleTypeStrToEumn.find(obj.agent_toolheads[head].type);
+            if (known != NozzleTypeStrToEumn.end())
+                kinds->values[j] = int(known->second);
+        }
+        if (kinds->values != types->values) {
+            times.set_key_value("nozzle_type", kinds);
+            changed = true;
+        } else
+            delete kinds;
+    }
+    // The flow type is the project's choice per extruder (the sidebar's Flow box), offered only where the
+    // extruder has that variant.
+    auto* printer_tab = dynamic_cast<TabPrinter*>(get_tab(Preset::TYPE_PRINTER));
+    const auto* variant_list = preset.config.option<ConfigOptionStrings>("extruder_variant_list");
+    const auto* volumes      = preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    for (size_t i = 0; printer_tab && variant_list && volumes && i < heads; ++i) {
+        const std::string& flow = obj.agent_toolheads[i].flow;
+        if (flow != "Standard" && flow != "High Flow")
+            continue;
+        const NozzleVolumeType volume = flow == "Standard" ? nvtStandard : nvtHighFlow;
+        if (i >= variant_list->size() || i >= volumes->size() || volumes->values[i] == int(volume) ||
+            !boost::algorithm::contains(variant_list->get_at(i), flow))
+            continue;
+        printer_tab->set_extruder_volume_type(int(i), volume);
+    }
+
     Tab* tab = get_tab(Preset::TYPE_PRINTER);
     if (!changed || !tab)
         return;
     const std::string name = preset.name;
     const bool was_dirty = tab->current_preset_is_dirty();
     tab->load_config(times);
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC's measured change times and bed spots set on preset " << name;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": AFC's measured change times, bed spots and nozzles set on preset " << name;
     if (!was_dirty && preset_bundle->printers.get_selected_preset().is_user())
         tab->save_preset(name);
+    // The sidebar's nozzle rows read the preset when it lays them out.
+    if (plater())
+        plater()->sidebar().update_presets(Preset::TYPE_PRINTER);
 }
 
 // Orca: the printer preset's machine limits that differ from Klipper's [printer] section (agent_machine_limits),
