@@ -270,6 +270,13 @@ void BackgroundSlicingProcess::process_fff()
             // and persists the auto result (always concrete Std/HF, never the Hybrid seed).
             std::vector<int> f_volume_maps = m_fff_print->get_filament_volume_maps();
             m_current_plate->set_filament_volume_maps(f_volume_maps);
+        } else if (m_current_plate->get_real_filament_map_mode(preset_bundle.project_config) == FilamentMapMode::fmmManual) {
+            // Orca: a manual map follows the user's assignment except where an AFC lane's toolhead overrides it
+            // (ToolOrdering), and the write-back then differs from the plate's map. Reading it back keeps the next
+            // apply from seeing a diff and invalidating the slice it just made.
+            std::vector<int> f_maps = m_fff_print->get_filament_maps();
+            if (!f_maps.empty() && f_maps != m_current_plate->get_real_filament_maps(preset_bundle.project_config))
+                m_current_plate->set_filament_maps(f_maps);
         }
         if (m_current_plate->get_real_filament_map_mode(preset_bundle.project_config) != FilamentMapMode::fmmNozzleManual) {
             // The engine-resolved nozzle map is read back for every non-nozzle-manual mode so the
