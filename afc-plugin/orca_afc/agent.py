@@ -60,6 +60,7 @@ NOZZLES_EVERY = 600.0  # seconds between reads of the toolheads' nozzle sizes in
 NOZZLES_KEY = "nozzles"  # the nozzles set in Printer Parts, in the agent's database items
 # Printer Parts' nozzle types, OrcaSlicer's names for them (NozzleType).
 NOZZLE_TYPES = ("hardened_steel", "stainless_steel", "tungsten_carbide", "brass")
+NOZZLE_FLOWS = ("Standard", "High Flow")  # OrcaSlicer's nozzle_volume_type names
 TRAY_RELEASE_S = 12.0  # seconds a tray that left the toolhead is still named, its switch off
 PROBE_LINES = 40       # newest G-code store lines read for bed probing each push while printing
 
@@ -314,9 +315,9 @@ def klipper_limits(settings) -> dict:
 
 def toolhead_parts(sizes: list, saved: dict, extruders=()) -> list:
     """Each toolhead's nozzle for Printer Parts, by extruder number: its AFC
-    name, the size and type set there (`saved`, {"<number>": {diameter, type}})
-    or else Klipper's nozzle_diameter (`sizes`, toolhead_nozzles()), 0 and ""
-    when not known. The toolheads are those Klipper's config or AFC names."""
+    name, the size, type and flow set there (`saved`, {"<number>": {diameter,
+    type, flow}}) or else Klipper's nozzle_diameter (`sizes`, toolhead_nozzles()),
+    0 and "" when not known. The toolheads are those Klipper's config or AFC names."""
     names = {}
     for name in extruders or ():
         index = protocol.extruder_index_from_name(name)
@@ -331,7 +332,8 @@ def toolhead_parts(sizes: list, saved: dict, extruders=()) -> list:
         kind = mine.get("type")
         parts.append({"name": names.get(i, "extruder%s" % (i or "")),
                       "diameter": float(size) if size and size > 0 else (sizes[i] if i < len(sizes) else 0.0),
-                      "type": kind if kind in NOZZLE_TYPES else ""})
+                      "type": kind if kind in NOZZLE_TYPES else "",
+                      "flow": mine.get("flow") if mine.get("flow") in NOZZLE_FLOWS else ""})
     return parts
 
 
@@ -1386,10 +1388,13 @@ else:
 
         def _set_nozzle(self, printer: _Printer, job: dict) -> int:
             """Printer Parts' nozzle for one toolhead, kept in Moonraker's database
-            for every OrcaSlicer that shows this printer; size 0 goes back to Klipper's."""
+            for every OrcaSlicer that shows this printer; size 0 goes back to Klipper's.
+            A command without nozzle_flow keeps the flow saved before."""
             index, size, kind = job.get("extruder_index"), _number(job.get("nozzle_diameter")), job.get("nozzle_type")
+            flow = job.get("nozzle_flow")
             if (not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < 64 or size is None
-                    or not 0 <= size <= 3 or kind not in NOZZLE_TYPES + ("",)):
+                    or not 0 <= size <= 3 or kind not in NOZZLE_TYPES + ("",)
+                    or (flow is not None and flow not in NOZZLE_FLOWS + ("",))):
                 return ERR_INVALID_RESULT
 
             def save():
@@ -1401,8 +1406,10 @@ else:
                 except MoonrakerError:  # none set yet
                     saved = None
                 saved = dict(saved) if isinstance(saved, dict) else {}
-                if size > 0 or kind:
-                    saved[str(index)] = {"diameter": float(size), "type": kind}
+                old = saved.get(str(index))
+                kept = flow if flow is not None else (old.get("flow", "") if isinstance(old, dict) else "")
+                if size > 0 or kind or kept:
+                    saved[str(index)] = {"diameter": float(size), "type": kind, "flow": kept}
                 else:
                     saved.pop(str(index), None)
                 printer.client.post("/server/database/item", {"namespace": DB_NAMESPACE, "key": NOZZLES_KEY, "value": saved})

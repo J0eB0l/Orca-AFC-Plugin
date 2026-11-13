@@ -686,24 +686,33 @@ class DeviceTabTest(Case):
         self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},
                                                         "extruder1": {"nozzle_diameter": 0.4}}}
         self.connect()
-        self.assertEqual(self.push()["toolhead_parts"], [{"name": "extruder", "diameter": 0.4, "type": ""},
-                                                         {"name": "extruder1", "diameter": 0.4, "type": ""}])
+        self.assertEqual(self.push()["toolhead_parts"], [{"name": "extruder", "diameter": 0.4, "type": "", "flow": ""},
+                                                         {"name": "extruder1", "diameter": 0.4, "type": "", "flow": ""}])
         self.assertEqual(self.send({"print": {"command": "set_toolhead_nozzle", "extruder_index": 1,
-                                              "nozzle_diameter": 0.6, "nozzle_type": "hardened_steel"}}), 0)
+                                              "nozzle_diameter": 0.6, "nozzle_type": "hardened_steel",
+                                              "nozzle_flow": "High Flow"}}), 0)
         self.agent._worker.call(lambda: None, 5)
-        self.assertEqual(self.fake.database["orca_afc"]["nozzles"], {"1": {"diameter": 0.6, "type": "hardened_steel"}})
+        self.assertEqual(self.fake.database["orca_afc"]["nozzles"],
+                         {"1": {"diameter": 0.6, "type": "hardened_steel", "flow": "High Flow"}})
         push = self.push()
-        self.assertEqual(push["toolhead_parts"][1], {"name": "extruder1", "diameter": 0.6, "type": "hardened_steel"})
+        self.assertEqual(push["toolhead_parts"][1],
+                         {"name": "extruder1", "diameter": 0.6, "type": "hardened_steel", "flow": "High Flow"})
         self.assertEqual(push["toolhead_nozzles"], [0.4, 0.6])
+        # An older OrcaSlicer that sends no flow keeps the flow saved before.
+        self.send({"print": {"command": "set_toolhead_nozzle", "extruder_index": 1, "nozzle_diameter": 0.8,
+                             "nozzle_type": "hardened_steel"}})
+        self.agent._worker.call(lambda: None, 5)
+        self.assertEqual(self.push()["toolhead_parts"][1]["flow"], "High Flow")
         # Size 0 and no type go back to Klipper's.
         self.send({"print": {"command": "set_toolhead_nozzle", "extruder_index": 1, "nozzle_diameter": 0,
-                             "nozzle_type": ""}})
+                             "nozzle_type": "", "nozzle_flow": ""}})
         self.agent._worker.call(lambda: None, 5)
         self.assertEqual(self.fake.database["orca_afc"]["nozzles"], {})
         self.assertEqual(self.push()["toolhead_nozzles"], [0.4, 0.4])
         for bad in ({"extruder_index": -1, "nozzle_diameter": 0.4, "nozzle_type": "brass"},
                     {"extruder_index": 0, "nozzle_diameter": 0.4, "nozzle_type": "glass"},
-                    {"extruder_index": 0, "nozzle_type": "brass"}):
+                    {"extruder_index": 0, "nozzle_type": "brass"},
+                    {"extruder_index": 0, "nozzle_diameter": 0.4, "nozzle_type": "brass", "nozzle_flow": "Turbo"}):
             self.assertEqual(self.send({"print": dict(bad, command="set_toolhead_nozzle")}), afc_agent.ERR_INVALID_RESULT)
 
     def test_calibration_prompt_after_gcode(self):
