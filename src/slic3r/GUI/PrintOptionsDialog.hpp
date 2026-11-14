@@ -98,7 +98,10 @@ private:
     };
     std::string      m_dev_id;
     std::vector<Row> m_rows;
+    wxFlexGridSizer* m_grid {nullptr};
+    Label*           m_tips {nullptr};
     void             apply();
+    void             wrap_tips();
 };
 
 // Orca: the Calibration window for a printer agent that runs its own calibration (agent_calibration_gcode):

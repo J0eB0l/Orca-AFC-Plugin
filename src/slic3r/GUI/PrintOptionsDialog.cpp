@@ -1941,6 +1941,7 @@ AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     auto* grid  = new wxFlexGridSizer(4, FromDIP(10), FromDIP(15));
     grid->AddGrowableCol(0);
+    m_grid = grid;
 
     const auto caption = [this](const wxString& text) {
         auto* label = new Label(this, text);
@@ -1998,10 +1999,11 @@ AgentPartsDialog::AgentPartsDialog(wxWindow* parent, MachineObject* obj)
         m_rows.push_back(row);
     }
 
-    auto* tips = new Label(this, _L("Saved on the printer, and copied into the printer preset when you sync filaments. A nozzle size of Unknown goes back to the size in the printer's configuration."), LB_AUTO_WRAP);
+    auto* tips = new Label(this, _L("Saved on the printer, and copied into the printer preset when you sync filaments. A nozzle size of Unknown goes back to the size in the printer's configuration."));
     tips->SetFont(Label::Body_13);
     tips->SetForegroundColour(STATIC_TEXT_CAPTION_COL);
-    tips->SetMaxSize(wxSize(FromDIP(480), -1));
+    m_tips = tips;
+    wrap_tips();
 
     auto* line = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1), wxTAB_TRAVERSAL);
     line->SetBackgroundColour(wxColour("#A6A9AA"));
@@ -2041,6 +2043,15 @@ void AgentPartsDialog::apply()
     }
 }
 
+// The tip is wrapped to the grid's width before the dialog is fitted. An auto-wrapping label is
+// measured as one line at fit time and only wraps once laid out, so the lines it gains pushed the
+// buttons off the bottom of the dialog.
+void AgentPartsDialog::wrap_tips()
+{
+    const int width = std::max(m_grid->CalcMin().GetWidth(), FromDIP(300));
+    m_tips->Wrap(width);
+}
+
 void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
 {
     for (Row& row : m_rows) {
@@ -2048,6 +2059,7 @@ void AgentPartsDialog::on_dpi_changed(const wxRect& suggested_rect)
         row.diameter->Rescale();
         row.flow->Rescale();
     }
+    wrap_tips();
     GetSizer()->SetSizeHints(this);
     Refresh();
 }
