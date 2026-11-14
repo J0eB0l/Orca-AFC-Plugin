@@ -35,6 +35,10 @@ orcaslicer_add_cmake_project(OCCT
     # Makes BRepMesh triangulate cone faces whose seam pcurve is slightly tilted
     # (Open-Cascade-SAS/OCCT#572); remove the patch once an OCCT release includes the fix.
     PATCH_COMMAND git apply ${OCCT_DIRECTORY_FLAG} --verbose --ignore-space-change --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/0001-BRepMesh-seam-pcurve-at-edge-parameter.patch
+    # MSVC 14.52 for ARM64 crashes with an internal compiler error (C1001) optimizing
+    # BRepGraph_LayerTopoSupplement.cxx; the patch turns optimization off for that file on
+    # MSVC ARM64 only. Remove it once the compiler is fixed.
+    COMMAND git apply ${OCCT_DIRECTORY_FLAG} --verbose --ignore-space-change --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/0002-BRepGraph-arm64-msvc-optimize-off.patch
     #DEPENDS dep_Boost
     CMAKE_ARGS
         -DCMAKE_CXX_STANDARD=17
