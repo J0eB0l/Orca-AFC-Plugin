@@ -35,6 +35,7 @@ add_executable(${_TEST_NAME}_tests
     test_toolordering_nozzle_group.cpp
     test_parallel_resolve.cpp
     test_preset_bundle_loading.cpp
+    test_preset_collection.cpp
     test_preset_setting_id.cpp
     test_preset_diff.cpp
     test_publish_settings.cpp
@@ -82,6 +83,7 @@ add_executable(${_TEST_NAME}_tests
     test_wipe_path.cpp
     test_optimizers.cpp
     test_ordering_strategies.cpp
+    test_parameter_utils.cpp
     test_shortest_path.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp
