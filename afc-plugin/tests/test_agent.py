@@ -293,6 +293,14 @@ class StatusTest(Case):
         self.assertEqual((status["bed_temper"], status["fan_gear"]), (59.8, 128))
         self.assertEqual(status["support_bed_leveling"], 0)
 
+    def test_u1_toolhead_names(self):
+        # AFC names a U1's toolheads e0..e3; the nozzle is still Klipper's extruderN.
+        self.fake.objects["AFC"]["extruders"] = ["e0", "e1"]
+        self.connect()
+        self.push()
+        status = self.push()
+        self.assertEqual((status["nozzle_temper"], status["nozzle_target_temper"]), (210.4, 215.0))
+
     def test_printing(self):
         self.fake.objects["print_stats"] = {"state": "printing", "filename": "cube.gcode", "print_duration": 600}
         self.fake.objects["virtual_sdcard"] = {"progress": 0.25}

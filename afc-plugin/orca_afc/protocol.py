@@ -241,6 +241,15 @@ def extruder_index_from_name(extruder: str) -> int:
     return int(rest) if rest.isascii() and rest.isdigit() else -1
 
 
+def klipper_extruder(extruder: str) -> str:
+    """Klipper's extruder object for an AFC extruder name: AFC's "e1" (U1
+    toolheads) -> "extruder1", "e0" -> "extruder"; other names as they are."""
+    index = extruder_index_from_name(extruder)
+    if index < 0:
+        return extruder
+    return "extruder%d" % index if index else "extruder"
+
+
 def normalize_color(color: str) -> str:
     """"#ff00aa", "ff00aa", "FF00AAFF" -> "#FF00AA". Empty when not a color."""
     s = (color or "")

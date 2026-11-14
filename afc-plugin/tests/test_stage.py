@@ -80,6 +80,14 @@ class DescribeTest(unittest.TestCase):
         self.assertEqual(stage.describe(objects, SNAPSHOT, 2),
                          (stage.LOADING, "Heating toolhead 2 to 220 °C (now 180 °C) for lane8 (T4)"))
 
+    def test_loading_waits_on_a_u1_toolhead(self):
+        # A U1 lane's extruder is AFC's e1; its heater is Klipper's extruder1.
+        snapshot = Snapshot({"lane5": SimpleNamespace(maps=["T1"], extruder="e1")})
+        objects = printing(AFC={"current_state": "Loading", "current_lane": "lane5"},
+                           extruder1={"temperature": 180.0, "target": 220.0})
+        self.assertEqual(stage.describe(objects, snapshot, 4),
+                         (stage.LOADING, "Heating toolhead 2 to 220 °C (now 180 °C) for lane5 (T1)"))
+
     def test_unloading_from_the_lanes_own_toolhead(self):
         objects = printing(AFC={"current_state": "Unloading", "current_lane": "lane2",
                                 "current_toolchange": 3, "number_of_toolchanges": 12})

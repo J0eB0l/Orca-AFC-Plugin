@@ -276,8 +276,9 @@ def status_query(extruders: list, lights=(), chamber: str = "", fans=()) -> dict
              "display_status": ["progress", "message"], "gcode_move": ["gcode_position", "speed_factor"],
              # What AFC is doing, for the Device tab's stage line (stage.describe()).
              "AFC": stage.AFC_FIELDS}
+    # AFC names a U1's toolheads e0..e3; their heaters are Klipper's extruder..extruder3.
     for name in extruders or ["extruder"]:
-        query[name] = ["temperature", "target"]
+        query[protocol.klipper_extruder(name)] = ["temperature", "target"]
     if chamber:
         query[chamber] = ["temperature", "target"]
     query.update(controls.light_query(list(lights)))

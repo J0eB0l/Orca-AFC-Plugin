@@ -9,6 +9,8 @@ Each stage goes out as the nearest Bambu number, which any OrcaSlicer shows,
 and in AFC's own words with its numbers (stg_text), which the AFC build of
 OrcaSlicer shows instead."""
 
+from . import protocol
+
 # Bambu's stage numbers (DeviceManager.cpp get_stage_string()).
 PRINTING = 0
 BED_LEVELING = 1
@@ -92,7 +94,8 @@ def _heating(objects: dict, extruder: str, toolheads: int):
     temp, target = _number(bed.get("temperature")), _number(bed.get("target"))
     if temp is not None and target and temp < target - BED_BELOW:
         return BED_HEATING, "Heating the bed to %d °C (now %d °C)" % (round(target), round(temp))
-    nozzle = objects.get(extruder) if isinstance(objects.get(extruder), dict) else {}
+    heater = protocol.klipper_extruder(extruder)
+    nozzle = objects.get(heater) if isinstance(objects.get(heater), dict) else {}
     temp, target = _number(nozzle.get("temperature")), _number(nozzle.get("target"))
     if temp is not None and target and temp < target - NOZZLE_BELOW:
         return NOZZLE_HEATING, "Heating %s to %d °C (now %d °C)" % (
