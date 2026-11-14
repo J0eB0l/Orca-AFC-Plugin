@@ -5535,12 +5535,15 @@ Preset *PresetBundle::get_similar_printer_preset(std::string printer_model, std:
         boost::replace_all(prefer_printer, printer_variant_old, printer_variant);
     else if (auto n = prefer_printer.find(printer_variant_old); n != std::string::npos)
         prefer_printer = printer_model + " " + printer_variant_old + prefer_printer.substr(n + printer_variant_old.length());
-    if (auto iter = printer_presets.find(prefer_printer); iter != printer_presets.end()) {
+    // ORCA: a name with no variant in it ("My printer") swaps to itself, so it only counts when it is
+    // of the wanted variant.
+    if (auto iter = printer_presets.find(prefer_printer); iter != printer_presets.end() &&
+        (printer_variant.empty() || iter->second->config.opt_string("printer_variant") == printer_variant)) {
         return iter->second;
     }
     if (printer_variant.empty())
         printer_variant = printer_variant_old;
-    // ORCA: a user printer has no alias to swap the variant in, so its sibling of the wanted variant is
+    // ORCA: a user printer's name need not carry its variant, so its sibling of the wanted variant is
     // the one sharing the longest name with it ("My printer" -> "My printer 0.6 nozzle"), not the first
     // system preset of that model.
     const Preset &selected = printers.get_selected_preset();
