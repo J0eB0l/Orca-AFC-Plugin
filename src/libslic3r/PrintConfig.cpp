@@ -1241,11 +1241,10 @@ void PrintConfigDef::init_common_params()
     def = this->add("afc_sync_shelf", coBool);
     def->label = L("Presets for every Spoolman filament");
     def->tooltip = L("Filament sync makes this printer's preset for every filament in the printer's Spoolman, not only "
-                     "for the spools loaded in its lanes, so any of them can be picked before a spool of it is loaded. "
-                     "Untick it to make presets for loaded spools only.");
+                     "for the spools loaded in its lanes, so any of them can be picked before a spool of it is loaded.");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
-    def->set_default_value(new ConfigOptionBool(true));
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("afc_settings_check", coBool);
     def->label = L("Suggest AFC's settings");

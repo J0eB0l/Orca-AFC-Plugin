@@ -6645,10 +6645,10 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         tray_config.set_key_value("filament_preset", new ConfigOptionStrings{preset});
     }
     // Orca: every other filament the agent knows gets its own preset too, so it can be picked for a
-    // print before a spool of it is loaded; a loaded spool's values win over the shelf's. The printer's
-    // afc_sync_shelf turns it off.
+    // print before a spool of it is loaded, when the printer's afc_sync_shelf is ticked; a loaded spool's
+    // values win over the shelf's.
     const auto *sync_shelf = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionBool>("afc_sync_shelf");
-    if (!sync_color_only && (sync_shelf == nullptr || sync_shelf->value))
+    if (!sync_color_only && sync_shelf != nullptr && sync_shelf->value)
         for (const TraySpool &shelf : obj->GetFilaSystem()->GetShelfSpools()) {
             const std::string existing = existing_spool_preset(*wxGetApp().preset_bundle, shelf);
             if (!existing.empty() && tray_spool_presets.count(existing) > 0)
