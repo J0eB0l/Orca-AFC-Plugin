@@ -135,6 +135,33 @@ class PresetBundle:
             return self.printer
         return Preset(self.printer)
 
+    process = None  # the process preset being edited (a Preset), None until a test sets one
+
+    def current_process_preset(self):
+        return self.process
+
+
+class PresetTransaction:
+    """orca.host.preset.<category>.begin_update(): sets are kept in orca.commits on commit()."""
+    def __init__(self, category, target_name):
+        self.category, self.target_name, self.staged = category, target_name, {}
+
+    def set(self, key, value):
+        self.staged[key] = value
+
+    def commit(self):
+        orca.commits.append((self.category, self.target_name, dict(self.staged)))
+
+
+class PresetEditor:
+    def __init__(self, category):
+        self.category = category
+
+    def begin_update(self, preset_name=""):
+        bundle = _preset_bundle()
+        preset = bundle.current_printer_preset() if self.category == "printer" else bundle.current_process_preset()
+        return PresetTransaction(self.category, preset.name if preset is not None else "")
+
 
 # -- orca.printer_agent
 
@@ -212,8 +239,17 @@ orca.selected = None  # what host.selected_printer() answers: None, or the selec
 orca.multi_device = False  # Preferences' Multi-device management, as host.app_info() answers it
 
 
-orca.host = types.SimpleNamespace(preset_bundle=_preset_bundle, selected_printer=lambda: orca.selected,
-                                  app_info=lambda: {"version": "2.5.0", "multi_device": orca.multi_device})
+orca.notifications = []  # (level, text, hyper_text, on_click) host.ui.push_notification() got
+orca.commits = []        # (category, preset name, {key: value}) of committed preset transactions
+
+orca.host = types.SimpleNamespace(
+    preset_bundle=_preset_bundle, selected_printer=lambda: orca.selected,
+    app_info=lambda: {"version": "2.5.0", "multi_device": orca.multi_device},
+    ui=types.SimpleNamespace(
+        NotificationLevel=types.SimpleNamespace(ImportantNotificationLevel="important"),
+        push_notification=lambda level, text, hyper_text="", on_click=None:
+            orca.notifications.append((level, text, hyper_text, on_click))),
+    preset=types.SimpleNamespace(printer=PresetEditor("printer"), process=PresetEditor("process")))
 
 
 def _plugin(cls):

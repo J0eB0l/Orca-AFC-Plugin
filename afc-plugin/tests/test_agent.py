@@ -676,9 +676,21 @@ class DeviceTabTest(Case):
         self.fake.objects["configfile"] = {"settings": {"printer": {"kinematics": "corexy", "max_velocity": 500.0,
                                                                     "max_accel": 10000.0, "max_z_velocity": 0,
                                                                     "square_corner_velocity": 5.0}}}
+        orca.bundle.printer.values.update({"machine_max_speed_x": "300,300", "machine_max_acceleration_x": "10000"})
+        orca.notifications.clear()
         self.connect()
-        self.assertEqual(self.push()["klipper_limits"],
+        self.push()
+        self.assertEqual(self.agent._printer.limits,
                          {"max_velocity": 500.0, "max_accel": 10000.0, "square_corner_velocity": 5.0})
+        # A sync offers them for the printer preset's machine limits.
+        self.assertTrue(self.agent.fetch_filament_info(self.dev_id, "Subscription"))
+        self.assertIn("Use Klipper's limits", [n[2] for n in orca.notifications])
+
+    def test_connecting_offers_afcs_settings(self):
+        orca.bundle.printer.values["enable_filament_ramming"] = "1"
+        orca.notifications.clear()
+        self.connect()
+        self.assertIn("Use AFC's settings", [n[2] for n in orca.notifications])
 
     def test_afc_spots_on_the_bed_from_its_macro_variables(self):
         self.fake.objects["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4},

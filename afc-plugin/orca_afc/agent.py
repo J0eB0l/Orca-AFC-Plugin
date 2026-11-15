@@ -38,7 +38,7 @@ from dataclasses import dataclass, field, replace
 
 import orca
 
-from . import afclog, bambu_ids, controls, gcode, keepouts, layout, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
+from . import afclog, bambu_ids, controls, gcode, keepouts, layout, offers, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -391,7 +391,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
                 lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False,
-                bed_keepouts=None, limits=None) -> dict:
+                bed_keepouts=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -411,8 +411,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     `fans` the printer's fans (controls.find_fans()), for the fan popup, and
     `flow_calibration` whether AFC autocal can measure a lane's K here
     (FLOW_K_CALIBRATION) and `bed_keepouts` AFC's spots on the bed
-    (keepouts.bed_keepouts()), None until read, and `limits` Klipper's motion
-    limits (klipper_limits())."""
+    (keepouts.bed_keepouts()), None until read."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -467,9 +466,6 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         if any(part["diameter"] > 0 for part in nozzles):
             # ... which its print dialog checks the file's toolheads and nozzle sizes against.
             out["toolhead_nozzles"] = [part["diameter"] for part in nozzles]
-    if limits:
-        # ... and offers them for the printer preset's machine limits on a sync.
-        out["klipper_limits"] = dict(limits)
     if bed_keepouts is not None:
         # ... and filament sync keeps them in the printer preset, which keeps parts off them when
         # "Keep parts off AFC's spots" is ticked.
@@ -878,6 +874,9 @@ else:
             self._watcher = Worker("AFC printer agent watch", tick=self._poll_watched, every=poll)
             self._gcode = Worker("AFC printer agent G-code")  # long commands, so pushes keep coming
             self._web = Worker("AFC printer agent GitHub")  # so a slow GitHub never holds up pushes
+            # Preset edits the settings offers make: OrcaSlicer's preset API blocks its caller.
+            self._edits = Worker("AFC printer agent presets")
+            self._offers = offers.Offers(self._edits.submit)
             self._latest = {}         # upstream.read(): AFC's newest versions on GitHub
             self._latest_due = 0.0
 
@@ -901,6 +900,7 @@ else:
             self._gcode.stop()
             self._web.stop()
             self._spoolman.stop()
+            self._edits.stop()
 
         # -------------------------------------------------------- OrcaSlicer's callbacks
 
@@ -1010,8 +1010,11 @@ else:
             # OrcaSlicer lets a plugin start threads on its UI thread only, so they all start here.
             self._gcode.submit(lambda: None)
             self._web.submit(lambda: None)
+            self._edits.submit(lambda: None)
             self._watcher.submit(lambda: None)
             self._worker.submit(lambda: self._connect(printer))
+            if bundle is not None:
+                self._offer(lambda: self._offers.check(bundle))
             return SUCCESS
 
         def disconnect_printer(self):
@@ -1182,8 +1185,7 @@ else:
                                   printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
                                   self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
-                                  printer.fans, printer.flow_calibration, printer.bed_keepouts,
-                                  printer.limits)
+                                  printer.fans, printer.flow_calibration, printer.bed_keepouts)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -2075,7 +2077,17 @@ else:
                 return False
             self._read_presets()  # filaments made visible since the last read count now
             self._work(printer).submit(lambda: self._push(printer))
+            limits = dict(printer.limits)
+            self._offer(lambda: self._offers.check_limits(orca.host.preset_bundle(), limits))
             return True
+
+        @staticmethod
+        def _offer(check) -> None:
+            """Runs one of the settings offers (offers.Offers). UI thread."""
+            try:
+                check()
+            except Exception:  # starting up, closing, or an OrcaSlicer without notifications
+                traceback.print_exc()
 
         def start_discovery(self, start, sending):
             if start:
