@@ -53,6 +53,7 @@ JOB_RETRY = 30.0      # seconds before a print file's metadata is asked for agai
 CAMERA_EVERY = 60.0   # seconds between reads of Moonraker's webcam list
 TIMELAPSE_MACRO = "gcode_macro " + gcode.TIMELAPSE_FRAME  # moonraker-timelapse's macro in Klipper
 LOG_EVERY = 10.0     # seconds between reads of AFC.log for the Assistant page
+SHELF_EVERY = 60.0   # seconds between reads of Spoolman's filaments for their own presets
 CLEAR_MAX = 50       # AFC_CLEAR_MESSAGE sent at most per Clear
 DB_NAMESPACE = protocol.DB_NAMESPACE  # the agent's own items in Moonraker's database
 STATS_EVERY = 30.0    # seconds between reads of AFC's change times (swaptimes.py)
@@ -391,7 +392,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
                 lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False,
-                bed_keepouts=None) -> dict:
+                bed_keepouts=None, shelf=None) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -528,6 +529,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         out["lights_report"] = [{"node": "chamber_light", "mode": "on" if lit else "off"}]
     if snapshot is not None:
         out["ams"] = trays.ams_json(snapshot, filament_ids, extras, reading, by_unit, dry_filaments, wide)
+        if shelf is not None:
+            # Every Spoolman filament's own preset, which the filament sync makes too (AFCManager.shelf_spools()).
+            out["ams"]["spools"] = shelf
         # A Bambu printer's filament switch at the extruder: set, the Device tab draws the tray_now tray's
         # path to the extruder. Never with no tray (255), which OrcaSlicer reads as the external spool.
         now = out["ams"].get("tray_now")
@@ -814,6 +818,8 @@ class _Printer:
     afc_log: dict = None                              # afclog.view() of AFC.log
     log_entries: list = field(default_factory=list)   # afclog.merge() of its reads
     log_due: float = 0.0                              # when to read it again
+    shelf: list = None                                # AFCManager.shelf_spools(); None until read
+    shelf_due: float = 0.0                            # when to read them again
     log_cleared: str = None                           # its clear mark, None until read from Moonraker
     log_path: str = None                              # its path in Moonraker's logs root, None until looked for
     probes: object = field(default_factory=lambda: stage.ProbeWatch())  # bed probing, for the stage line
@@ -1179,13 +1185,15 @@ else:
             if snapshot is not None:
                 self._afc_log(printer)
                 self._upstream()
+                self._shelf(printer, snapshot)
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
                                   toolhead_parts(printer.nozzles, printer.saved_nozzles, printer.extruders),
                                   printer.client.url, printer.timelapse, printer.afc_log,
                                   self._latest, printer.wide, len(printer.extruders),
                                   self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
-                                  printer.fans, printer.flow_calibration, printer.bed_keepouts)
+                                  printer.fans, printer.flow_calibration, printer.bed_keepouts,
+                                  printer.shelf if snapshot is not None and snapshot.spoolman else None)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1534,6 +1542,25 @@ else:
                 elif written:
                     print("AFC: %d Spoolman filament(s) got an OrcaSlicer filament id" % written)
             self._spoolman.submit(fill)
+
+        def _shelf(self, printer: _Printer, snapshot) -> None:
+            """Reads what the filament sync makes every Spoolman filament's own
+            preset from (AFCManager.shelf_spools()) once a minute, and at each
+            sync for the next one, so a filament no lane holds can be picked
+            for a print all the same."""
+            now = time.monotonic()
+            if not snapshot.spoolman or now < printer.shelf_due:
+                return
+            printer.shelf_due = now + SHELF_EVERY
+            spoolman = protocol.spoolman_for_printer(snapshot.spoolman_url, printer.client.url)
+            with self._lock:
+                candidates = list(self._candidates)
+
+            def read():
+                found, error = printer.manager.shelf_spools(printer.client, candidates, self._ids, spoolman)
+                if not error:
+                    printer.shelf = found
+            self._spoolman.submit(read)
 
         def _save_filament_id(self, printer: _Printer, snapshot, spool: int, filament_id: str) -> None:
             """Puts the id of the preset a spool matched on its Spoolman filament
@@ -2100,6 +2127,7 @@ else:
             self._read_presets()  # filaments made visible since the last read count now
             self._work(printer).submit(lambda: self._push(printer))
             self._fill_filament_ids(printer)
+            printer.shelf_due = 0.0
             limits = dict(printer.limits)
             self._offer(lambda: self._offers.check_limits(orca.host.preset_bundle(), limits))
             return True

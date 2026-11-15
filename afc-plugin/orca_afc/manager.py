@@ -10,7 +10,7 @@ import json
 import threading
 import time
 
-from . import bambu_ids, presets, protocol, runout
+from . import bambu_ids, presets, protocol, runout, trays
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, fetch_json
 from .protocol import AFCError, Lane, Snapshot
 
@@ -261,6 +261,32 @@ class AFCManager:
             return sorted(rows, key=lambda r: (order[r["state"]], r["name"].lower())), ""
         return [], error
 
+    def shelf_spools(self, client: Moonraker, candidates: list, ids, spoolman_url: str = "") -> tuple:
+        """What the filament sync makes each Spoolman filament's own preset
+        from (trays.spool_json()), loaded or not, so every filament can be
+        picked while no spool of it is in a lane: (list, error). One per
+        preset name; a filament with no name to give its preset, or no
+        preset of its material to copy, has none."""
+        error = ""
+        for call in self._spoolman_calls(client, spoolman_url):
+            try:
+                records = call("GET", "/v1/filament")
+            except MoonrakerError as failure:
+                error = str(failure)
+                continue
+            out, named = [], set()
+            for record in records or []:
+                lane = _filament_lane(record)
+                names = presets.spool_preset_names(lane) if lane else []
+                if not names or names[0].lower() in named:
+                    continue
+                base = presets.best(lane, candidates, ids)
+                if base:
+                    named.add(names[0].lower())
+                    out.append(trays.spool_json(lane, names, base))
+            return out, ""
+        return [], error
+
     def fill_filament_ids(self, client: Moonraker, candidates: list, ids, filaments=None,
                           spoolman_url: str = "") -> tuple:
         """Write the planned id on each Spoolman filament that still has none
@@ -484,14 +510,31 @@ def shared() -> AFCManager:
     return _shared
 
 
-def _plan_row(filament, candidates: list, ids) -> dict | None:
-    """One Spoolman filament for filament_id_plan(), None for a record that is not one."""
+def _number(value, kind):
+    try:
+        return kind(value) if value is not None else kind(0)
+    except (TypeError, ValueError):
+        return kind(0)
+
+
+def _filament_lane(filament) -> Lane | None:
+    """A Spoolman filament record as a lane holding a spool of it, None for a record that is not one."""
     if not isinstance(filament, dict) or not isinstance(filament.get("id"), int):
         return None
     vendor = filament.get("vendor") if isinstance(filament.get("vendor"), dict) else {}
     article = protocol.spool_article({"filament": filament})
-    lane = Lane(material=str(filament.get("material") or ""), vendor=str(vendor.get("name") or ""),
-                filament_name=str(filament.get("name") or ""), bambu_id=article if bambu_ids.is_bambu(article) else "")
+    return Lane(material=str(filament.get("material") or ""), vendor=str(vendor.get("name") or ""),
+                filament_name=str(filament.get("name") or ""), bambu_id=article if bambu_ids.is_bambu(article) else "",
+                nozzle_temp=_number(filament.get("settings_extruder_temp"), int),
+                bed_temp=_number(filament.get("settings_bed_temp"), int),
+                density=_number(filament.get("density"), float), diameter=_number(filament.get("diameter"), float))
+
+
+def _plan_row(filament, candidates: list, ids) -> dict | None:
+    """One Spoolman filament for filament_id_plan(), None for a record that is not one."""
+    lane = _filament_lane(filament)
+    if lane is None:
+        return None
     has = protocol.spoolman_text((filament.get("extra") or {}).get("filament_id"))
     filament_id = has or presets.product_id(lane, candidates, ids)
     own = "" if filament_id else presets.own_id(lane, candidates, ids)

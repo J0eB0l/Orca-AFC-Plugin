@@ -220,6 +220,19 @@ class FillFilamentIdsTest(Case):
         self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments],
                          ['"OF5CgdDq"', '"Pmine01"', '"P49e71ff"', None])
 
+    def test_shelf_spools_one_per_preset_name(self):
+        self.fake.filaments[0].update({"settings_extruder_temp": 215, "settings_bed_temp": 60, "density": 1.24,
+                                       "diameter": 1.75})
+        spools, error = self.manager.shelf_spools(self.client, self.candidates, self.ids)
+        self.assertEqual(error, "")
+        # Both PolyLite filaments make one preset; the vendorless one has no name to give one.
+        self.assertEqual([s["names"][0] for s in spools], ["Polymaker PolyLite PLA", "Nobody Mystery PLA"])
+        polylite = spools[0]
+        self.assertEqual((polylite["base"], polylite["vendor"], polylite["nozzle_temp"], polylite["bed_temp"],
+                          polylite["density"], polylite["diameter"], polylite["pressure_advance"]),
+                         ("Polymaker PolyLite PLA", "Polymaker", 215, 60, 1.24, 1.75, -1.0))
+        self.assertEqual(spools[1]["base"], "Polymaker PolyLite PLA")
+
     def test_fill_writes_a_spools_own_id(self):
         written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [5])
         self.assertEqual((written, error), (1, ""))

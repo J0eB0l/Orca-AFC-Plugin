@@ -296,6 +296,21 @@ class StatusTest(Case):
         self.assertEqual(shelf["extra"].get("filament_id"), '"GFL_POLYLITE"')
         self.assertEqual(kept["extra"]["filament_id"], '"Pmine01"')
 
+    def test_pushes_every_spoolman_filaments_spool_for_its_own_preset(self):
+        self.fake.objects["AFC"]["spoolman"] = True
+        shelf = {"id": 7, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
+                 "settings_extruder_temp": 215, "extra": {}}
+        self.fake.spools = {20: {"id": 20, "filament": shelf}}
+        self.connect()
+        pushes, status = 1, self.push()
+        deadline = time.monotonic() + 5
+        while "spools" not in status.get("ams", {}) and time.monotonic() < deadline:
+            time.sleep(0.05)
+            pushes += 1
+            status = self.push(pushes)
+        spools = status["ams"]["spools"]
+        self.assertEqual([(s["names"][0], s["nozzle_temp"]) for s in spools], [("Polymaker PolyLite PLA", 215)])
+
     def test_printer_state(self):
         self.connect()
         status = self.push()
