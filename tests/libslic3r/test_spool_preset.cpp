@@ -60,3 +60,9 @@ TEST_CASE("Spool values go into a filament config and widen its temperature rang
     CHECK_THAT(config.option<ConfigOptionFloats>("pressure_advance")->values[0], WithinAbs(0.04, 1e-9));
     CHECK_FALSE(apply_spool_values(spool, config));
 }
+
+TEST_CASE("A spool's own filament gets OrcaSlicer's id for a filament the user makes", "[SpoolPreset]")
+{
+    CHECK(user_filament_id("Polymaker PolyLite PLA") == "P29ee6b9");
+    CHECK(user_filament_id("Sunlu PLA Meta") == "Pdb40f94");
+}

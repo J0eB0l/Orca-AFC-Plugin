@@ -38,6 +38,11 @@ extern const std::string SPOOL_PRESET_NOTE;
 // stays ruled out. Returns whether anything changed.
 bool apply_spool_values(const TraySpool &spool, DynamicPrintConfig &config);
 
+// The filament id OrcaSlicer gives a filament the user makes (CreatePresetsDialog's get_filament_id):
+// "P" and the first 7 hex digits of the MD5 of its name, so one name gets one id on every machine.
+// A preset made for a spool that is no system filament carries it.
+std::string user_filament_id(const std::string &name);
+
 // The compatible preset named like the spool that spool_filament_preset() would pick, without
 // making or changing one; "" when there is none.
 std::string existing_spool_preset(PresetBundle &bundle, const TraySpool &spool);

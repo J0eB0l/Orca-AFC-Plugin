@@ -16,12 +16,24 @@
 
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/log/trivial.hpp>
+#include <openssl/evp.h>
 
 namespace Slic3r {
 
 const std::string SPOOL_PRESET_NOTE = "Made by filament sync from the spool's data. Each sync puts the spool's "
                                       "temperatures, density, diameter and pressure advance back in; delete this "
                                       "line to keep your own.";
+
+std::string user_filament_id(const std::string &name)
+{
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  size = 0;
+    EVP_Digest(name.data(), name.size(), digest, &size, EVP_md5(), nullptr);
+    char hex[2 * EVP_MAX_MD_SIZE + 1] = {};
+    for (unsigned int i = 0; i < size; ++i)
+        std::snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+    return "P" + std::string(hex, 7);
+}
 
 namespace {
 
@@ -54,23 +66,20 @@ template<class Option, class Value> bool set_every_value(Option *option, const V
     return changed;
 }
 
-// The filament id of the presets made for one spool: every printer's copy shares it, as with
-// OrcaSlicer's own user filaments, and no other filament has it.
+// The filament id of the presets made for one spool, which every printer's copy shares: a system filament's
+// of that name, else OrcaSlicer's id for a filament the user makes. Where another filament already holds that
+// id, OrcaSlicer salts the name with the time; this salts it with a count, so the id stays the same each sync.
 std::string spool_filament_id(const PresetCollection &filaments, const std::string &spool_name)
 {
     const std::string key = lower_ascii(spool_name);
     for (const Preset &preset : filaments)
-        if (!preset.filament_id.empty() && preset.filament_id != "null" && preset_base_key(preset.name) == key)
+        if (preset.is_system && !preset.filament_id.empty() && preset.filament_id != "null" && preset_base_key(preset.name) == key)
             return preset.filament_id;
+    const std::string name = boost::trim_copy(spool_name);
     for (unsigned salt = 0; salt < 1000; ++salt) {
-        uint32_t hash = 2166136261u; // FNV-1a
-        for (unsigned char c : key + (salt > 0 ? "#" + std::to_string(salt) : std::string())) {
-            hash ^= c;
-            hash *= 16777619u;
-        }
-        char id[16];
-        std::snprintf(id, sizeof(id), "P%07x", unsigned(hash >> 4));
-        if (std::none_of(filaments.begin(), filaments.end(), [&id](const Preset &p) { return p.filament_id == id; }))
+        const std::string id = user_filament_id(salt == 0 ? name : name + "#" + std::to_string(salt));
+        if (std::none_of(filaments.begin(), filaments.end(),
+                         [&id, &key](const Preset &p) { return p.filament_id == id && preset_base_key(p.name) != key; }))
             return id;
     }
     return {};
@@ -149,7 +158,17 @@ SpoolPreset spool_filament_preset(PresetBundle &bundle, const TraySpool &spool)
     if (found != nullptr && !copy_system) {
         out.name                  = found->name;
         DynamicPrintConfig config = found->config;
-        if (made_by_sync(*found) && apply_spool_values(spool, config)) {
+        bool changed = false;
+        if (made_by_sync(*found)) {
+            changed = apply_spool_values(spool, config);
+            // Presets made before sync used OrcaSlicer's id for a user's filament take it now.
+            const std::string filament_id = spool_filament_id(filaments, found->name.substr(0, found->name.find('@')));
+            if (!filament_id.empty() && found->filament_id != filament_id) {
+                found->filament_id = filament_id;
+                changed            = true;
+            }
+        }
+        if (changed) {
             // Reload it in the filament tab too, unless it has edits there that would be lost.
             const bool reload = filaments.get_selected_preset_name() == found->name && !filaments.current_is_dirty();
             found->config     = std::move(config);
