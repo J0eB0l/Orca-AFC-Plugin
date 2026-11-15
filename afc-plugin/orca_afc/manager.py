@@ -243,10 +243,12 @@ class AFCManager:
 
     def filament_id_plan(self, client: Moonraker, candidates: list, ids, spoolman_url: str = "") -> tuple:
         """Every Spoolman filament with the OrcaSlicer filament id it has or
-        would get, the way the sync picks one for a spool (presets.product_id()):
+        would get, the way the sync picks one for a spool (presets.product_id(),
+    else the id of the spool's own preset, presets.own_id()):
         ([{filament, name, material, filament_id, preset, state}], error). The
         state is "has" (an id is there), "fill" (one would be written) or
-        "none" (no system preset names its vendor and product)."""
+        "none" (no system preset names its vendor and product, and the
+        spool's own preset would have no id of its own)."""
         error = ""
         for call in self._spoolman_calls(client, spoolman_url):
             try:
@@ -490,11 +492,14 @@ def _plan_row(filament, candidates: list, ids) -> dict | None:
                 filament_name=str(filament.get("name") or ""), bambu_id=article if bambu_ids.is_bambu(article) else "")
     has = protocol.spoolman_text((filament.get("extra") or {}).get("filament_id"))
     filament_id = has or presets.product_id(lane, candidates, ids)
+    own = "" if filament_id else presets.own_id(lane, candidates, ids)
     preset = ""
     if filament_id:
         lane.filament_id = filament_id
         found = presets.by_id(lane, candidates, ids)
         preset = found[0].name if found else ""
+    elif own:
+        filament_id, preset = own, "%s (its own preset)" % presets.spool_preset_name(lane)
     return {"filament": filament["id"], "name": " ".join(x for x in (lane.vendor, lane.filament_name) if x) or "#%d" % filament["id"],
             "material": lane.material, "filament_id": filament_id, "preset": preset,
             "why": "" if filament_id else presets.product_miss(lane, candidates, ids),

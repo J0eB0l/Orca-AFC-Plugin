@@ -1491,8 +1491,9 @@ else:
                     continue
                 key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id, lane.bambu_id)
                 if key not in cache:
+                    product = presets.product_id(lane, candidates, self._ids)
                     cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates, self._ids),
-                                  presets.product_id(lane, candidates, self._ids))
+                                  product or presets.own_id(lane, candidates, self._ids))
                 ids[tray], base, product = cache[key]
                 if product and lane.spool_id > 0 and not lane.filament_id:
                     self._save_filament_id(printer, snapshot, lane.spool_id, product)
@@ -1512,8 +1513,9 @@ else:
 
         def _save_filament_id(self, printer: _Printer, snapshot, spool: int, filament_id: str) -> None:
             """Puts the id of the preset a spool matched on its Spoolman filament
-            once, so AFC hands it to OrcaSlicer in lane_data and the next match
-            is exact, in this OrcaSlicer and in others."""
+            once, or for a spool no system filament is, the id of the preset the
+            sync makes for it, so AFC hands it to OrcaSlicer in lane_data and the
+            next match is exact, in this OrcaSlicer and in others."""
             with self._lock:
                 if (printer.client.url, spool) in self._id_saves:
                     return

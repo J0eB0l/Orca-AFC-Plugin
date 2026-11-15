@@ -90,7 +90,7 @@ class AFCPageTest(unittest.TestCase):
         self.assertEqual(len(answer["data"]["afc"]["lanes"]), 4)
 
     def test_filament_id_plan_lists_spoolman_filaments(self):
-        self.fake.filaments = [{"id": 5, "name": "Mystery PLA", "material": "PLA", "vendor": {"name": "Nobody"}, "extra": {}}]
+        self.fake.filaments = [{"id": 5, "name": "Mystery PLA", "material": "PLA", "vendor": None, "extra": {}}]
         answer = self.ask("filament_id_plan")
         self.assertTrue(answer["ok"])
         self.assertEqual([(r["filament"], r["state"]) for r in answer["data"]["rows"]], [(5, "none")])

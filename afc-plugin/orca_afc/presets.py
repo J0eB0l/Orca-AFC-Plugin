@@ -25,6 +25,7 @@ that sets it, or, for a system preset OrcaSlicer 2.5 keeps packed
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -60,6 +61,7 @@ class Candidate:
     base: str = ""     # that preset's name: this one's, or the system preset it comes from
     base_system: bool = False  # whether that preset is a system preset
     visible: bool = True  # ticked in the filament list; a hidden one is picked only by its filament id
+    synced: bool = False  # a user preset the filament sync made for a spool, which each sync refreshes
 
 
 def _first(value) -> str:
@@ -100,6 +102,10 @@ def _base(filaments, preset):
 
 
 
+# How the notes of a preset the filament sync makes for a spool start (SpoolPreset.cpp SPOOL_PRESET_NOTE).
+SPOOL_PRESET_NOTE = "Made by filament sync from the spool's data."
+
+
 def collect(bundle) -> list:
     """The filament presets compatible with the selected printer that the
     sync can pick: the visible ones, and the hidden system ones, which
@@ -126,6 +132,7 @@ def collect(bundle) -> list:
             base=str(base.name),
             base_system=bool(base.is_system),
             visible=bool(preset.is_visible),
+            synced=not preset.is_system and _first(preset.config_value("filament_notes")).startswith(SPOOL_PRESET_NOTE),
         ))
     return out
 
@@ -561,3 +568,49 @@ def product_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
             found, most = filament_id, len(wanted)
     return found
 
+
+def user_filament_id(name: str) -> str:
+    """The filament id OrcaSlicer gives a filament the user makes ("Create
+    filament"): "P" and the first 7 hex digits of the MD5 of its name, so
+    one name gets one id on every machine. OrcaSlicer's filament sync gives
+    the same to the preset it makes for a spool that is no system filament."""
+    return "P" + hashlib.md5(name.strip().encode("utf-8")).hexdigest()[:7]
+
+
+def own_id(lane: Lane, candidates: list, ids: FilamentIds) -> str:
+    """The id of the preset the sync gives the lane's spool when no system
+    filament is its product (product_id() finds none). The sync takes the
+    one named like the spool, the user's before a system one: a system
+    preset's id; "" for one inheriting another preset, which carries that
+    product's id; the user's own filament's id. A preset the sync made, or
+    none, carries user_filament_id() of its name, which "" stands for when
+    another filament already holds it (the sync salts that one's). "" for a
+    spool with no vendor to name a preset."""
+    if not spool_preset_name(lane).strip():
+        return ""
+    ids.learn(candidates)
+    names = [n.strip() for n in spool_preset_names(lane)]
+    name = names[0]
+    for wanted in names:
+        found = [c for c in candidates if _base_key(c.name) == wanted.lower()]
+        found.sort(key=lambda c: c.system)
+        if found:
+            c = found[0]
+            if c.system:
+                return ids.of(c)
+            if c.inherits:
+                return ""
+            if not c.synced:
+                return ids.of(c)
+            name = c.name.split("@", 1)[0].strip()
+            break
+    key = name.lower()
+    filament_id = user_filament_id(name)
+    if any(ids.of(c) == filament_id and _base_key(c.name) != key for c in candidates):
+        return ""
+    return filament_id
+
+
+def _base_key(name: str) -> str:
+    """A preset's name without its "@..." part, lower case, as the sync compares them."""
+    return name.split("@", 1)[0].strip().lower()

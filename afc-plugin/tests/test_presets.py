@@ -178,6 +178,15 @@ class FilamentIdTest(unittest.TestCase):
         ids = FilamentIds()
         self.assertEqual([ids.of(c) for c in presets.collect(bundle)], ["OFDSrzZ8", "OFDSrzZ8", "P5ba6812"])
 
+    def test_collect_knows_the_presets_the_sync_made(self):
+        Preset = fake_orca.Preset
+        note = presets.SPOOL_PRESET_NOTE + " Each sync puts the spool's temperatures back in."
+        bundle = fake_orca.PresetBundle(filaments=[
+            Preset({"filament_type": "PLA", "filament_notes": '"%s"' % note}, name="Overture Rock PLA @U1"),
+            Preset({"filament_type": "PLA", "filament_notes": "Mine"}, name="Inland PLA"),
+        ])
+        self.assertEqual([c.synced for c in presets.collect(bundle)], [True, False])
+
     def test_loops_and_missing_files(self):
         a = self.write(os.path.join(self.system, "V", "filament", "a.json"), {"inherits": "b"})
         self.write(os.path.join(self.system, "V", "filament", "b.json"), {"inherits": "a"})
@@ -228,6 +237,33 @@ class FilamentIdTest(unittest.TestCase):
         self.assertEqual(presets.product_id(lane(vendor="Overture", product="PLA"), candidates, ids), "")
         self.assertEqual(presets.product_id(lane(vendor="Sunlu", product="PLA"), candidates, ids), "")
         self.assertEqual(presets.product_id(lane(vendor="", product="PolyLite"), candidates, ids), "")
+
+    def test_own_id_is_orcas_id_for_a_filament_the_user_makes(self):
+        # OrcaSlicer's CreatePresetsDialog: "P" + the first 7 hex digits of the MD5 of the name.
+        self.assertEqual(presets.user_filament_id("Polymaker PolyLite PLA"), "P29ee6b9")
+        generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
+        inland = self.write(os.path.join(self.root, "user", "1", "filament", "Inland PLA.json"), {"filament_id": "P1234567"})
+        candidates = [Candidate(name="Generic PLA", type="PLA", vendor="Generic", system=True, file=generic, base_system=True),
+                      Candidate(name="Inland PLA", type="PLA", vendor="Inland", system=False, file=inland)]
+        ids = FilamentIds()
+        # No preset is named like the spool: the sync makes one with this id.
+        self.assertEqual(presets.own_id(lane(vendor="Overture", product="Rock PLA"), candidates, ids), "Pda36b60")
+        # The user's own filament named like it is the spool's preset: its id.
+        self.assertEqual(presets.own_id(lane(vendor="Inland", product="PLA"), candidates, ids), "P1234567")
+        # One that inherits a system preset carries that product's id, never saved.
+        candidates[1].inherits = "Generic PLA"
+        candidates[1].file = generic
+        self.assertEqual(presets.own_id(lane(vendor="Inland", product="PLA"), candidates, ids), "")
+        # A preset the sync made earlier with an id of its own takes OrcaSlicer's at the next sync.
+        made = self.write(os.path.join(self.root, "user", "1", "filament", "Overture Rock PLA @U1.json"),
+                          {"filament_id": "P0ld0001"})
+        synced = Candidate(name="Overture Rock PLA @U1", type="PLA", vendor="Overture", system=False, file=made, synced=True)
+        self.assertEqual(presets.own_id(lane(vendor="Overture", product="Rock PLA"), candidates + [synced], ids), "Pda36b60")
+        # No vendor names no preset; an id another filament holds is salted by the sync.
+        self.assertEqual(presets.own_id(lane(vendor="", product="Rock PLA"), candidates, ids), "")
+        taken = self.write(os.path.join(self.root, "user", "1", "filament", "Other.json"), {"filament_id": "Pda36b60"})
+        candidates.append(Candidate(name="Other", type="PLA", vendor="X", system=False, file=taken))
+        self.assertEqual(presets.own_id(lane(vendor="Overture", product="Rock PLA"), candidates, ids), "")
 
     def test_product_id_reads_the_product_from_a_color_name(self):
         # Spoolman's filament database names a filament by its color.

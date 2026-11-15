@@ -194,20 +194,30 @@ class FillFilamentIdsTest(Case):
             {"id": 4, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
              "extra": {"filament_id": '"Pmine01"'}},
             {"id": 5, "name": "Mystery PLA", "material": "PLA", "vendor": {"name": "Nobody"}, "extra": {}},
+            {"id": 6, "name": "Mystery PLA", "material": "PLA", "vendor": None, "extra": {}},
         ]
 
     def test_plan_says_what_each_filament_gets(self):
         rows, error = self.manager.filament_id_plan(self.client, self.candidates, self.ids)
         self.assertEqual(error, "")
         self.assertEqual([(r["filament"], r["state"], r["filament_id"]) for r in rows],
-                         [(3, "fill", "OF5CgdDq"), (5, "none", ""), (4, "has", "Pmine01")])
-        self.assertEqual(rows[0]["preset"], "Polymaker PolyLite PLA")
+                         [(5, "fill", "P49e71ff"), (3, "fill", "OF5CgdDq"), (6, "none", ""), (4, "has", "Pmine01")])
+        # No system filament is Nobody's Mystery PLA: it gets the id OrcaSlicer gives the preset the sync makes for it.
+        self.assertEqual(rows[0]["preset"], "Nobody Mystery PLA (its own preset)")
+        self.assertEqual(rows[1]["preset"], "Polymaker PolyLite PLA")
 
     def test_fill_writes_only_the_planned_empty_ones(self):
-        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [3, 4, 5])
+        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [3, 4, 6])
         self.assertEqual((written, error), (1, ""))
-        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments], ['"OF5CgdDq"', '"Pmine01"', None])
+        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments],
+                         ['"OF5CgdDq"', '"Pmine01"', None, None])
         self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
+
+
+    def test_fill_writes_a_spools_own_id(self):
+        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [5])
+        self.assertEqual((written, error), (1, ""))
+        self.assertEqual(self.fake.filaments[2]["extra"].get("filament_id"), '"P49e71ff"')
 
 
 class FilamentIdTest(Case):
