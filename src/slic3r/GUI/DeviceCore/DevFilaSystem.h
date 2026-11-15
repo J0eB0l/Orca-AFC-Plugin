@@ -385,6 +385,10 @@ public:
     // which leaves the legacy hardcoded/ams_status_sub step handling in effect.
     const std::vector<DevFilamentStep>& GetFilamentChangeSteps() const { return m_filament_change_steps; }
 
+    // Orca: a spool of each filament the printer agent knows, loaded or not (ams.spools), which the
+    // filament sync makes the filament's own preset from, so it can be picked before it is loaded.
+    const std::vector<TraySpool>& GetShelfSpools() const { return m_shelf_spools; }
+
 public:
     // ctrls
     int  CtrlAmsReset() const;
@@ -404,6 +408,8 @@ private:
 
     // Change-step sequence reported by the AMS (ams.cfs); empty when firmware doesn't send it.
     std::vector<DevFilamentStep> m_filament_change_steps;
+
+    std::vector<TraySpool> m_shelf_spools;
 
     std::map<std::string, DevAms*, NumericStrCompare> amsList;// key: ams[id], start with 0
 

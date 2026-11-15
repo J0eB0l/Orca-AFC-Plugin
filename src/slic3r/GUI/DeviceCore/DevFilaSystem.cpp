@@ -36,15 +36,13 @@ using namespace nlohmann;
 namespace Slic3r {
 static int _hex_digit_to_int(const char c) { return (c >= '0' && c <= '9') ? c - '0' : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1; }
 
-// Orca: a tray's "spool" object, which a printer agent sends to have the filament sync give the
-// tray that spool's own preset; none without a preset name to look for.
-static std::optional<TraySpool> parse_tray_spool(const json &tray)
+// Orca: a spool object a printer agent sends to have the filament sync give a tray, or a filament
+// on the shelf, that spool's own preset; none without a preset name to look for.
+static std::optional<TraySpool> parse_spool(const json &j)
 {
-    auto it = tray.find("spool");
-    if (it == tray.end() || !it->is_object())
+    if (!j.is_object())
         return std::nullopt;
-    const json &j     = *it;
-    auto        text  = [&j](const char *key) {
+    auto text = [&j](const char *key) {
         auto v = j.find(key);
         return v != j.end() && v->is_string() ? v->get<std::string>() : std::string();
     };
@@ -67,6 +65,12 @@ static std::optional<TraySpool> parse_tray_spool(const json &tray)
     spool.diameter         = number("diameter", 0);
     spool.pressure_advance = number("pressure_advance", -1);
     return spool;
+}
+
+static std::optional<TraySpool> parse_tray_spool(const json &tray)
+{
+    auto it = tray.find("spool");
+    return it == tray.end() ? std::nullopt : parse_spool(*it);
 }
 
 wxColour DevAmsTray::decode_color(const std::string &color)
@@ -431,6 +435,13 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
 {
     if (jj.contains("ams"))
     {
+        // Orca: the spools of every filament the printer agent knows, loaded or not (ams.spools).
+        if (auto spools = jj["ams"].find("spools"); spools != jj["ams"].end() && spools->is_array()) {
+            system->m_shelf_spools.clear();
+            for (const json &j : *spools)
+                if (auto spool = parse_spool(j))
+                    system->m_shelf_spools.push_back(std::move(*spool));
+        }
         if (jj["ams"].contains("ams"))
         {
             if (jj["ams"].contains("ams_exist_bits"))

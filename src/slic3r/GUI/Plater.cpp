@@ -6626,6 +6626,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     // Orca: a tray whose spool the printer agent describes syncs as the spool's own preset, made
     // from the spool's data when there is none yet, unless the agent names a preset for the tray.
     bool filament_presets_changed = false;
+    std::set<std::string> tray_spool_presets;
     for (auto &[tray_key, tray_config] : list) {
         const DevAmsTray *tray = sync_color_only ? nullptr :
                                      obj->GetFilaSystem()->GetAmsTray(tray_config.opt_string("ams_id", 0u), tray_config.opt_string("slot_id", 0u));
@@ -6636,12 +6637,25 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
             const SpoolPreset spool = spool_filament_preset(*wxGetApp().preset_bundle, *tray->spool);
             filament_presets_changed |= spool.created || spool.updated;
             preset = spool.name;
+            tray_spool_presets.insert(spool.name);
         }
         if (preset.empty())
             continue;
         filament_presets_changed |= show_filament_preset(preset);
         tray_config.set_key_value("filament_preset", new ConfigOptionStrings{preset});
     }
+    // Orca: every other filament the agent knows gets its own preset too, so it can be picked for a
+    // print before a spool of it is loaded; a loaded spool's values win over the shelf's.
+    if (!sync_color_only)
+        for (const TraySpool &shelf : obj->GetFilaSystem()->GetShelfSpools()) {
+            const std::string existing = existing_spool_preset(*wxGetApp().preset_bundle, shelf);
+            if (!existing.empty() && tray_spool_presets.count(existing) > 0)
+                continue;
+            const SpoolPreset spool = spool_filament_preset(*wxGetApp().preset_bundle, shelf);
+            filament_presets_changed |= spool.created || spool.updated;
+            if (!spool.name.empty())
+                filament_presets_changed |= show_filament_preset(spool.name);
+        }
     if (filament_presets_changed)
         if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_FILAMENT))
             tab->update_tab_ui();
