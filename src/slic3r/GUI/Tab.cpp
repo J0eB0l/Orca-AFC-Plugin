@@ -2875,7 +2875,6 @@ void Tab::on_presets_changed()
     if (m_type == Preset::TYPE_PRINTER) {
         wxGetApp().switch_printer_agent();
         wxGetApp().detect_afc_on_printer();
-        wxGetApp().suggest_afc_settings();
 
         // Trigger per-vendor preset update check
         const Preset& printer_preset = m_preset_bundle->printers.get_edited_preset();

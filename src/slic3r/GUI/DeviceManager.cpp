@@ -3403,12 +3403,6 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     measured_unload_time      = seconds("unload");
                     measured_tool_change_time = seconds("tool_change");
                 }
-                if (jj.contains("klipper_limits") && jj["klipper_limits"].is_object()) {
-                    agent_machine_limits.clear();
-                    for (const auto& [key, value] : jj["klipper_limits"].items())
-                        if (value.is_number() && value.get<double>() > 0.)
-                            agent_machine_limits[key] = value.get<double>();
-                }
                 if (jj.contains("afc_keepouts") && jj["afc_keepouts"].is_string()) {
                     has_agent_bed_keepouts = true;
                     agent_bed_keepouts     = jj["afc_keepouts"].get<std::string>();

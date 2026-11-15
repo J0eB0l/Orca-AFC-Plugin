@@ -6806,7 +6806,6 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     }
     // Orca: an AFC printer's measured change times come with its filaments.
     wxGetApp().apply_measured_swap_times(*obj);
-    wxGetApp().suggest_klipper_limits(*obj);
     remove_broken_mixed_filaments();
     offer_mixed_filaments();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "begin pop_finsish_sync_ams_dialog";
