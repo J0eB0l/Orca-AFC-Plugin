@@ -214,6 +214,12 @@ class FillFilamentIdsTest(Case):
         self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
 
 
+    def test_fill_with_no_list_writes_every_empty_one(self):
+        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids)
+        self.assertEqual((written, error), (2, ""))
+        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments],
+                         ['"OF5CgdDq"', '"Pmine01"', '"P49e71ff"', None])
+
     def test_fill_writes_a_spools_own_id(self):
         written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [5])
         self.assertEqual((written, error), (1, ""))

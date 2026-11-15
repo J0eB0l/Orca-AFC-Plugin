@@ -17,7 +17,7 @@ from .protocol import AFCError
 
 WEB = Path(__file__).resolve().parent / "web"
 # The page's commands that match Spoolman filaments to OrcaSlicer's presets, read on the UI thread.
-FILAMENT_ID_COMMANDS = ("filament_id_plan", "fill_filament_ids")
+FILAMENT_ID_COMMANDS = ("filament_id_plan",)
 
 
 def page_html(view: str = "panel", mode: str = "") -> str:
@@ -97,14 +97,10 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
             if client is None:
                 raise AFCError(hint or "The printer is not connected")
             spoolman = protocol.spoolman_for_printer(manager.snapshot.spoolman_url, printer)
-            written, error = 0, ""
-            if cmd == "fill_filament_ids":
-                written, error = manager.fill_filament_ids(client, list(candidates), self.ids,
-                                                           list(params.get("filaments") or []), spoolman)
-            rows, plan_error = manager.filament_id_plan(client, list(candidates), self.ids, spoolman)
-            if error or plan_error:
-                raise AFCError(error or plan_error)
-            return {"rows": rows, "written": written}
+            rows, error = manager.filament_id_plan(client, list(candidates), self.ids, spoolman)
+            if error:
+                raise AFCError(error)
+            return {"rows": rows}
         if cmd == "get_state":
             error = manager.refresh(client) if client and params.get("refresh", True) else ""
             return manager.state(printer, hint, error)

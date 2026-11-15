@@ -280,6 +280,22 @@ class StatusTest(Case):
             time.sleep(0.05)
         self.assertEqual(filament["extra"]["filament_id"], '"GFL_POLYLITE"')
 
+    def test_a_sync_gives_shelf_filaments_their_ids(self):
+        # A filament no lane holds gets its id on a sync too; one with an id keeps it.
+        self.fake.objects["AFC"]["spoolman"] = True
+        shelf = {"id": 7, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"}, "extra": {}}
+        kept = {"id": 8, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
+                "extra": {"filament_id": '"Pmine01"'}}
+        self.fake.spools = {20: {"id": 20, "filament": shelf}, 21: {"id": 21, "filament": kept}}
+        self.connect()
+        self.push()
+        self.assertTrue(self.agent.fetch_filament_info(self.dev_id, "Subscription"))
+        deadline = time.monotonic() + 5
+        while "filament_id" not in shelf["extra"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(shelf["extra"].get("filament_id"), '"GFL_POLYLITE"')
+        self.assertEqual(kept["extra"]["filament_id"], '"Pmine01"')
+
     def test_printer_state(self):
         self.connect()
         status = self.push()

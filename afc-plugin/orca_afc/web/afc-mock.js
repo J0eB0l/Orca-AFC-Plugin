@@ -166,12 +166,7 @@
           return reply(msg.afc_id, true, '', state(false));
         }
         case 'filament_id_plan':
-          return reply(msg.afc_id, true, '', { rows: fidRows, written: 0 });
-        case 'fill_filament_ids': {
-          let written = 0;
-          fidRows.forEach((r) => { if (r.state === 'fill' && (p.filaments || []).includes(r.filament)) { r.state = 'has'; written++; } });
-          return reply(msg.afc_id, true, '', { rows: fidRows.slice().sort((a, b) => (a.state === 'has') - (b.state === 'has')), written: written });
-        }
+          return reply(msg.afc_id, true, '', { rows: fidRows });
         default:
           return reply(msg.afc_id, true, '', {});
       }

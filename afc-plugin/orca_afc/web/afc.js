@@ -360,7 +360,7 @@
     const linked = chains().length;
     const runoutBtn = '<button class="btn' + (runoutOpen ? ' on' : '') + '" id="runout" title="Runout lanes: what AFC loads when a lane runs out">' + icon('infinite') +
       'Infinite spool' + (linked ? '<span class="count">' + linked + '</span>' : '') + '</button>';
-    const fidBtn = afc.spoolman ? '<button class="btn' + (fidOpen ? ' on' : '') + '" id="fid" title="Give Spoolman filaments the OrcaSlicer preset id the sync matches them by">' +
+    const fidBtn = afc.spoolman ? '<button class="btn' + (fidOpen ? ' on' : '') + '" id="fid" title="The OrcaSlicer filament ID each Spoolman filament has, or gets at the next sync">' +
       'Filament IDs</button>' : '';
     let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats + fidBtn + runoutBtn);
     html += '<div class="main"><div class="scroll" id="scroll">' + headsStrip(afc);
@@ -436,14 +436,13 @@
 
   function fidSheet() {
     const rows = fidRows || [];
-    const fill = rows.filter((r) => r.state === 'fill');
     let html = '<div class="drawer wide" id="drawer"><div class="sheet-head"><span class="logo">' + icon('afc') + '</span>' +
       '<div class="grow"><h2>Filament IDs</h2><span class="hint">OrcaSlicer picks a spool\'s preset by the filament ID on its Spoolman filament. ' +
-      'A filament with no ID gets the ID of its vendor\'s system preset for the product its name holds; a name that is only a color gets the vendor\'s plain preset. IDs already there stay.</span></div>' +
+      'Each filament sync gives every filament with no ID the ID of its vendor\'s system preset for the product its name holds; a name that is only a color gets the vendor\'s plain preset, and a filament no system preset is gets the ID of its own preset. IDs already there stay.</span></div>' +
       '<button class="btn icon ghost" id="close" title="Close">' + icon('close') + '</button></div><div class="sheet-body">';
     if (fidRows === null) html += '<div class="hint">Reading Spoolman…</div>';
     else if (!rows.length) html += '<div class="hint">Spoolman has no filaments.</div>';
-    const label = { fill: 'Gets an ID', none: 'No preset names it', has: 'Has an ID' };
+    const label = { fill: 'Gets an ID at the next sync', none: 'No preset names it', has: 'Has an ID' };
     let last = '';
     for (const r of rows) {
       if (r.state !== last) { html += '<div class="section-label">' + label[r.state] + '</div>'; last = r.state; }
@@ -451,30 +450,12 @@
         '<div class="then">' + (r.filament_id ? esc(r.preset || 'no preset of this printer') + ' <span class="pill' + (r.state === 'fill' ? ' accent' : '') + '">' +
         esc(r.filament_id) + '</span>' : '<span class="hint">' + esc(r.why || '') + '</span>') + '</div></div>';
     }
-    html += '</div><div class="sheet-foot"><button class="btn primary" id="fid-fill"' + (fill.length ? '' : ' disabled') + '>' +
-      (fill.length ? 'Give ' + fill.length + ' filament' + (fill.length === 1 ? '' : 's') + ' an ID' : 'Nothing to fill') + '</button></div></div>';
+    html += '</div></div>';
     return html;
   }
 
   function bindFid() {
     document.getElementById('close').onclick = () => { fidOpen = false; render(); };
-    document.getElementById('fid-fill').onclick = async () => {
-      if (busy) return;
-      const filaments = (fidRows || []).filter((r) => r.state === 'fill').map((r) => r.filament);
-      busy = true;
-      $app.classList.add('busy');
-      try {
-        const data = await call('fill_filament_ids', { filaments: filaments });
-        fidRows = data.rows;
-        toast(data.written + ' filament' + (data.written === 1 ? '' : 's') + ' got an ID');
-      } catch (e) {
-        toast(e.message, true);
-      } finally {
-        busy = false;
-        $app.classList.remove('busy');
-        render();
-      }
-    };
   }
 
   function bindRunout() {

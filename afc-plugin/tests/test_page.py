@@ -94,7 +94,6 @@ class AFCPageTest(unittest.TestCase):
         answer = self.ask("filament_id_plan")
         self.assertTrue(answer["ok"])
         self.assertEqual([(r["filament"], r["state"]) for r in answer["data"]["rows"]], [(5, "none")])
-        self.assertEqual(self.ask("fill_filament_ids", {"filaments": [5]})["data"]["written"], 0)
 
     def test_lane_action(self):
         self.ask("get_state")

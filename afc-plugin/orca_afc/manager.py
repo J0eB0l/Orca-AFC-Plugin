@@ -261,11 +261,12 @@ class AFCManager:
             return sorted(rows, key=lambda r: (order[r["state"]], r["name"].lower())), ""
         return [], error
 
-    def fill_filament_ids(self, client: Moonraker, candidates: list, ids, filaments: list,
+    def fill_filament_ids(self, client: Moonraker, candidates: list, ids, filaments=None,
                           spoolman_url: str = "") -> tuple:
-        """Write the planned id on each of these Spoolman filaments that still
-        has none (filament_id_plan()). Returns (how many were written, error)."""
-        wanted = {f for f in filaments if isinstance(f, int)}
+        """Write the planned id on each Spoolman filament that still has none
+        (filament_id_plan()), or only on these filaments. Returns (how many
+        were written, error)."""
+        wanted = None if filaments is None else {f for f in filaments if isinstance(f, int)}
         error, written = "", 0
         for call in self._spoolman_calls(client, spoolman_url):
             try:
@@ -273,11 +274,12 @@ class AFCManager:
                 checked = False
                 for record in records or []:
                     row = _plan_row(record, candidates, ids)
-                    if not row or row["state"] != "fill" or row["filament"] not in wanted:
+                    if not row or row["state"] != "fill" or (wanted is not None and row["filament"] not in wanted):
                         continue
                     self._write_filament_id(call, record, row["filament_id"], checked)
                     checked, written = True, written + 1
-                    wanted.discard(row["filament"])
+                    if wanted is not None:
+                        wanted.discard(row["filament"])
             except MoonrakerError as failure:
                 error = str(failure)
                 continue

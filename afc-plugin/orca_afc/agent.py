@@ -1513,6 +1513,28 @@ else:
                 extras[tray] = extra
             return ids, extras
 
+        def _fill_filament_ids(self, printer: _Printer) -> None:
+            """On a sync, gives every Spoolman filament with no id the one a
+            spool of it would get (AFCManager.fill_filament_ids()), shelf spools
+            too, so a spool is matched exactly from its first load. Ids already
+            there stay; after the first sync this is one read of Spoolman's
+            filaments."""
+            snapshot = printer.snapshot
+            if snapshot is None or not snapshot.spoolman:
+                return
+            spoolman = protocol.spoolman_for_printer(snapshot.spoolman_url, printer.client.url)
+            with self._lock:
+                candidates = list(self._candidates)
+
+            def fill():
+                written, error = printer.manager.fill_filament_ids(printer.client, candidates, self._ids,
+                                                                   spoolman_url=spoolman)
+                if error:
+                    print("AFC: could not give Spoolman filaments their ids: %s" % error)
+                elif written:
+                    print("AFC: %d Spoolman filament(s) got an OrcaSlicer filament id" % written)
+            self._spoolman.submit(fill)
+
         def _save_filament_id(self, printer: _Printer, snapshot, spool: int, filament_id: str) -> None:
             """Puts the id of the preset a spool matched on its Spoolman filament
             once, or for a spool no system filament is, the id of the preset the
@@ -2077,6 +2099,7 @@ else:
                 return False
             self._read_presets()  # filaments made visible since the last read count now
             self._work(printer).submit(lambda: self._push(printer))
+            self._fill_filament_ids(printer)
             limits = dict(printer.limits)
             self._offer(lambda: self._offers.check_limits(orca.host.preset_bundle(), limits))
             return True
