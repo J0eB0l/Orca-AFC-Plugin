@@ -16,7 +16,7 @@
 
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/log/trivial.hpp>
-#include <openssl/evp.h>
+#include <openssl/md5.h>
 
 namespace Slic3r {
 
@@ -26,11 +26,14 @@ const std::string SPOOL_PRESET_NOTE = "Made by filament sync from the spool's da
 
 std::string user_filament_id(const std::string &name)
 {
-    unsigned char digest[EVP_MAX_MD_SIZE];
-    unsigned int  size = 0;
-    EVP_Digest(name.data(), name.size(), digest, &size, EVP_md5(), nullptr);
-    char hex[2 * EVP_MAX_MD_SIZE + 1] = {};
-    for (unsigned int i = 0; i < size; ++i)
+    // MD5_* as in utils.cpp: EVP_md5() pulls OpenSSL's engines, and with them crypt32, into the test executables.
+    unsigned char digest[MD5_DIGEST_LENGTH];
+    MD5_CTX       ctx;
+    MD5_Init(&ctx);
+    MD5_Update(&ctx, name.data(), name.size());
+    MD5_Final(digest, &ctx);
+    char hex[2 * MD5_DIGEST_LENGTH + 1] = {};
+    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i)
         std::snprintf(hex + 2 * i, 3, "%02x", digest[i]);
     return "P" + std::string(hex, 7);
 }
