@@ -225,6 +225,22 @@ Then:
   (read every 6 hours), with the new version dot when one is newer, how many
   units and lanes AFC runs, and a **View on GitHub** button. AFC's units get no
   empty AMS rows there.
+- On a printer with Bambu AMS units, the **Update** page also lists each
+  BridgeBox (how it is linked and which units are on it), the AMS units under
+  it, and each BridgeBox display that left its address with the printer. Each
+  row shows the firmware installed and the newest out: a BridgeBox's and a
+  display's from AFC-Klipper-Add-On's `BridgeBox` branch on GitHub (read every 6
+  hours), an AMS unit's from AFC's AMS updater. **Update** asks first, then
+  writes the newest. A BridgeBox's image and its manifest are checked against
+  each other, copied to `bridgebox/` in the printer's config folder and sent to
+  the bridge with `AFC_BAMBU_FLASH`; an AMS unit runs `AFC_BAMBU_FIRMWARE` with
+  `CONFIRM=1`, or finishes an update that stopped; a display gets its image
+  straight from OrcaSlicer at its address, after OrcaSlicer asks once whether it
+  may reach it. Nothing updates while the printer prints or while another
+  update runs. A display keeps its address and version in Moonraker's database
+  (namespace `bridgebox_display`) and rewrites them every 10 minutes; one that
+  stops for half an hour leaves the page. A BridgeBox that does not report its
+  chip gets no newest version or **Update**.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

@@ -58,6 +58,7 @@ class FakeMoonraker:
         self.api_key = ""
         self.info = {"state": "ready", "hostname": "voron", "software_version": "v0.12.0-500"}
         self.uploads = {}
+        self.upload_roots = {}  # the root each upload went to, by path
         self.metadata = {}
         self.files = set()
         self.stored = {}
@@ -154,6 +155,7 @@ class FakeMoonraker:
         if method == "POST" and path == "/server/files/upload":
             name = body["path"] + "/" + body["filename"] if body.get("path") else body["filename"]
             self.uploads[name] = body["data"]
+            self.upload_roots[name] = body.get("root")
             return 201, {"result": {"item": {"path": name, "root": body.get("root")},
                                     "action": "create_file"}}
         if method == "GET" and path == "/server/files/metadata":

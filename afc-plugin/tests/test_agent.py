@@ -13,7 +13,9 @@ from unittest import mock
 import fake_orca
 from fake_moonraker import FakeMoonraker
 from fake_orca import Preset, PresetBundle, PrinterConnectionParams, PrintParams
+import test_devices
 from orca_afc import agent as afc_agent
+from orca_afc import devices
 from orca_afc.protocol import Lane
 from orca_afc.agent import AFCAgent
 from orca_afc.protocol import Snapshot
@@ -124,6 +126,11 @@ class Case(unittest.TestCase):
         latest = mock.patch.object(afc_agent.upstream, "read", return_value={"main": "1.2.0", "DEV": "1.2.8"})
         latest.start()
         self.addCleanup(latest.stop)
+        # ... and the BridgeBox's.
+        newest = mock.patch.object(afc_agent.devices, "read_newest",
+                                   return_value={"bridge": {"ESP32S3": "AFC-2.94"}, "display": "AFC-1.61"})
+        newest.start()
+        self.addCleanup(newest.stop)
         self.agent = AFCAgent(poll=self.poll)
         self.addCleanup(self.agent.on_unload)
         self.calls = calls = Calls()
@@ -1106,6 +1113,144 @@ class DeviceTabTest(Case):
         self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane2"])
         unload = dict(load, slot_id=255, target=255)
         self.assertEqual(self.send({"print": unload}), afc_agent.FAILED)  # no lane is in a toolhead
+
+class BridgeBoxUpdateTest(Case):
+    """The Update page's BridgeBox rows: each part's firmware beside the
+    newest, and the Update on each (devices.py)."""
+
+    DISPLAY = "display:a0b1c2d3e4f5"
+    BRIDGE = "bridge:" + test_devices.PORT
+
+    def setUp(self):
+        super().setUp()
+        self.fake.objects[devices.FIRMWARE] = test_devices.firmware()
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"] = test_devices.unit_status()
+        self.fake.database[devices.DISPLAY_NAMESPACE] = {
+            "a0b1c2d3e4f5": {"url": "http://192.168.1.50", "panel": "AFC-1.60 on ota_0", "version": "AFC-1.60",
+                             "seq": 1}}
+
+    def rows(self, count=1):
+        return {row["id"]: row for row in self.push(count)["afc_devices"]}
+
+    def ready(self):
+        self.connect()
+        self.push()
+        self.agent._web.call(lambda: None, 5)  # GitHub read
+        return self.rows(2)
+
+    def update(self, device):
+        return self.send({"print": {"command": "afc_device_update", "device": device, "sequence_id": "9"}})
+
+    def test_each_part_beside_the_newest(self):
+        rows = self.ready()
+        self.assertEqual(list(rows), [self.BRIDGE, "ams:Bambu_AMS_1", self.DISPLAY])
+        bridge, ams, display = rows.values()
+        self.assertEqual((bridge["version"], bridge["latest"], bridge["units"], bridge["ready"]),
+                         ("AFC-2.93", "AFC-2.94", "Bambu_AMS_1", True))
+        self.assertEqual((ams["model"], ams["version"], ams["latest"], ams["ready"]),
+                         ("AMS 2 Pro", "00.00.06.49", "00.00.07.10", True))
+        self.assertEqual((display["address"], display["version"], display["latest"], display["ready"]),
+                         ("192.168.1.50", "AFC-1.60", "AFC-1.61", True))
+        self.assertTrue(all("do" not in row for row in rows.values()))
+
+    def test_a_printer_without_bambu_units_has_none(self):
+        del self.fake.webhook["status:"]["AFC"]["Bambu_AMS_1"]
+        self.connect()
+        self.assertEqual(self.push()["afc_devices"], [])
+
+    def test_an_ams_update(self):
+        self.ready()
+        self.assertEqual(self.update("ams:Bambu_AMS_1"), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_FIRMWARE UNIT=Bambu_AMS_1 VERSION=00.00.07.10 CONFIRM=1"])
+
+    def test_an_ams_update_afc_refuses(self):
+        self.ready()
+        self.fake.gcode_error = "AFC_BAMBU_FIRMWARE: an AMS update is running; let it finish"
+        self.update("ams:Bambu_AMS_1")
+        self.agent._gcode.call(lambda: None, 5)
+        ams = self.rows(3)["ams:Bambu_AMS_1"]
+        self.assertEqual((ams["state"], ams["message"]),
+                         ("failed", "AFC_BAMBU_FIRMWARE: an AMS update is running; let it finish"))
+
+    def test_a_bridgebox_update(self):
+        image, manifest = test_devices.bridge_image(294)
+        self.ready()
+        with mock.patch.object(devices, "bridge_files", return_value=(image, manifest, "AFC-2.94")) as files:
+            self.assertEqual(self.update(self.BRIDGE), 0)
+            self.agent._gcode.call(lambda: None, 5)
+        files.assert_called_once_with("ESP32S3")
+        # Beside printer.cfg, where AFC_BAMBU_FLASH reads the image and its manifest.
+        self.assertEqual(self.fake.uploads["bridgebox/signed_s3.bin"], image)
+        self.assertEqual(self.fake.uploads["bridgebox/signed_s3.bin.manifest.json"], manifest)
+        self.assertEqual(set(self.fake.upload_roots.values()), {"config"})
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_FLASH UNIT=Bambu_AMS_1 FILE=bridgebox/signed_s3.bin"])
+        bridge = self.rows(3)[self.BRIDGE]
+        self.assertEqual((bridge["state"], bridge["message"]), ("done", "The BridgeBox is restarting on AFC-2.94"))
+
+    def test_a_bridgebox_that_refuses_the_image(self):
+        image, manifest = test_devices.bridge_image(294)
+        self.ready()
+        self.fake.gcode_error = "AFC_BAMBU_FLASH: the bridge rejected the manifest (sig_bad: key)"
+        with mock.patch.object(devices, "bridge_files", return_value=(image, manifest, "AFC-2.94")):
+            self.update(self.BRIDGE)
+            self.agent._gcode.call(lambda: None, 5)
+        bridge = self.rows(3)[self.BRIDGE]
+        self.assertEqual((bridge["state"], bridge["ready"]), ("failed", True))  # it can be tried again
+        self.assertIn("rejected the manifest", bridge["message"])
+
+    def test_a_bridgebox_update_github_does_not_serve(self):
+        self.ready()
+        with mock.patch.object(devices, "bridge_files", side_effect=ValueError("the image on GitHub does not "
+                                                                               "match its manifest")):
+            self.update(self.BRIDGE)
+            self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.uploads, {})
+        self.assertEqual(self.fake.scripts, [])
+        self.assertEqual(self.rows(3)[self.BRIDGE]["message"],
+                         "Could not download the BridgeBox firmware: the image on GitHub does not match its manifest")
+
+    def test_a_display_update(self):
+        image = test_devices.app_image("AFC-1.61")
+        self.ready()
+        with mock.patch.object(devices, "contact", return_value="AFC-1.60") as contact, \
+                mock.patch.object(devices, "display_image", return_value=(image, "AFC-1.61")), \
+                mock.patch.object(devices, "send_display") as send:
+            self.assertEqual(self.update(self.DISPLAY), 0)
+            # The first contact is on OrcaSlicer's UI thread (the test's), where it may ask to reach the display.
+            contact.assert_called_once_with("http://192.168.1.50")
+            self.agent._web.call(lambda: None, 5)
+        self.assertEqual(send.call_args[0][:2], ("http://192.168.1.50", image))
+        display = self.rows(3)[self.DISPLAY]
+        self.assertEqual((display["state"], display["message"]), ("done", "The display is restarting on AFC-1.61"))
+
+    def test_a_display_that_does_not_answer(self):
+        self.ready()
+        with mock.patch.object(devices, "contact", side_effect=OSError("timed out")), \
+                mock.patch.object(devices, "send_display") as send:
+            self.assertEqual(self.update(self.DISPLAY), 0)
+            self.agent._web.call(lambda: None, 5)
+        send.assert_not_called()
+        display = self.rows(3)[self.DISPLAY]
+        self.assertEqual((display["state"], display["message"]),
+                         ("failed", "Could not reach the display at 192.168.1.50: timed out"))
+
+    def test_a_display_orcaslicer_may_not_reach(self):
+        self.ready()
+        with mock.patch.object(devices, "contact", side_effect=PermissionError("audit")):
+            self.update(self.DISPLAY)
+        self.assertEqual(self.rows(3)[self.DISPLAY]["message"],
+                         "OrcaSlicer was not allowed to reach the display at 192.168.1.50")
+
+    def test_nothing_updates_while_printing(self):
+        self.fake.objects["print_stats"]["state"] = "printing"
+        rows = self.ready()
+        self.assertFalse(any(row["ready"] for row in rows.values()))
+        self.assertEqual(self.update("ams:Bambu_AMS_1"), afc_agent.ERR_INVALID_RESULT)
+        self.assertEqual(self.update("ams:Nobody"), afc_agent.ERR_INVALID_RESULT)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, [])
+
 
 class UnitLayoutTest(Case):
     """The AFC build of OrcaSlicer: trays by AFC unit, a tool as an AMS HT, and the drying popup."""

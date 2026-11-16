@@ -38,7 +38,8 @@ from dataclasses import dataclass, field, replace
 
 import orca
 
-from . import afclog, bambu_ids, controls, gcode, keepouts, layout, offers, presets, prompt, protocol, runout, stage, swaptimes, trays, units, upstream
+from . import (afclog, bambu_ids, controls, devices, gcode, keepouts, layout, offers, presets, prompt, protocol, runout,
+               stage, swaptimes, trays, units, upstream)
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -392,7 +393,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
                 nozzles=(), files_url: str = "", timelapse: bool = False, afc_log=None,
                 latest=None, wide: bool = False, toolheads: int = 1, probing: bool = False,
                 lane_times=None, prompt_json=None, fans=(), flow_calibration: bool = False,
-                bed_keepouts=None, shelf=None) -> dict:
+                bed_keepouts=None, shelf=None, device_rows=()) -> dict:
     """A push_status message from Klipper's objects (status_query()) and the
     AFC snapshot, None when AFC did not answer (OrcaSlicer keeps the trays it
     has). `extras`, `reading`, `by_unit` and `dry_filaments` go to the trays
@@ -411,8 +412,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     console's open prompt (prompt.Watch.json()), for the Calibration window,
     `fans` the printer's fans (controls.find_fans()), for the fan popup, and
     `flow_calibration` whether AFC autocal can measure a lane's K here
-    (FLOW_K_CALIBRATION) and `bed_keepouts` AFC's spots on the bed
-    (keepouts.bed_keepouts()), None until read."""
+    (FLOW_K_CALIBRATION), `bed_keepouts` AFC's spots on the bed
+    (keepouts.bed_keepouts()), None until read, and `device_rows` the
+    BridgeBox rows of the Update page (devices.rows())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -556,6 +558,9 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         out["afc_version"] = {"installed": snapshot.version, "latest": latest,
                               "newer": upstream.newer(snapshot.version, latest), "url": upstream.REPO,
                               "units": sum(1 for unit in snapshot.units if unit.lanes), "lanes": len(snapshot.lanes)}
+        # ... and under it each BridgeBox, the AMS units on it and its displays, with an Update
+        # that sends afc_device_update. Always sent, so a row that is gone leaves the page too.
+        out["afc_devices"] = devices.public(device_rows)
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -827,6 +832,12 @@ class _Printer:
     prompt_until: float = 0.0                         # when to stop reading it (prompt.WATCH)
     manager: AFCManager = field(default_factory=AFCManager)  # its AFC reads, flow K and lane moves
     retry_at: float = 0.0                             # when to try a watched printer that is off again
+    devices: list = field(default_factory=list)       # devices.rows(): the Update page's BridgeBox rows
+    device_status: dict = field(default_factory=dict) # the last read of devices.query()
+    device_items: object = None                       # the displays' items in Moonraker's database, last read
+    displays_seen: dict = field(default_factory=dict) # devices.displays()' record of each display
+    devices_due: float = 0.0                          # when to read them again
+    device_jobs: dict = field(default_factory=dict)   # row id -> the update the agent runs on it, under the lock
 
 
 def spool_key(lane) -> tuple:
@@ -885,6 +896,8 @@ else:
             self._offers = offers.Offers(self._edits.submit)
             self._latest = {}         # upstream.read(): AFC's newest versions on GitHub
             self._latest_due = 0.0
+            self._newest = {}         # devices.read_newest(): the BridgeBox's newest firmware on GitHub
+            self._newest_due = 0.0
 
         def get_name(self):
             return "AFC printer agent"
@@ -1186,6 +1199,7 @@ else:
                 self._afc_log(printer)
                 self._upstream()
                 self._shelf(printer, snapshot)
+                self._devices(printer, snapshot, str((status.get("print_stats") or {}).get("state") or ""))
             message = push_status(status, snapshot, ids, extras, reading, printer.lights, job,
                                   printer.by_unit, dry_filaments, printer.chamber, printer.swap.times(),
                                   toolhead_parts(printer.nozzles, printer.saved_nozzles, printer.extruders),
@@ -1193,7 +1207,8 @@ else:
                                   self._latest, printer.wide, len(printer.extruders),
                                   self._probing(printer, status), printer.swap.lanes, printer.prompt.json(),
                                   printer.fans, printer.flow_calibration, printer.bed_keepouts,
-                                  printer.shelf if snapshot is not None and snapshot.spoolman else None)
+                                  printer.shelf if snapshot is not None and snapshot.spoolman else None,
+                                  printer.devices)
             release_tray(message["print"], printer, time.monotonic())
             self._send(printer, message)
 
@@ -1347,6 +1362,161 @@ else:
                     self._latest_due = time.monotonic() + upstream.RETRY
 
             self._web.submit(read)
+
+        # -------------------------------------------------------- the Update page's BridgeBox rows
+
+        def _devices(self, printer: _Printer, snapshot, print_state: str) -> None:
+            """The BridgeBox rows (devices.py): the printer's AMS updater, Bambu
+            units and displays, read every devices.EVERY s, and at each push
+            while an update runs; a failed read keeps the last."""
+            wanted = devices.query(snapshot)
+            if not wanted:
+                printer.devices = []
+                return
+            now = time.monotonic()
+            with self._lock:
+                jobs = {key: dict(job) for key, job in printer.device_jobs.items()}
+            running = any(row["state"] == "running" for row in printer.devices) or \
+                any(job.get("state") == "running" for job in jobs.values())
+            if now >= printer.devices_due or running:
+                printer.devices_due = now + devices.EVERY
+                try:
+                    answer = printer.client.objects_query(wanted)
+                    status = answer.get("status") if isinstance(answer, dict) else None
+                    printer.device_status = status if isinstance(status, dict) else {}
+                except MoonrakerError:
+                    pass
+                try:
+                    printer.device_items = printer.client.database_namespace(devices.DISPLAY_NAMESPACE)
+                except PrinterUnreachable:
+                    pass
+                except MoonrakerError:  # no display left its address here
+                    printer.device_items = None
+            found = devices.displays(printer.device_items, printer.displays_seen, now)
+            self._newest_firmware()
+            printer.devices = devices.rows(printer.device_status, snapshot, found, self._newest, jobs, print_state)
+
+        def _newest_firmware(self) -> None:
+            """The BridgeBox's newest firmware on GitHub, read every
+            devices.NEWEST_EVERY s on the GitHub worker; a read that finds none
+            is tried again sooner."""
+            if time.monotonic() < self._newest_due:
+                return
+            self._newest_due = time.monotonic() + devices.NEWEST_EVERY
+
+            def read():
+                newest = devices.read_newest()
+                if newest["bridge"] or newest["display"]:
+                    self._newest = newest
+                else:
+                    self._newest_due = time.monotonic() + devices.NEWEST_RETRY
+
+            self._web.submit(read)
+
+        def _device_job(self, printer: _Printer, row_id: str, state: str = "", message: str = "",
+                        progress: int = -1, push: bool = False) -> None:
+            """What the update the agent runs on a row is doing, shown on the
+            row; no state ends it, so the printer's own report shows again."""
+            with self._lock:
+                if state:
+                    printer.device_jobs[row_id] = {"state": state, "message": message, "progress": progress}
+                else:
+                    printer.device_jobs.pop(row_id, None)
+            if push:
+                printer.devices_due = 0.0
+                self._work(printer).submit(lambda: self._push(printer))
+
+        def _device_update(self, printer: _Printer, job: dict) -> int:
+            """The Update page's Update on a BridgeBox row, which OrcaSlicer
+            asked to confirm. An AMS unit's runs AFC's AMS updater, a BridgeBox's
+            sends it the newest image through AFC_BAMBU_FLASH, and a display's
+            sends the newest display image to the display itself."""
+            row = next((r for r in printer.devices if r["id"] == job.get("device")), None)
+            if row is None or not row["ready"]:
+                return ERR_INVALID_RESULT
+            row_id = row["id"]
+            if row["kind"] == "ams":
+                script = devices.ams_gcode(row)
+                self._device_job(printer, row_id, "running", "Starting the update", push=True)
+
+                def run():
+                    try:
+                        printer.client.gcode(script, timeout=devices.FLASH_TIMEOUT)
+                        self._device_job(printer, row_id, push=True)  # the AMS updater reports it from here
+                    except MoonrakerError as error:
+                        self._device_job(printer, row_id, "failed", str(error), push=True)
+
+                self._gcode.submit(run)
+            elif row["kind"] == "bridge":
+                self._device_job(printer, row_id, "running", "Downloading the BridgeBox firmware", 0, push=True)
+                self._gcode.submit(lambda: self._flash_bridge(printer, row))
+            elif row["kind"] == "display":
+                url = row["do"]["url"]
+                try:
+                    # Here, on OrcaSlicer's UI thread: the first time, OrcaSlicer asks whether the plugin
+                    # may reach the display, which it cannot ask from the agent's threads.
+                    devices.contact(url)
+                except PermissionError:
+                    self._device_job(printer, row_id, "failed",
+                                     "OrcaSlicer was not allowed to reach the display at %s" % row["address"], push=True)
+                    return SUCCESS
+                except (OSError, ValueError) as error:
+                    self._device_job(printer, row_id, "failed", "Could not reach the display at %s: %s"
+                                     % (row["address"], devices.reason(error)), push=True)
+                    return SUCCESS
+                self._device_job(printer, row_id, "running", "Downloading the display firmware", 0, push=True)
+                self._web.submit(lambda: self._update_display(printer, row))
+            return SUCCESS
+
+        def _flash_bridge(self, printer: _Printer, row: dict) -> None:
+            """A BridgeBox's update: the signed image and its manifest from
+            GitHub into the printer's config folder, then AFC_BAMBU_FLASH, which
+            sends them to the bridge, where they are written and it restarts."""
+            row_id, unit, chip = row["id"], row["do"]["unit"], row["do"]["chip"]
+            name = devices.BRIDGE_IMAGES[chip].rsplit("/", 1)[1]
+            try:
+                image, manifest, version = devices.bridge_files(chip)
+            except (OSError, ValueError) as error:
+                self._device_job(printer, row_id, "failed",
+                                 "Could not download the BridgeBox firmware: %s" % devices.reason(error), push=True)
+                return
+
+            def copied(sent, total):
+                self._device_job(printer, row_id, "running", "Copying it to the printer", sent * 100 // max(total, 1))
+
+            try:
+                printer.client.upload(name + ".manifest.json", manifest, folder=devices.BRIDGE_FOLDER, root="config")
+                printer.client.upload(name, image, copied, timeout=300.0, folder=devices.BRIDGE_FOLDER, root="config")
+                self._device_job(printer, row_id, "running",
+                                 "Sending it to the BridgeBox, which restarts once it is written", push=True)
+                printer.client.gcode("AFC_BAMBU_FLASH UNIT=%s FILE=%s/%s" % (unit, devices.BRIDGE_FOLDER, name),
+                                     timeout=devices.FLASH_TIMEOUT)
+            except MoonrakerError as error:
+                self._device_job(printer, row_id, "failed", str(error), push=True)
+                return
+            self._device_job(printer, row_id, "done", "The BridgeBox is restarting on %s" % version, push=True)
+
+        def _update_display(self, printer: _Printer, row: dict) -> None:
+            """A display's update: the display image from GitHub, sent to the
+            display, which writes it and restarts."""
+            row_id = row["id"]
+            try:
+                image, version = devices.display_image()
+            except (OSError, ValueError) as error:
+                self._device_job(printer, row_id, "failed",
+                                 "Could not download the display firmware: %s" % devices.reason(error), push=True)
+                return
+
+            def sent(percent):
+                self._device_job(printer, row_id, "running", "Sending it to the display", percent)
+
+            try:
+                devices.send_display(row["do"]["url"], image, sent)
+            except (OSError, ValueError) as error:
+                self._device_job(printer, row_id, "failed",
+                                 "The display did not take the update: %s" % devices.reason(error), push=True)
+                return
+            self._device_job(printer, row_id, "done", "The display is restarting on %s" % version, push=True)
 
         def _swap_times(self, printer: _Printer) -> None:
             """AFC's change times (swaptimes.py): AFC.log once a connection, its
@@ -1656,6 +1826,8 @@ else:
                 self._run(printer, "AFC_CLEAR_MESSAGE", push=True)
             elif command == "clear_agent_log":
                 self._clear_log(printer)
+            elif command == "afc_device_update":
+                return self._device_update(printer, job)
             elif command == "afc_runout":
                 return self._runout(printer, job)
             elif command == "afc_layout":

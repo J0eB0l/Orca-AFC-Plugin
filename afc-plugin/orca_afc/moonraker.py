@@ -152,13 +152,14 @@ class Moonraker:
         """A G-code file in Moonraker's gcodes root, `path` relative to it."""
         return self._fetch("GET", "/server/files/gcodes/" + urllib.parse.quote(path), timeout=timeout)
 
-    def upload(self, name: str, data: bytes, progress=None, timeout: float = 120.0, folder: str = ""):
-        """Upload a G-code file to Moonraker's gcodes root as `name`, in its
-        `folder` when one is given. `progress(sent, total)` is called as the
-        body goes out; when it returns False the upload stops with
-        MoonrakerError("canceled")."""
+    def upload(self, name: str, data: bytes, progress=None, timeout: float = 120.0, folder: str = "",
+               root: str = "gcodes"):
+        """Upload a file to a Moonraker root (a G-code file to gcodes) as
+        `name`, in its `folder` when one is given. `progress(sent, total)` is
+        called as the body goes out; when it returns False the upload stops
+        with MoonrakerError("canceled")."""
         boundary = "----AFCPlugin" + uuid.uuid4().hex
-        fields = [("root", "gcodes")] + ([("path", folder)] if folder else [])
+        fields = [("root", root)] + ([("path", folder)] if folder else [])
         head = "".join('--%s\r\nContent-Disposition: form-data; name="%s"\r\n\r\n%s\r\n' % (boundary, key, value)
                        for key, value in fields)
         head += ('--%s\r\nContent-Disposition: form-data; name="file"; filename="%s"\r\n'
