@@ -15,20 +15,36 @@
 #include "Widgets/TextInput.hpp"
 
 #include <algorithm>
+#include <boost/locale/encoding_utf.hpp>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+#include <wx/brush.h>
+#include <wx/clipbrd.h>
 #include <wx/colour.h>
+#include <wx/dataobj.h>
+#include <wx/dc.h>
+#include <wx/dcbuffer.h>
 #include <wx/defs.h>
 #include <wx/event.h>
+#include <wx/font.h>
 #include <wx/gdicmn.h>
+#include <wx/graphics.h>
+#include <wx/menu.h>
+#include <wx/menuitem.h>
+#include <wx/pen.h>
+#include <wx/scrolwin.h>
+#include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/string.h>
 #include <wx/textctrl.h>
 #include <wx/timer.h>
+#include <wx/window.h>
 
 namespace Slic3r { namespace GUI {
 
@@ -40,7 +56,458 @@ static constexpr size_t LABEL_CHARS = 48;                      // a choice's but
 // A terminal's colors, in either theme: the script's own colors are picked for a dark terminal.
 static const wxColour TERMINAL_BG(30, 30, 30);
 static const wxColour TERMINAL_TEXT(212, 212, 212);
+static const wxColour SELECTION_BG(38, 79, 120);
 static const wxColour FAILED_CLR(255, 111, 0);
+
+// The arms of the box-drawing lines U+2500 to U+254F, four digits each: up, right, down and left, 0 for none,
+// 1 for a light line and 2 for a heavy one. Dashed lines are drawn whole.
+static const char BOX_ARMS[] = "0101" "0202" "1010" "2020" "0101" "0202" "1010" "2020" "0101" "0202" "1010" "2020"
+                               "0110" "0210" "0120" "0220" "0011" "0012" "0021" "0022" "1100" "1200" "2100" "2200"
+                               "1001" "1002" "2001" "2002" "1110" "1210" "2110" "1120" "2120" "2210" "1220" "2220"
+                               "1011" "1012" "2011" "1021" "2021" "2012" "1022" "2022" "0111" "0112" "0211" "0212"
+                               "0121" "0122" "0221" "0222" "1101" "1102" "1201" "1202" "2101" "2102" "2201" "2202"
+                               "1111" "1112" "1211" "1212" "2111" "1121" "2121" "2112" "2211" "1122" "1221" "2212"
+                               "1222" "2122" "2221" "2222" "0101" "0202" "1010" "2020";
+// And of the half lines U+2574 to U+257F.
+static const char HALF_ARMS[] = "0001" "1000" "0100" "0010" "0002" "2000" "0200" "0020" "0201" "1020" "0102" "2010";
+// The quadrants U+2596 to U+259F fill: 1 upper left, 2 upper right, 4 lower left, 8 lower right.
+static const unsigned char QUADRANTS[] = {4, 8, 1, 13, 9, 7, 11, 2, 6, 14};
+
+// The script's screen as a terminal draws it, in the terminal's colors in either theme: each character in a
+// cell of a grid as wide as the code font's digits, in its color over its background. Block elements, which
+// logos are drawn with, and box lines are shapes that fill their cells, and other characters outside ASCII are
+// drawn one per cell: a font without them falls back to one whose glyphs are another width, which would break
+// the grid. The view follows the end of the screen while it is at the end. Dragging selects text, which Ctrl+C
+// or the context menu copies.
+class InstallerScreen : public wxScrolledCanvas
+{
+public:
+    using Lines = std::vector<std::vector<MachineObject::AgentInstaller::Run>>;
+
+    explicit InstallerScreen(wxWindow* parent);
+    ~InstallerScreen() override;
+
+    // Shows `lines` when they changed.
+    void set_lines(const Lines& lines);
+    // Measures the cells again, as after a DPI change.
+    void rescale();
+    // Clicked for a selection, but left out of the TAB order.
+    bool AcceptsFocusFromKeyboard() const override { return false; }
+
+private:
+    struct Span
+    {
+        wxColour       color;
+        wxColour       background; // not IsOk() for the terminal's own
+        std::u32string text;
+    };
+    // A rounded corner or a diagonal, drawn anti-aliased once the rest is.
+    struct Curve
+    {
+        char32_t c;
+        wxRect   cell;
+        wxColour color;
+    };
+    using Spot = std::pair<int, int>; // a row, and the column before which a selection starts or ends
+
+    void     update_size();
+    int      length(int row) const;
+    // Columns [col, col + count) of a row in client coordinates. Neighbors share their edges.
+    wxRect   cells(int row, int col, int count) const;
+    Spot     spot_at(const wxPoint& point) const;
+    wxString selected_text() const;
+    void     copy() const;
+    void     select_all();
+    // One character outside ASCII in its cell.
+    void     draw_cell(wxDC& dc, char32_t c, const wxRect& cell, const Span& span, std::vector<Curve>& curves) const;
+    void     draw_arms(wxDC& dc, const char* arms, const wxRect& cell) const;
+    void     draw_curve(wxGraphicsContext& gc, const Curve& curve) const;
+    void     render(wxDC& dc) const;
+
+    void on_paint(wxPaintEvent& event);
+    void on_left_down(wxMouseEvent& event);
+    void on_motion(wxMouseEvent& event);
+    void on_left_up(wxMouseEvent& event);
+    void on_capture_lost(wxMouseCaptureLostEvent& event);
+    void on_key(wxKeyEvent& event);
+    void on_menu(wxContextMenuEvent& event);
+
+    Lines                          m_lines;
+    std::vector<std::vector<Span>> m_rows;
+    double                         m_cell_w {8.0};
+    int                            m_cell_h {16};
+    int                            m_pad {6};
+    int                            m_line {1};      // a light line's thickness
+    int                            m_columns {0};   // of the longest row
+    Spot                           m_anchor {0, 0}; // where the selection started
+    Spot                           m_caret {0, 0};  // and where it ends: the same when nothing is selected
+    bool                           m_dragging {false};
+};
+
+InstallerScreen::InstallerScreen(wxWindow* parent)
+    : wxScrolledCanvas(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+                       wxHSCROLL | wxVSCROLL | wxBORDER_NONE | wxFULL_REPAINT_ON_RESIZE)
+{
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetBackgroundColour(TERMINAL_BG);
+    SetFont(wxGetApp().code_font());
+    rescale();
+    Bind(wxEVT_PAINT, &InstallerScreen::on_paint, this);
+    Bind(wxEVT_LEFT_DOWN, &InstallerScreen::on_left_down, this);
+    Bind(wxEVT_LEFT_DCLICK, &InstallerScreen::on_left_down, this); // the second press of a double click
+    Bind(wxEVT_MOTION, &InstallerScreen::on_motion, this);
+    Bind(wxEVT_LEFT_UP, &InstallerScreen::on_left_up, this);
+    Bind(wxEVT_MOUSE_CAPTURE_LOST, &InstallerScreen::on_capture_lost, this);
+    Bind(wxEVT_KEY_DOWN, &InstallerScreen::on_key, this);
+    Bind(wxEVT_CONTEXT_MENU, &InstallerScreen::on_menu, this);
+}
+
+InstallerScreen::~InstallerScreen()
+{
+    if (HasCapture())
+        ReleaseMouse();
+}
+
+void InstallerScreen::set_lines(const Lines& lines)
+{
+    if (lines == m_lines)
+        return;
+    int unit_x = 0, unit_y = 0;
+    GetScrollPixelsPerUnit(&unit_x, &unit_y);
+    const bool at_end = GetViewStart().y * unit_y + GetClientSize().y >= GetVirtualSize().y - m_cell_h;
+    m_lines = lines;
+    m_rows.clear();
+    m_columns = 0;
+    for (const std::vector<MachineObject::AgentInstaller::Run>& line : m_lines) {
+        std::vector<Span>& row = m_rows.emplace_back();
+        for (const MachineObject::AgentInstaller::Run& run : line) {
+            const wxColour color      = run.color.empty() ? TERMINAL_TEXT : wxColour(from_u8(run.color));
+            const wxColour background = run.background.empty() ? wxColour() : wxColour(from_u8(run.background));
+            row.push_back({color.IsOk() ? color : TERMINAL_TEXT, background,
+                           boost::locale::conv::utf_to_utf<char32_t>(run.text)});
+        }
+        m_columns = std::max(m_columns, length(int(m_rows.size()) - 1));
+    }
+    // A selection keeps to the rows that are left.
+    const Spot last(int(m_rows.size()) - 1, m_rows.empty() ? 0 : length(int(m_rows.size()) - 1));
+    m_anchor = std::min(m_anchor, std::max(last, Spot(0, 0)));
+    m_caret  = std::min(m_caret, std::max(last, Spot(0, 0)));
+    update_size();
+    if (at_end)
+        Scroll(wxDefaultCoord, int(m_rows.size()) + 1); // a line a step, and wx stops at the last page
+    Refresh();
+}
+
+void InstallerScreen::rescale()
+{
+    const wxSize digits = GetTextExtent(wxString('0', COLUMNS));
+    m_cell_w            = std::max(1.0, digits.x / double(COLUMNS));
+    m_cell_h            = std::max(1, digits.y);
+    m_pad               = FromDIP(6);
+    m_line              = std::max(1, int(std::lround(m_cell_w / 8)));
+    // The script's terminal, and room for a scroll bar.
+    SetMinSize(wxSize(int(std::ceil(m_cell_w * COLUMNS)) + 2 * m_pad + wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this),
+                      m_cell_h * ROWS + 2 * m_pad));
+    update_size();
+    Refresh();
+}
+
+void InstallerScreen::update_size()
+{
+    SetScrollRate(std::max(1, int(std::lround(m_cell_w))), m_cell_h);
+    SetVirtualSize(int(std::ceil(m_columns * m_cell_w)) + 2 * m_pad, int(m_rows.size()) * m_cell_h + 2 * m_pad);
+}
+
+int InstallerScreen::length(int row) const
+{
+    int out = 0;
+    for (const Span& span : m_rows[row])
+        out += int(span.text.size());
+    return out;
+}
+
+wxRect InstallerScreen::cells(int row, int col, int count) const
+{
+    const wxPoint origin = CalcScrolledPosition(wxPoint(m_pad, m_pad + row * m_cell_h));
+    const int     left   = origin.x + int(std::lround(col * m_cell_w));
+    const int     right  = origin.x + int(std::lround((col + count) * m_cell_w));
+    return wxRect(left, origin.y, right - left, m_cell_h);
+}
+
+InstallerScreen::Spot InstallerScreen::spot_at(const wxPoint& point) const
+{
+    const wxPoint at = CalcUnscrolledPosition(point) - wxPoint(m_pad, m_pad);
+    if (m_rows.empty() || at.y < 0)
+        return Spot(0, 0);
+    const int row = at.y / m_cell_h;
+    if (row >= int(m_rows.size()))
+        return Spot(int(m_rows.size()) - 1, length(int(m_rows.size()) - 1));
+    return Spot(row, std::clamp(int(std::lround(at.x / m_cell_w)), 0, length(row)));
+}
+
+wxString InstallerScreen::selected_text() const
+{
+    const auto [from, to] = std::minmax(m_anchor, m_caret);
+    std::u32string text;
+    for (int row = from.first; row <= to.first && row < int(m_rows.size()); ++row) {
+        std::u32string line;
+        for (const Span& span : m_rows[row])
+            line += span.text;
+        const size_t end   = row == to.first ? std::min(size_t(to.second), line.size()) : line.size();
+        const size_t start = row == from.first ? std::min(size_t(from.second), end) : 0;
+        line               = line.substr(start, end - start);
+        while (!line.empty() && line.back() == U' ')
+            line.pop_back();
+        if (row != from.first)
+            text += U'\n';
+        text += line;
+    }
+    return from_u8(boost::locale::conv::utf_to_utf<char>(text));
+}
+
+void InstallerScreen::copy() const
+{
+    const wxString text = selected_text();
+    if (text.empty())
+        return;
+    wxClipboardLocker lock;
+    if (!lock)
+        return;
+    wxTheClipboard->SetData(new wxTextDataObject(text));
+}
+
+void InstallerScreen::select_all()
+{
+    if (m_rows.empty())
+        return;
+    m_anchor = Spot(0, 0);
+    m_caret  = Spot(int(m_rows.size()) - 1, length(int(m_rows.size()) - 1));
+    Refresh();
+}
+
+void InstallerScreen::on_paint(wxPaintEvent&)
+{
+    wxAutoBufferedPaintDC dc(this);
+    render(dc);
+}
+
+void InstallerScreen::render(wxDC& dc) const
+{
+    dc.SetBackground(wxBrush(TERMINAL_BG));
+    dc.Clear();
+    dc.SetFont(GetFont());
+    dc.SetBackgroundMode(wxBRUSHSTYLE_TRANSPARENT);
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    const auto [from, to] = std::minmax(m_anchor, m_caret);
+    const int          height = GetClientSize().y;
+    std::vector<Curve> curves;
+    for (int row = 0; row < int(m_rows.size()); ++row) {
+        const wxRect line = cells(row, 0, 0);
+        if (line.GetBottom() < 0)
+            continue;
+        if (line.y >= height)
+            break;
+        // Backgrounds, the selection over them, then the characters.
+        int col = 0;
+        for (const Span& span : m_rows[row]) {
+            if (span.background.IsOk()) {
+                dc.SetBrush(wxBrush(span.background));
+                dc.DrawRectangle(cells(row, col, int(span.text.size())));
+            }
+            col += int(span.text.size());
+        }
+        if (from != to && row >= from.first && row <= to.first) {
+            const int start = row == from.first ? from.second : 0;
+            const int end   = row == to.first ? to.second : col;
+            dc.SetBrush(wxBrush(SELECTION_BG));
+            dc.DrawRectangle(cells(row, start, std::max(0, end - start)));
+        }
+        col = 0;
+        for (const Span& span : m_rows[row]) {
+            dc.SetTextForeground(span.color);
+            for (size_t i = 0; i < span.text.size();) {
+                // ASCII in one call: the code font has all of it, as wide as the cells.
+                std::string ascii;
+                for (size_t end = i; end < span.text.size() && span.text[end] >= U' ' && span.text[end] < 0x7F; ++end)
+                    ascii += char(span.text[end]);
+                if (!ascii.empty()) {
+                    dc.DrawText(from_u8(ascii), cells(row, col + int(i), 0).x, line.y);
+                    i += ascii.size();
+                } else {
+                    draw_cell(dc, span.text[i], cells(row, col + int(i), 1), span, curves);
+                    ++i;
+                }
+            }
+            col += int(span.text.size());
+        }
+    }
+    if (!curves.empty()) {
+        std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::CreateFromUnknownDC(dc));
+        if (gc)
+            for (const Curve& curve : curves)
+                draw_curve(*gc, curve);
+    }
+}
+
+void InstallerScreen::draw_cell(wxDC& dc, char32_t c, const wxRect& cell, const Span& span, std::vector<Curve>& curves) const
+{
+    const int x = cell.x, y = cell.y, w = cell.width, h = cell.height;
+    auto      fill = [&dc, x, y, w, h](double x0, double y0, double x1, double y1) {
+        const int left = x + int(std::lround(x0 * w)), top = y + int(std::lround(y0 * h));
+        dc.DrawRectangle(left, top, x + int(std::lround(x1 * w)) - left, y + int(std::lround(y1 * h)) - top);
+    };
+    if (c >= 0x2580 && c <= 0x259F) { // block elements, as the parts of the cell they fill
+        dc.SetBrush(wxBrush(span.color));
+        if (c == 0x2580)
+            fill(0, 0, 1, 0.5);
+        else if (c <= 0x2588) // eighths from the bottom
+            fill(0, 1 - (c - 0x2580) / 8.0, 1, 1);
+        else if (c <= 0x258F) // eighths from the left
+            fill(0, 0, (0x2590 - c) / 8.0, 1);
+        else if (c == 0x2590)
+            fill(0.5, 0, 1, 1);
+        else if (c <= 0x2593) { // shades: the color over the background by a quarter, a half and three quarters
+            const wxColour back = span.background.IsOk() ? span.background : TERMINAL_BG;
+            const double   by   = (c - 0x2590) / 4.0;
+            auto mix = [by](unsigned char a, unsigned char b) { return (unsigned char) std::lround(a + (b - a) * by); };
+            dc.SetBrush(wxBrush(wxColour(mix(back.Red(), span.color.Red()), mix(back.Green(), span.color.Green()),
+                                         mix(back.Blue(), span.color.Blue()))));
+            fill(0, 0, 1, 1);
+        } else if (c == 0x2594)
+            fill(0, 0, 1, 1 / 8.0);
+        else if (c == 0x2595)
+            fill(7 / 8.0, 0, 1, 1);
+        else {
+            const unsigned char parts = QUADRANTS[c - 0x2596];
+            for (int part = 0; part < 4; ++part)
+                if (parts & (1 << part))
+                    fill(part % 2 * 0.5, part / 2 * 0.5, part % 2 * 0.5 + 0.5, part / 2 * 0.5 + 0.5);
+        }
+    } else if (c >= 0x2500 && c <= 0x254F) {
+        dc.SetBrush(wxBrush(span.color));
+        draw_arms(dc, BOX_ARMS + (c - 0x2500) * 4, cell);
+    } else if (c >= 0x2574 && c <= 0x257F) {
+        dc.SetBrush(wxBrush(span.color));
+        draw_arms(dc, HALF_ARMS + (c - 0x2574) * 4, cell);
+    } else if (c >= 0x256D && c <= 0x2573)
+        curves.push_back({c, cell, span.color});
+    else if (c > U' ' && c != 0x7F) { // a glyph from whichever font has it, centered in its cell
+        const wxString glyph = from_u8(boost::locale::conv::utf_to_utf<char>(std::u32string(1, c)));
+        dc.DrawText(glyph, x + (w - dc.GetTextExtent(glyph).x) / 2, y);
+    }
+}
+
+void InstallerScreen::draw_arms(wxDC& dc, const char* arms, const wxRect& cell) const
+{
+    // Each arm runs from the edge to the middle of the cell, and into the line across it, so corners close.
+    auto      thick = [this](char arm) { return arm == '0' ? 0 : arm == '2' ? 2 * m_line : m_line; };
+    const int up = thick(arms[0]), right = thick(arms[1]), down = thick(arms[2]), left = thick(arms[3]);
+    const int mx = cell.x + cell.width / 2, my = cell.y + cell.height / 2;
+    const int across_v = std::max(up, down), across_h = std::max(left, right);
+    const int v0 = across_v ? mx - across_v / 2 : mx, v1 = across_v ? v0 + across_v : mx;
+    const int h0 = across_h ? my - across_h / 2 : my, h1 = across_h ? h0 + across_h : my;
+    if (up)
+        dc.DrawRectangle(mx - up / 2, cell.y, up, h1 - cell.y);
+    if (down)
+        dc.DrawRectangle(mx - down / 2, h0, down, cell.GetBottom() + 1 - h0);
+    if (left)
+        dc.DrawRectangle(cell.x, my - left / 2, v1 - cell.x, left);
+    if (right)
+        dc.DrawRectangle(v0, my - right / 2, cell.GetRight() + 1 - v0, right);
+}
+
+void InstallerScreen::draw_curve(wxGraphicsContext& gc, const Curve& curve) const
+{
+    const wxRect& cell = curve.cell;
+    gc.SetPen(gc.CreatePen(wxGraphicsPenInfo(curve.color, m_line).Cap(wxCAP_BUTT)));
+    // The middle of a light line, where draw_arms() puts it.
+    const double   mx = cell.x + cell.width / 2 - m_line / 2 + m_line / 2.0;
+    const double   my = cell.y + cell.height / 2 - m_line / 2 + m_line / 2.0;
+    const double   left = cell.x, top = cell.y, right = cell.x + cell.width, bottom = cell.y + cell.height;
+    wxGraphicsPath path = gc.CreatePath();
+    const char32_t c    = curve.c;
+    if (c <= 0x2570) { // a rounded corner, from the edge its line across leaves through to the edge of its line down or up
+        const double x_edge = c == 0x256D || c == 0x2570 ? right : left;
+        const double y_edge = c == 0x256D || c == 0x256E ? bottom : top;
+        path.MoveToPoint(x_edge, my);
+        path.AddArcToPoint(mx, my, mx, y_edge, std::min(std::abs(x_edge - mx), std::abs(y_edge - my)));
+        path.AddLineToPoint(mx, y_edge);
+    } else {
+        if (c != 0x2572) {
+            path.MoveToPoint(left, bottom);
+            path.AddLineToPoint(right, top);
+        }
+        if (c != 0x2571) {
+            path.MoveToPoint(left, top);
+            path.AddLineToPoint(right, bottom);
+        }
+    }
+    gc.StrokePath(path);
+}
+
+void InstallerScreen::on_left_down(wxMouseEvent& event)
+{
+    event.Skip();
+    SetFocus(); // for Ctrl+C
+    m_anchor = m_caret = spot_at(event.GetPosition());
+    m_dragging         = true;
+    if (!HasCapture())
+        CaptureMouse();
+    Refresh();
+}
+
+void InstallerScreen::on_motion(wxMouseEvent& event)
+{
+    event.Skip();
+    if (!m_dragging)
+        return;
+    const Spot spot = spot_at(event.GetPosition());
+    if (spot != m_caret) {
+        m_caret = spot;
+        Refresh();
+    }
+}
+
+void InstallerScreen::on_left_up(wxMouseEvent& event)
+{
+    event.Skip();
+    if (HasCapture())
+        ReleaseMouse();
+    m_dragging = false;
+}
+
+void InstallerScreen::on_capture_lost(wxMouseCaptureLostEvent&)
+{
+    m_dragging = false; // what it selected so far stays selected
+    Refresh();
+}
+
+void InstallerScreen::on_key(wxKeyEvent& event)
+{
+    // wxMOD_CONTROL is Cmd on macOS.
+    if (event.GetModifiers() == wxMOD_CONTROL && event.GetKeyCode() == 'C')
+        copy();
+    else if (event.GetModifiers() == wxMOD_CONTROL && event.GetKeyCode() == 'A')
+        select_all();
+    else
+        event.Skip();
+}
+
+void InstallerScreen::on_menu(wxContextMenuEvent&)
+{
+    if (HasCapture())
+        ReleaseMouse();
+    m_dragging = false;
+    CallAfter([this] {
+        wxMenu      menu;
+        wxMenuItem* copy_item = menu.Append(wxID_ANY, _L("Copy"));
+        wxMenuItem* all_item  = menu.Append(wxID_ANY, _L("Select All"));
+        copy_item->Enable(m_anchor != m_caret);
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { copy(); }, copy_item->GetId());
+        menu.Bind(wxEVT_MENU, [this](wxCommandEvent&) { select_all(); }, all_item->GetId());
+        PopupMenu(&menu);
+    });
+}
 
 void AgentInstallerDialog::show(const std::string& dev_id, const std::string& mode, bool start)
 {
@@ -90,11 +557,7 @@ AgentInstallerDialog::AgentInstallerDialog(wxWindow* parent, const std::string& 
     m_hint->Hide();
     sizer->Add(m_hint, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
 
-    m_screen = new wxTextCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
-                              wxTE_MULTILINE | wxTE_READONLY | wxTE_RICH2 | wxTE_DONTWRAP);
-    m_screen->SetFont(wxGetApp().code_font());
-    const wxSize cell = m_screen->GetTextExtent("0");
-    m_screen->SetMinSize(wxSize(cell.x * COLUMNS + FromDIP(30), cell.y * ROWS + FromDIP(10)));
+    m_screen = new InstallerScreen(this);
     sizer->Add(m_screen, 1, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
 
     m_choice_sizer = new wxBoxSizer(wxVERTICAL);
@@ -125,7 +588,6 @@ AgentInstallerDialog::AgentInstallerDialog(wxWindow* parent, const std::string& 
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
     m_text_color = m_status->GetForegroundColour();
-    style_screen();
 
     Bind(wxEVT_TIMER, &AgentInstallerDialog::on_timer, this);
     m_timer.Start(REFRESH_MS);
@@ -200,36 +662,20 @@ void AgentInstallerDialog::draw(const MachineObject& obj)
         failed = true;
     } else
         status = _L("Waiting for the printer...");
-    const wxString hint = installer.hint == "sudo" ?
-                              _L("A step needed sudo, which asked for a password. No password can be typed here: "
-                                 "run that step over SSH, or let this user run sudo without a password.") :
-                              wxString();
+    wxString hint;
+    if (installer.hint == "password")
+        // TRN Shown while AFC's updater or installer waits for a password, such as su asking for root's password
+        hint = _L("The script is asking for a password, which can't be typed here: answers go through G-code, "
+                  "which Klipper writes to its log. Stop the script and run that step over SSH.");
+    else if (installer.hint == "sudo")
+        hint = _L("A step needed sudo, which asked for a password. No password can be typed here: "
+                  "run that step over SSH, or let this user run sudo without a password.");
 
-    const bool live = m_connected && installer.running && !installer.away;
-    draw_screen(installer);
-    draw_choices(live ? installer.choices : Choices());
+    const bool answers = m_connected && installer.running && !installer.away && installer.hint != "password";
+    m_screen->set_lines(installer.lines);
+    draw_choices(answers ? installer.choices : Choices());
     draw_status(status, failed, hint);
-    enable(live, m_connected && installer.running);
-}
-
-void AgentInstallerDialog::draw_screen(const MachineObject::AgentInstaller& installer)
-{
-    if (installer.lines == m_lines)
-        return;
-    m_lines = installer.lines;
-    m_screen->Freeze();
-    m_screen->Clear();
-    for (size_t i = 0; i < m_lines.size(); ++i) {
-        for (const MachineObject::AgentInstaller::Run& run : m_lines[i]) {
-            const wxColour color = run.first.empty() ? TERMINAL_TEXT : wxColour(from_u8(run.first));
-            m_screen->SetDefaultStyle(wxTextAttr(color.IsOk() ? color : TERMINAL_TEXT, TERMINAL_BG));
-            m_screen->AppendText(from_u8(run.second));
-        }
-        if (i + 1 < m_lines.size())
-            m_screen->AppendText("\n");
-    }
-    m_screen->ShowPosition(m_screen->GetLastPosition());
-    m_screen->Thaw();
+    enable(answers, m_connected && installer.running);
 }
 
 void AgentInstallerDialog::draw_choices(const Choices& choices)
@@ -316,14 +762,6 @@ void AgentInstallerDialog::stop()
         obj->command_agent_installer_stop();
 }
 
-void AgentInstallerDialog::style_screen()
-{
-    m_screen->SetBackgroundColour(TERMINAL_BG);
-    m_screen->SetForegroundColour(TERMINAL_TEXT);
-    m_screen->SetDefaultStyle(wxTextAttr(TERMINAL_TEXT, TERMINAL_BG));
-    m_screen->Refresh();
-}
-
 void AgentInstallerDialog::grow_to_fit()
 {
     Layout();
@@ -339,8 +777,7 @@ void AgentInstallerDialog::on_dpi_changed(const wxRect&)
 {
     m_answer->Rescale();
     m_send->Rescale();
-    const wxSize cell = m_screen->GetTextExtent("0");
-    m_screen->SetMinSize(wxSize(cell.x * COLUMNS + FromDIP(30), cell.y * ROWS + FromDIP(10)));
+    m_screen->rescale();
     // The choices' rows were laid out for the old size.
     const Choices choices = m_choices;
     m_choices.clear();

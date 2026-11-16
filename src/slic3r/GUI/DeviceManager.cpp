@@ -1622,8 +1622,10 @@ void MachineObject::parse_agent_installer(const json& screen)
             std::vector<AgentInstaller::Run> runs;
             if (line.is_array())
                 for (const json& run : line)
-                    if (run.is_array() && run.size() == 2 && run[0].is_string() && run[1].is_string())
-                        runs.emplace_back(run[0].get<std::string>(), run[1].get<std::string>());
+                    if (run.is_array() && (run.size() == 2 || run.size() == 3) &&
+                        std::all_of(run.begin(), run.end(), [](const json& part) { return part.is_string(); }))
+                        runs.push_back({run[0].get<std::string>(), run[1].get<std::string>(),
+                                        run.size() == 3 ? run[2].get<std::string>() : std::string()});
             installer.lines.push_back(std::move(runs));
         }
     installer.choices.clear();

@@ -767,15 +767,26 @@ public:
     // opens in AgentInstallerDialog. known, available, why, running and mode come with each push
     // (afc_installer): known when the agent's AFC can run one at all, available when it can on this printer
     // (else why says why not). While the window watches, the agent also sends the session's screen (command
-    // afc_installer, parse_agent_installer()): its lines as runs of [color, text] (color "#rrggbb", "" for the
-    // default), the answers its prompt takes as [answer, label] choices, its result ("running", "done",
-    // "failed" or "stopped") with its exit status (-1 for none), starting while a start is on its way, away
-    // while Klipper does not answer, ended "restarted" when Klipper restarted while it ran, error the
-    // printer's words on the window's last request and hint "sudo" when sudo wanted a password. screens counts
-    // the screens received, so the window draws only a new one.
+    // afc_installer, parse_agent_installer()): its lines as runs of [color, text] or [color, text, background],
+    // the answers its prompt takes as [answer, label] choices, its result ("running", "done", "failed" or
+    // "stopped") with its exit status (-1 for none), starting while a start is on its way, away while Klipper
+    // does not answer, ended "restarted" when Klipper restarted while it ran, error the printer's words on the
+    // window's last request, and hint "password" while the script waits on a password prompt, which takes no
+    // answer from the window, or "sudo" when sudo wanted a password. screens counts the screens received, so
+    // the window draws only a new one.
     struct AgentInstaller
     {
-        using Run = std::pair<std::string, std::string>;
+        // Text in one color over one background, each "#rrggbb", or "" for the terminal's own.
+        struct Run
+        {
+            std::string color;
+            std::string text;
+            std::string background;
+            bool        operator==(const Run& other) const
+            {
+                return color == other.color && text == other.text && background == other.background;
+            }
+        };
         bool                                             known {false};
         bool                                             available {false};
         std::string                                      why;
