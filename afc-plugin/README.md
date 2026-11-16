@@ -241,6 +241,21 @@ Then:
   (namespace `bridgebox_display`) and rewrites them every 10 minutes; one that
   stops for half an hour leaves the page. A BridgeBox that does not report its
   chip gets no newest version or **Update**.
+- When AFC can run its own installer for a panel (its `AFC_installer` object,
+  on a printer whose Klipper does not run as root), the **Update** page's AFC
+  row also has **Run updater** and **Run installer**. Each opens a window on
+  AFC's `update-afc.sh` or `install-afc.sh`, which runs on the printer on the
+  branch AFC's checkout is on: the script's screen as a terminal shows it,
+  read from `AFC_installer.log` beside `AFC.log` every half second, its menu's
+  choices and its yes or no questions as buttons, and a box for any other
+  answer. The answers go to `AFC_INSTALLER_ANSWER`, as hex, since G-code drops
+  what follows a `;` or `#`. The script has no terminal it could ask a password
+  on, so a step that needs `sudo` with a password fails, and the window says
+  so. When the script restarts Klipper to apply its changes, the window keeps
+  its last screen and says Klipper restarted. A window closed while the script
+  runs leaves it running, and the row's **Show updater** or **Show installer**
+  opens it again; **Stop** interrupts it as Ctrl+C does. Neither starts while
+  the printer prints.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

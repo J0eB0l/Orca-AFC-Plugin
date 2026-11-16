@@ -38,8 +38,8 @@ from dataclasses import dataclass, field, replace
 
 import orca
 
-from . import (afclog, bambu_ids, controls, devices, gcode, keepouts, layout, offers, presets, prompt, protocol, runout,
-               stage, swaptimes, trays, units, upstream)
+from . import (afclog, bambu_ids, controls, devices, gcode, installer, keepouts, layout, offers, presets, prompt,
+               protocol, runout, stage, swaptimes, trays, units, upstream)
 from .manager import LANE_MOVE_TIMEOUT, AFCManager
 from .moonraker import GatewayTimeout, Moonraker, MoonrakerError, PrinterUnreachable, base_url, opens_without_key
 from .protocol import AFCError
@@ -276,8 +276,9 @@ def status_query(extruders: list, lights=(), chamber: str = "", fans=()) -> dict
     query = {"print_stats": ["state", "filename", "print_duration", "info"], "toolhead": ["homed_axes", "extruder"],
              "heater_bed": ["temperature", "target"], "fan": ["speed"], "virtual_sdcard": ["progress"],
              "display_status": ["progress", "message"], "gcode_move": ["gcode_position", "speed_factor"],
-             # What AFC is doing, for the Device tab's stage line (stage.describe()).
-             "AFC": stage.AFC_FIELDS}
+             # What AFC is doing, for the Device tab's stage line (stage.describe()), and whether
+             # its installer can run in the Update page's window (installer.summary()).
+             "AFC": stage.AFC_FIELDS, installer.OBJECT: installer.SUMMARY}
     # AFC names a U1's toolheads e0..e3; their heaters are Klipper's extruder..extruder3.
     for name in extruders or ["extruder"]:
         query[protocol.klipper_extruder(name)] = ["temperature", "target"]
@@ -561,6 +562,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # ... and under it each BridgeBox, the AMS units on it and its displays, with an Update
         # that sends afc_device_update. Always sent, so a row that is gone leaves the page too.
         out["afc_devices"] = devices.public(device_rows)
+        # AFC's own row runs AFC's updater or installer in a window (afc_installer), when AFC can.
+        out["afc_installer"] = installer.summary(obj(installer.OBJECT))
     return {"print": out, "t_utc": int(time.time() * 1000)}
 
 
@@ -838,6 +841,7 @@ class _Printer:
     displays_seen: dict = field(default_factory=dict) # devices.displays()' record of each display
     devices_due: float = 0.0                          # when to read them again
     device_jobs: dict = field(default_factory=dict)   # row id -> the update the agent runs on it, under the lock
+    installer: object = field(default_factory=installer.Watch)  # the installer window's session (installer.py)
 
 
 def spool_key(lane) -> tuple:
@@ -898,6 +902,8 @@ else:
             self._latest_due = 0.0
             self._newest = {}         # devices.read_newest(): the BridgeBox's newest firmware on GitHub
             self._newest_due = 0.0
+            # The installer window's reads and answers, every installer.EVERY s, from the first window on.
+            self._installer = Worker("AFC printer agent installer", tick=self._installer_tick, every=installer.EVERY)
 
         def get_name(self):
             return "AFC printer agent"
@@ -920,6 +926,7 @@ else:
             self._web.stop()
             self._spoolman.stop()
             self._edits.stop()
+            self._installer.stop()
 
         # -------------------------------------------------------- OrcaSlicer's callbacks
 
@@ -1518,6 +1525,67 @@ else:
                 return
             self._device_job(printer, row_id, "done", "The display is restarting on %s" % version, push=True)
 
+        def _installer_command(self, printer: _Printer, job: dict) -> int:
+            """The installer window (installer.py): watch, while it is open, then
+            start AFC's updater or installer, answer it, or stop it. Each runs on
+            the installer thread, whose next read sends the window what came of it."""
+            action, watch = job.get("action"), printer.installer
+            if action == "watch":
+                on = job.get("on") is True
+
+                def watched():
+                    watch.watch(on, time.monotonic())
+                    self._installer_now(printer)
+
+                self._installer.submit(watched)
+                return SUCCESS
+            if action == "start" and job.get("mode") in installer.MODES:
+                script = "AFC_INSTALLER MODE=%s" % job["mode"].upper()
+            elif action == "answer" and isinstance(job.get("text"), str):
+                script = installer.answer_gcode(job["text"])
+            elif action == "stop":
+                script = "AFC_INSTALLER_STOP"
+            else:
+                return ERR_INVALID_RESULT
+
+            def run():
+                if action == "start":
+                    watch.start()
+                try:
+                    printer.client.gcode(script, timeout=installer.GCODE_TIMEOUT)
+                    watch.note("")
+                except MoonrakerError as error:
+                    watch.note(str(error))
+                self._installer_now(printer)
+
+            self._installer.submit(run)
+            return SUCCESS
+
+        def _installer_tick(self) -> None:
+            """Each printer whose installer window is open: AFC's status of the
+            session and what its log gained, sent to the window when it changed."""
+            now = time.monotonic()
+            for printer in self._printers():
+                if printer.connected and printer.installer.watching(now):
+                    self._installer_read(printer, now)
+
+        def _installer_now(self, printer: _Printer) -> None:
+            """A read for the window at once, rather than at the next tick."""
+            now = time.monotonic()
+            if printer.connected and printer.installer.watching(now):
+                self._installer_read(printer, now)
+
+        def _installer_read(self, printer: _Printer, now: float) -> None:
+            try:
+                answer = printer.client.objects_query({installer.OBJECT: installer.FIELDS})
+                status = answer["status"][installer.OBJECT]
+            except (MoonrakerError, KeyError, TypeError):
+                status = None  # Klipper restarting
+            path = installer.log_path(self._log_path(printer))
+            message = printer.installer.update(status, lambda offset: printer.client.log_from(path, offset), now)
+            if message is not None:
+                self._send(printer, {"print": {"command": "afc_installer", "installer": message}})
+
         def _swap_times(self, printer: _Printer) -> None:
             """AFC's change times (swaptimes.py): AFC.log once a connection, its
             stats every STATS_EVERY s."""
@@ -1828,6 +1896,8 @@ else:
                 self._clear_log(printer)
             elif command == "afc_device_update":
                 return self._device_update(printer, job)
+            elif command == "afc_installer":
+                return self._installer_command(printer, job)
             elif command == "afc_runout":
                 return self._runout(printer, job)
             elif command == "afc_layout":

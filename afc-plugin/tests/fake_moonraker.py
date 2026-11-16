@@ -17,7 +17,7 @@ class FakeMoonraker:
     lane_data the lane_data namespace's value, or None for a 404
     afc_stats the afc_stats namespace's value, or None for a 404
     database  other namespaces' items: {namespace: {key: value}}, which POSTs set
-    logs      files in Moonraker's logs folder by name, served with Range: bytes=-N
+    logs      files in Moonraker's logs folder by name (text or bytes), served with Range: bytes=-N and bytes=N-
     spools    Spoolman spools by id, for the proxy and /api/v1/spool/<id>
     spool_fields  Spoolman's extra spool fields (/v1/field/spool)
     filament_fields  Spoolman's extra filament fields (/v1/field/filament)
@@ -46,6 +46,7 @@ class FakeMoonraker:
         self.effects = {}
         self.logs = {}       # Moonraker's logs root: path -> text
         self.unlistable_logs = False  # True to answer the logs root's file list 404, as an old Moonraker does
+        self.ignore_ranges = False    # True to send a log whole when asked from a byte on
         self.spools = {}
         self.spool_fields = []
         self.filament_fields = []
@@ -133,9 +134,15 @@ class FakeMoonraker:
             text = self.logs.get(urllib.parse.unquote(path[len("/server/files/logs/"):]))
             if text is None:
                 return 404, {"error": {"code": 404, "message": "No file"}}
-            raw = text.encode("utf-8")
+            raw = text.encode("utf-8") if isinstance(text, str) else text
             tail = re.fullmatch(r"bytes=-(\d+)", headers.get("Range") or "")
-            return (206, raw[-int(tail.group(1)):]) if tail else (200, raw)
+            if tail:
+                return 206, raw[-int(tail.group(1)):]
+            start = re.fullmatch(r"bytes=(\d+)-", headers.get("Range") or "")
+            if start and not self.ignore_ranges:
+                at = int(start.group(1))
+                return (206, raw[at:]) if at < len(raw) else (416, {"error": {"code": 416, "message": "Range"}})
+            return 200, raw
         if method == "POST" and path == "/printer/gcode/script":
             self.scripts.append(body.get("script"))
             if body.get("script") in self.effects:

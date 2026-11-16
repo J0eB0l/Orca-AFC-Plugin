@@ -52,14 +52,21 @@ class Moonraker:
         self._open = opener or urllib.request.urlopen
 
     def _fetch(self, method: str, path: str, data=None, headers=None, timeout=None) -> bytes:
+        return self._exchange(method, path, data, headers, timeout)[1]
+
+    def _exchange(self, method: str, path: str, data=None, headers=None, timeout=None, empty=()) -> tuple:
+        """(HTTP status, body) of a request. An HTTP error whose code is in
+        `empty` answers with no body, any other raises."""
         headers = dict(headers or {})
         if self.api_key:
             headers["X-Api-Key"] = self.api_key
         request = urllib.request.Request(self.url + path, data=data, headers=headers, method=method)
         try:
             with self._open(request, timeout=timeout or self.timeout, context=_ssl_context(self.url)) as answer:
-                return answer.read()
+                return getattr(answer, "status", 200), answer.read()
         except urllib.error.HTTPError as error:
+            if error.code in empty:
+                return error.code, b""
             raise (GatewayTimeout if error.code == 504 else MoonrakerError)(_http_error_message(error)) from None
         except urllib.error.URLError as error:
             raise PrinterUnreachable("Cannot reach %s: %s" % (self.url, error.reason)) from None
@@ -114,6 +121,15 @@ class Moonraker:
                           headers={"Range": "bytes=-%d" % size}, timeout=timeout)
         # A server that ignores Range sends the whole file.
         return raw[-size:].decode("utf-8", "replace")
+
+    def log_from(self, path: str, offset: int, timeout: float = 10.0) -> bytes:
+        """A file in Moonraker's logs root from byte `offset` on, as it grows
+        (AFC_installer.log); empty when it has nothing past `offset`."""
+        # 416: the file ends at `offset`, or a new session made it shorter.
+        status, raw = self._exchange("GET", "/server/files/logs/" + urllib.parse.quote(path),
+                                     headers={"Range": "bytes=%d-" % offset}, timeout=timeout, empty=(416,))
+        # A server that ignores Range sends the whole file.
+        return raw if status == 206 else raw[offset:]
 
     def gcode(self, script: str, timeout: float = 60.0):
         # A lane load can run for a while before Klipper answers.

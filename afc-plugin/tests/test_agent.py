@@ -1252,6 +1252,104 @@ class BridgeBoxUpdateTest(Case):
         self.assertEqual(self.fake.scripts, [])
 
 
+class InstallerTest(Case):
+    """AFC's updater and installer in the Update page's window (installer.py):
+    the push says whether AFC can run them, and the window's watch gets the
+    session's screen while its start, answers and stop go to AFC as G-code."""
+
+    MENU = (b"\x1b[H\x1b[2J\x1b[3JU. Update AFC Klipper Add-On\r\n\r\nM. Return to Main Menu\r\nQ. Quit\r\n\r\n"
+            b"Enter your choice: ")
+
+    def setUp(self):
+        super().setUp()
+        self.fake.objects["AFC_installer"] = {
+            "available": True, "why": "", "running": True, "mode": "update", "session": 1,
+            "size": len(self.MENU), "result": "running", "exit_code": None}
+        self.fake.logs["AFC.log"] = ""
+        self.fake.logs["AFC_installer.log"] = self.MENU
+
+    def installer(self, **request):
+        return self.send({"print": dict(request, command="afc_installer")})
+
+    def screens(self, count=1):
+        return self.calls.messages("print", "afc_installer", count)
+
+    def settle(self):
+        self.agent._installer.call(lambda: None, 5)
+
+    def test_the_push_says_whether_afc_can_run_it(self):
+        self.connect()
+        self.assertEqual(self.push()["afc_installer"],
+                         {"available": True, "why": "", "running": True, "mode": "update"})
+
+    def test_an_afc_without_it(self):
+        del self.fake.objects["AFC_installer"]
+        self.connect()
+        self.assertEqual(self.push()["afc_installer"], {})
+
+    def test_a_window_gets_the_screen(self):
+        self.connect()
+        self.assertEqual(self.installer(action="watch", on=True), 0)
+        screen = self.screens()[-1]["installer"]
+        self.assertEqual((screen["running"], screen["session"], screen["mode"]), (True, 1, "update"))
+        self.assertEqual(screen["choices"], [["U", "Update AFC Klipper Add-On"], ["M", "Return to Main Menu"],
+                                             ["Q", "Quit"]])
+        self.assertEqual(screen["lines"][-1], [["", "Enter your choice:"]])
+
+    def test_the_log_beside_afc_log(self):
+        del self.fake.logs["AFC.log"], self.fake.logs["AFC_installer.log"]
+        self.fake.logs["klippylogs/AFC.log"] = ""
+        self.fake.logs["klippylogs/AFC_installer.log"] = self.MENU
+        self.connect()
+        self.installer(action="watch", on=True)
+        self.assertEqual(self.screens()[-1]["installer"]["lines"][-1], [["", "Enter your choice:"]])
+
+    def test_a_closed_window_gets_nothing_more(self):
+        self.connect()
+        self.installer(action="watch", on=True)
+        self.screens()
+        self.installer(action="watch", on=False)
+        self.settle()
+        self.fake.objects["AFC_installer"]["mode"] = "install"
+        self.agent._installer_tick()
+        self.assertEqual(len(self.screens()), 1)
+
+    def test_klipper_away(self):
+        self.connect()
+        self.installer(action="watch", on=True)
+        self.screens()
+        self.fake.offline = True
+        self.agent._installer.call(self.agent._installer_tick, 5)
+        self.assertTrue(self.screens(2)[-1]["installer"]["away"])
+        self.agent._installer.call(self.agent._installer_tick, 5)
+        self.assertEqual(len(self.screens(2)), 2)
+
+    def test_start_answer_and_stop(self):
+        self.connect()
+        self.assertEqual(self.installer(action="start", mode="update"), 0)
+        self.assertEqual(self.installer(action="answer", text="U"), 0)
+        self.assertEqual(self.installer(action="answer", text=""), 0)
+        self.assertEqual(self.installer(action="stop"), 0)
+        self.settle()
+        self.assertEqual(self.fake.scripts, ["AFC_INSTALLER MODE=UPDATE", "AFC_INSTALLER_ANSWER HEX=55",
+                                             "AFC_INSTALLER_ANSWER", "AFC_INSTALLER_STOP"])
+
+    def test_a_start_afc_refuses(self):
+        self.fake.objects["AFC_installer"].update(running=False, result="done", session=1)
+        self.fake.gcode_error = "AFC's installer cannot run while printing"
+        self.connect()
+        self.installer(action="watch", on=True)
+        self.installer(action="start", mode="install")
+        screen = self.screens(2)[-1]["installer"]
+        self.assertEqual((screen["error"], screen["starting"]), ("AFC's installer cannot run while printing", False))
+        self.assertEqual(self.fake.scripts, ["AFC_INSTALLER MODE=INSTALL"])
+
+    def test_requests_it_cannot_take(self):
+        self.connect()
+        for request in ({"action": "start", "mode": "remove"}, {"action": "answer", "text": 5}, {"action": "go"}):
+            self.assertEqual(self.installer(**request), afc_agent.ERR_INVALID_RESULT)
+
+
 class UnitLayoutTest(Case):
     """The AFC build of OrcaSlicer: trays by AFC unit, a tool as an AMS HT, and the drying popup."""
 
