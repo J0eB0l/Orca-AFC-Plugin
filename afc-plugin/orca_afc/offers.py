@@ -4,7 +4,10 @@ preset in a plater notification, for one click to apply:
 - AFC's own settings: AFC unloads and loads each lane itself, cutting or
   forming the tip, and its PRINT_START loads the first tool, so ramming,
   cooling moves and toolchange retraction go off and PRINT_START gets
-  TOOL={initial_tool} (afcproject.dev, slicer setup).
+  TOOL={initial_tool} (afcproject.dev, slicer setup). A Snapmaker U1 gets
+  the cooling tube, parking and extra loading values of Snapmaker's U1
+  presets instead of zeros: OrcaSlicer only uses them in single extruder
+  multi-material mode, which a U1 runs without.
 - Preheating on a toolchanger: ooze prevention heats the next tool ahead
   of each tool change.
 - Klipper's motion limits: the printer preset's machine limits that differ
@@ -27,8 +30,14 @@ import threading
 
 import orca
 
+from . import presets
+
 AFC_OFF = ("enable_filament_ramming", "high_current_on_filament_swap")
 AFC_ZERO = ("cooling_tube_retraction", "cooling_tube_length", "parking_pos_retraction", "extra_loading_move")
+# A Snapmaker U1 keeps these as Snapmaker's U1 presets have them (OrcaSlicer's defaults).
+U1_MODEL = "Snapmaker U1"
+U1_VALUES = {"cooling_tube_retraction": 91.5, "cooling_tube_length": 5.0, "parking_pos_retraction": 92.0,
+             "extra_loading_move": -2.0}
 AFC_ZERO_EACH = ("retract_length_toolchange", "retract_restart_extra_toolchange")  # per extruder
 
 # Klipper's [printer] limit -> the machine limits it sets. Klipper has no
@@ -95,10 +104,12 @@ def afc_changes(get) -> dict:
     for key in AFC_OFF:
         if get(key) == "1":
             changes[key] = "0"
+    u1 = presets._first(get("printer_model")).startswith(U1_MODEL)
     for key in AFC_ZERO:
         value = get(key)
-        if value is not None and any(v for v in _numbers(value)):
-            changes[key] = "0"
+        want = U1_VALUES[key] if u1 else 0.0
+        if value is not None and any(v is not None and abs(v - want) >= 0.001 for v in _numbers(value)):
+            changes[key] = _number_text(want)
     for key in AFC_ZERO_EACH:
         value = get(key)
         if value is not None and any(v for v in _numbers(value)):

@@ -33,6 +33,18 @@ class ChangesTest(unittest.TestCase):
             "machine_start_gcode": r"G28\nPRINT_START BED=[bed_temperature_initial_layer_single] TOOL={initial_tool} ; heat\nG1 Z5",
         })
 
+    def test_a_u1_keeps_snapmakers_multi_material_values(self):
+        u1 = dict(PRINTER, printer_model="Snapmaker U1", cooling_tube_retraction="0", cooling_tube_length="0",
+                  parking_pos_retraction="0", extra_loading_move="0")
+        changes = offers.afc_changes(get(u1))
+        self.assertEqual({key: changes.get(key) for key in offers.AFC_ZERO},
+                         {"cooling_tube_retraction": "91.5", "cooling_tube_length": "5",
+                          "parking_pos_retraction": "92", "extra_loading_move": "-2"})
+        self.assertEqual(changes["enable_filament_ramming"], "0")
+        stock = dict(u1, cooling_tube_retraction="91.5", cooling_tube_length="5", parking_pos_retraction="92",
+                     extra_loading_move="-2")
+        self.assertFalse(set(offers.AFC_ZERO) & set(offers.afc_changes(get(stock))))
+
     def test_a_start_line_naming_its_tool_stays(self):
         for line in ("PRINT_START TOOL=0", "START_PRINT INITIAL_TOOL={initial_tool}"):
             self.assertNotIn("machine_start_gcode", offers.afc_changes(get({"machine_start_gcode": line})))
