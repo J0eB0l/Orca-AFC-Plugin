@@ -31,7 +31,7 @@ import urllib.request
 
 FIRMWARE = "AFC_BambuAMS_firmware"  # AFC's AMS updater, in Klipper
 FIRMWARE_FIELDS = ["updater", "running", "waiting", "result", "units"]
-UNIT_FIELDS = ["ams_model", "fw_version", "bridge_fw", "bridge_port", "bridge_wifi", "bridge_chip",
+UNIT_FIELDS = ["ams_model", "fw_version", "bridge_fw", "bridge_port", "bridge_wifi", "bridge_link", "bridge_chip",
                "bridge_connected"]
 DISPLAY_NAMESPACE = "bridgebox_display"
 EVERY = 30.0             # seconds between reads while no update runs; each push while one does
@@ -199,10 +199,12 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
             continue  # a pool's spare section, which holds no unit until one is claimed
         port = str(own.get("bridge_port") or "")
         if port:
-            bridge = bridges.setdefault(port, {"units": [], "fw": "", "chip": "", "wifi": None, "connected": False})
+            bridge = bridges.setdefault(port, {"units": [], "fw": "", "chip": "", "wifi": None, "link": "",
+                                               "connected": False})
             bridge["units"].append(unit.name)
             bridge["fw"] = bridge["fw"] or str(own.get("bridge_fw") or "")
             bridge["chip"] = bridge["chip"] or str(own.get("bridge_chip") or "")
+            bridge["link"] = bridge["link"] or str(own.get("bridge_link") or "")
             if own.get("bridge_wifi") is not None:
                 bridge["wifi"] = bool(own.get("bridge_wifi"))
             bridge["connected"] = bridge["connected"] or bool(own.get("bridge_connected"))
@@ -214,7 +216,7 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
         latest = str((newest.get("bridge") or {}).get(chip) or "")
         title = "BridgeBox" if len(bridges) == 1 else "BridgeBox %d" % number
         row = _row("bridge:" + port, "bridge", "bridgebox", title)
-        row.update(link=_link(port, bridge["wifi"]),
+        row.update(link=_link(port, bridge["wifi"], bridge["link"]),
                    units=", ".join(bridge["units"]), version=bridge["fw"], latest=latest,
                    updatable=bool(latest and chip in BRIDGE_IMAGES and bridge["connected"]),
                    do={"unit": bridge["units"][0], "chip": chip, "version": latest})
@@ -247,12 +249,18 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
     return out
 
 
-def _link(port: str, wifi) -> str:
-    """How a bridge reaches the printer, as far as its units' status tells:
-    WiFi at a tcp: address, USB when its firmware has no WiFi, "" otherwise.
+_LINKS = {"wifi": "WiFi", "usb": "USB"}  # bridge_link -> what the page shows
+
+
+def _link(port: str, wifi, link: str) -> str:
+    """How a bridge reaches the printer: the link AFC says it uses now
+    (bridge_link), else as far as the rest of its units' status tells: WiFi
+    at a tcp: address, USB when its firmware has no WiFi, "" otherwise.
     bridge_wifi says whether the firmware has WiFi, not whether the bridge
     uses it, and with connection: wifi a bridge keeps its USB device as its
-    port while it talks over WiFi."""
+    port while it talks over WiFi. AFC builds before bridge_link send none."""
+    if link.lower() in _LINKS:
+        return _LINKS[link.lower()]
     if port.startswith("tcp:"):
         return "WiFi"
     return "USB" if wifi is False else ""

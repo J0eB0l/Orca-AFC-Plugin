@@ -220,6 +220,18 @@ class RowsTest(unittest.TestCase):
                                 Bambu_HT_1=unit_status(bridge_wifi=True, ams_model="ht"))
         self.assertEqual(rows(status, found=[])[0]["link"], "")
 
+    def test_the_link_afc_reports_wins(self):
+        # With connection: wifi the port stays the USB device while the bridge talks over WiFi.
+        for link, shown in (("wifi", "WiFi"), ("usb", "USB")):
+            status = printer_status(Bambu_AMS_1=unit_status(bridge_wifi=True, bridge_link=link),
+                                    Bambu_HT_1=unit_status(bridge_wifi=True, bridge_link=link, ams_model="ht"))
+            self.assertEqual(rows(status, found=[])[0]["link"], shown)
+
+    def test_no_link_while_the_bridge_port_is_closed(self):
+        status = printer_status(Bambu_AMS_1=unit_status(bridge_link=None),
+                                Bambu_HT_1=unit_status(bridge_link=None, ams_model="ht"))
+        self.assertEqual(rows(status, found=[])[0]["link"], "USB")  # its firmware has no WiFi
+
     def test_a_bridgebox_not_connected(self):
         status = printer_status(Bambu_AMS_1=unit_status(bridge_connected=False),
                                 Bambu_HT_1=unit_status(bridge_connected=False, ams_model="ht"))
