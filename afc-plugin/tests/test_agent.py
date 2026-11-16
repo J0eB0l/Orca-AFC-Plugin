@@ -1264,7 +1264,8 @@ class InstallerTest(Case):
     def setUp(self):
         super().setUp()
         self.fake.objects["AFC_installer"] = {
-            "available": True, "why": "", "running": True, "mode": "update", "session": 1,
+            "available": True, "why": "", "git": True, "branch": "BridgeBox", "running": True, "mode": "update",
+            "session": 1,
             "size": len(self.MENU), "result": "running", "exit_code": None}
         self.fake.logs["AFC.log"] = ""
         self.fake.logs["AFC_installer.log"] = self.MENU
@@ -1281,7 +1282,8 @@ class InstallerTest(Case):
     def test_the_push_says_whether_afc_can_run_it(self):
         self.connect()
         self.assertEqual(self.push()["afc_installer"],
-                         {"available": True, "why": "", "running": True, "mode": "update"})
+                         {"available": True, "why": "", "git": True, "branch": "BridgeBox", "running": True,
+                          "mode": "update"})
 
     def test_an_afc_without_it(self):
         del self.fake.objects["AFC_installer"]
@@ -1335,6 +1337,13 @@ class InstallerTest(Case):
         self.assertEqual(self.fake.scripts, ["AFC_INSTALLER MODE=UPDATE", "AFC_INSTALLER_ANSWER HEX=55",
                                              "AFC_INSTALLER_ANSWER", "AFC_INSTALLER_STOP"])
 
+    def test_a_start_on_a_branch(self):
+        self.connect()
+        self.assertEqual(self.installer(action="start", mode="install", branch="DEV"), 0)
+        self.assertEqual(self.installer(action="start", mode="update", branch=""), 0)
+        self.settle()
+        self.assertEqual(self.fake.scripts, ["AFC_INSTALLER MODE=INSTALL BRANCH=DEV", "AFC_INSTALLER MODE=UPDATE"])
+
     def test_no_answer_goes_to_a_password_prompt(self):
         self.fake.logs["AFC_installer.log"] = self.MENU + b"Q\r\nPassword: "
         self.fake.objects["AFC_installer"]["size"] = len(self.fake.logs["AFC_installer.log"])
@@ -1362,7 +1371,9 @@ class InstallerTest(Case):
 
     def test_requests_it_cannot_take(self):
         self.connect()
-        for request in ({"action": "start", "mode": "remove"}, {"action": "answer", "text": 5}, {"action": "go"}):
+        for request in ({"action": "start", "mode": "remove"}, {"action": "answer", "text": 5}, {"action": "go"},
+                        {"action": "start", "mode": "update", "branch": "DEV\nFIRMWARE_RESTART"},
+                        {"action": "start", "mode": "update", "branch": 5}):
             self.assertEqual(self.installer(**request), afc_agent.ERR_INVALID_RESULT)
 
 

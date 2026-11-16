@@ -258,7 +258,10 @@ Then:
   its last screen and says Klipper restarted. A window closed while the script
   runs leaves it running, and the row's **Show updater** or **Show installer**
   opens it again; **Stop** interrupts it as Ctrl+C does. Neither starts while
-  the printer prints.
+  the printer prints. **Choose branch** asks for a branch and starts either
+  script on it (`AFC_INSTALLER ... BRANCH=`, the scripts' `-b`), which switches
+  AFC's checkout to that branch first; it needs AFC's folder to be a git
+  checkout, and the box starts on the branch the checkout is on.
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

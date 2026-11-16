@@ -26,7 +26,8 @@ from .moonraker import MoonrakerError
 
 OBJECT = "AFC_installer"  # AFC's Klipper object that runs it
 FIELDS = ["available", "why", "running", "mode", "session", "size", "result", "exit_code"]
-SUMMARY = ["available", "why", "running", "mode"]  # what the Update page's buttons need, read at each push
+# What the Update page's buttons need, read at each push.
+SUMMARY = ["available", "why", "git", "branch", "running", "mode"]
 LOG_NAME = "AFC_installer.log"
 MODES = ("update", "install")
 EVERY = 0.5          # seconds between reads while a window is open
@@ -37,6 +38,9 @@ WIDTH = 300          # characters it keeps of a line
 GCODE_TIMEOUT = 30.0
 NO_PASSWORDS = "No answer is sent to a password prompt from here: G-code goes to Klipper's log."
 _PENDING_MAX = 4096  # characters an unfinished escape sequence may hold before it is dropped
+# A branch the window may start the script on, as AFC_INSTALLER takes it: nothing in it ends the
+# G-code line early or reads as one of the script's options.
+BRANCH_NAME = re.compile(r"(?!.*\.\.)(?!.*//)[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,98}[A-Za-z0-9_-])?")
 
 # A terminal's 16 colors (as VS Code's dark terminal draws them), then xterm's
 # 256-color cube and grays.
@@ -329,11 +333,26 @@ def hint(lines: list, prompt: str = "") -> str:
 
 def summary(status) -> dict:
     """The Update page's view of the installer, from AFC's object at a push:
-    {} when AFC has none (an older AFC), so the page offers no window."""
+    {} when AFC has none (an older AFC), so the page offers no window, and
+    git and branch only from an AFC that can run it on another branch."""
     if not isinstance(status, dict) or not isinstance(status.get("available"), bool):
         return {}
-    return {"available": status["available"], "why": str(status.get("why") or ""),
-            "running": status.get("running") is True, "mode": str(status.get("mode") or "")}
+    out = {"available": status["available"], "why": str(status.get("why") or ""),
+           "running": status.get("running") is True, "mode": str(status.get("mode") or "")}
+    if isinstance(status.get("git"), bool):  # an AFC that runs it on a branch the window names
+        out.update(git=status["git"], branch=str(status.get("branch") or ""))
+    return out
+
+
+def branch_ok(branch) -> bool:
+    """Whether a start may name `branch`: none (""), or a name AFC_INSTALLER takes."""
+    return branch == "" or (isinstance(branch, str) and BRANCH_NAME.fullmatch(branch) is not None)
+
+
+def start_gcode(mode: str, branch: str = "") -> str:
+    """The G-code that starts AFC's updater or installer, on `branch` when one is named."""
+    script = "AFC_INSTALLER MODE=%s" % mode.upper()
+    return script + " BRANCH=%s" % branch if branch else script
 
 
 def answer_gcode(text: str) -> str:

@@ -189,13 +189,30 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(installer.hint([], "Set a password? (y/n):"), "")
 
     def test_summary(self):
-        self.assertEqual(installer.summary({"available": True, "why": "", "running": True, "mode": "update"}),
-                         {"available": True, "why": "", "running": True, "mode": "update"})
-        self.assertEqual(installer.summary({"available": False, "why": "root", "running": None, "mode": None}),
+        self.assertEqual(installer.summary({"available": True, "why": "", "git": True, "branch": "DEV",
+                                            "running": True, "mode": "update"}),
+                         {"available": True, "why": "", "git": True, "branch": "DEV", "running": True,
+                          "mode": "update"})
+        self.assertEqual(installer.summary({"available": True, "why": "", "git": False, "branch": None,
+                                            "running": False, "mode": ""}),
+                         {"available": True, "why": "", "git": False, "branch": "", "running": False, "mode": ""})
+        # An AFC from before branches answers them null, and the page gets neither.
+        self.assertEqual(installer.summary({"available": False, "why": "root", "git": None, "branch": None,
+                                            "running": None, "mode": None}),
                          {"available": False, "why": "root", "running": False, "mode": ""})
         # An AFC without the installer: Klipper answers its fields null.
         self.assertEqual(installer.summary({"available": None, "why": None}), {})
         self.assertEqual(installer.summary(None), {})
+
+    def test_branch_ok(self):
+        for branch in ("", "DEV", "BridgeBox-turtle", "feature/two_spools", "v1.2"):
+            self.assertTrue(installer.branch_ok(branch), branch)
+        for branch in ("-b", "a b", "a;b", "a#b", "a\nFIRMWARE_RESTART", "a..b", "DEV/", ".x", "a" * 101, 5, None):
+            self.assertFalse(installer.branch_ok(branch), branch)
+
+    def test_start_gcode(self):
+        self.assertEqual(installer.start_gcode("update"), "AFC_INSTALLER MODE=UPDATE")
+        self.assertEqual(installer.start_gcode("install", "DEV"), "AFC_INSTALLER MODE=INSTALL BRANCH=DEV")
 
     def test_answer_gcode(self):
         self.assertEqual(installer.answer_gcode("U"), "AFC_INSTALLER_ANSWER HEX=55")

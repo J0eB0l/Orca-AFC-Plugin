@@ -1539,8 +1539,9 @@ else:
 
                 self._installer.submit(watched)
                 return SUCCESS
-            if action == "start" and job.get("mode") in installer.MODES:
-                script = "AFC_INSTALLER MODE=%s" % job["mode"].upper()
+            branch = job.get("branch", "")
+            if action == "start" and job.get("mode") in installer.MODES and installer.branch_ok(branch):
+                script = installer.start_gcode(job["mode"], branch)
             elif action == "answer" and isinstance(job.get("text"), str):
                 script = installer.answer_gcode(job["text"])
             elif action == "stop":
