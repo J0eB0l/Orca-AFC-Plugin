@@ -61,6 +61,9 @@ private:
     void           stop();
     // Grows the window to fit what it shows, never shrinking it, so it does not jump between screens.
     void           grow_to_fit();
+    // Makes the window, fitted to its sizer, tall enough for the screen to show TALL_ROWS lines, as far as its display
+    // has room, so AFC's menus show without scrolling. It can still be made smaller.
+    void           make_tall();
 
     std::string          m_dev_id;
     unsigned             m_screens {0};

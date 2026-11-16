@@ -31,6 +31,7 @@
 #include <wx/dc.h>
 #include <wx/dcbuffer.h>
 #include <wx/defs.h>
+#include <wx/display.h>
 #include <wx/event.h>
 #include <wx/font.h>
 #include <wx/gdicmn.h>
@@ -52,7 +53,8 @@ namespace Slic3r { namespace GUI {
 static constexpr int    REFRESH_MS  = 250;
 static constexpr auto   RENEW       = std::chrono::seconds(5); // the agent's watch lasts 15 s
 static constexpr int    COLUMNS     = 100;                     // the script's terminal, as AFC opens it
-static constexpr int    ROWS        = 28;
+static constexpr int    ROWS        = 28;                      // lines the screen shows at its smallest
+static constexpr int    TALL_ROWS   = 64;                      // and on opening, where the display has room
 static constexpr size_t LABEL_CHARS = 48;                      // a choice's button shows this much of its label
 // A terminal's colors, in either theme: the script's own colors are picked for a dark terminal.
 static const wxColour TERMINAL_BG(30, 30, 30);
@@ -92,6 +94,8 @@ public:
     void set_lines(const Lines& lines);
     // Measures the cells again, as after a DPI change.
     void rescale();
+    // The height that shows `rows` lines.
+    int  height_for(int rows) const { return m_cell_h * rows + 2 * m_pad; }
     // Clicked for a selection, but left out of the TAB order.
     bool AcceptsFocusFromKeyboard() const override { return false; }
 
@@ -208,7 +212,7 @@ void InstallerScreen::rescale()
     m_line              = std::max(1, int(std::lround(m_cell_w / 8)));
     // The script's terminal, and room for a scroll bar.
     SetMinSize(wxSize(int(std::ceil(m_cell_w * COLUMNS)) + 2 * m_pad + wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this),
-                      m_cell_h * ROWS + 2 * m_pad));
+                      height_for(ROWS)));
     update_size();
     Refresh();
 }
@@ -693,6 +697,7 @@ AgentInstallerDialog::AgentInstallerDialog(wxWindow* parent, const std::string& 
 
     enable(false, false);
     SetSizerAndFit(sizer);
+    make_tall();
     CenterOnParent();
     wxGetApp().UpdateDlgDarkUI(this);
     m_text_color = m_status->GetForegroundColour();
@@ -881,6 +886,15 @@ void AgentInstallerDialog::grow_to_fit()
     Layout();
 }
 
+void AgentInstallerDialog::make_tall()
+{
+    // AFC's menus run to about 58 lines, and their choices' buttons take some of the screen's height. Until the window
+    // is shown it has no display of its own, so it takes its parent's, which CenterOnParent() centers it on.
+    const wxRect area = wxDisplay(IsShown() ? static_cast<wxWindow*>(this) : GetParent()).GetClientArea();
+    const int    tall = GetSize().y - m_screen->GetMinSize().y + m_screen->height_for(TALL_ROWS);
+    SetSize(wxSize(GetSize().x, std::max(GetSize().y, std::min(tall, area.height))));
+}
+
 void AgentInstallerDialog::on_dpi_changed(const wxRect&)
 {
     m_answer->Rescale();
@@ -891,6 +905,7 @@ void AgentInstallerDialog::on_dpi_changed(const wxRect&)
     m_choices.clear();
     draw_choices(choices);
     GetSizer()->SetSizeHints(this);
+    make_tall();
     Refresh();
 }
 
