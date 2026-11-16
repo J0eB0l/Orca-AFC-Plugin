@@ -226,9 +226,9 @@ Then:
   units and lanes AFC runs, and a **View on GitHub** button. AFC's units get no
   empty AMS rows there.
 - On a printer with Bambu AMS units, the **Update** page also lists each
-  BridgeBox (how it is linked and which units are on it), the AMS units under
-  it, and each BridgeBox display that left its address with the printer. Each
-  row shows the firmware installed and the newest out: a BridgeBox's and a
+  BridgeBox (which units are on it, and WiFi or USB when their status says),
+  the AMS units under it, and each BridgeBox display that left its address with
+  the printer. Each row shows the firmware installed and the newest out: a BridgeBox's and a
   display's from AFC-Klipper-Add-On's `BridgeBox` branch on GitHub (read every 6
   hours), an AMS unit's from AFC's AMS updater. **Update** asks first, then
   writes the newest. A BridgeBox's image and its manifest are checked against
