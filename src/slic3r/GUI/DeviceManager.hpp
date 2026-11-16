@@ -724,6 +724,45 @@ public:
         int                                lanes {0};
     };
     AgentVersion agent_version;
+    // Orca: what the printer agent updates besides itself, under the AFC row on the Update page (afc_devices):
+    // for AFC each BridgeBox, the AMS units on it and the BridgeBox displays. kind is "bridge", "ams" or
+    // "display" and icon names the row's picture; model, link, units and address are shown when not empty, with
+    // the title as the model when there is none. version is the firmware installed and latest the newest out,
+    // newer when that is newer. updatable when the agent can update the device, ready when it can now (the
+    // printer is idle and no other update runs), resume when an update stopped and Update finishes it. state is
+    // "", "running", "done" or "failed", with message the agent's words on it and progress its percent (-1 for
+    // none). command_agent_device_update() updates one by its id.
+    struct AgentDevice
+    {
+        std::string id;
+        std::string kind;
+        std::string icon;
+        std::string title;
+        std::string model;
+        std::string link;
+        std::string units;
+        std::string address;
+        std::string version;
+        std::string latest;
+        bool        newer {false};
+        bool        updatable {false};
+        bool        ready {false};
+        bool        resume {false};
+        std::string state;
+        std::string message;
+        int         progress {-1};
+
+        bool operator==(const AgentDevice& other) const
+        {
+            auto fields = [](const AgentDevice& d) {
+                return std::tie(d.id, d.kind, d.icon, d.title, d.model, d.link, d.units, d.address, d.version, d.latest,
+                                d.newer, d.updatable, d.ready, d.resume, d.state, d.message, d.progress);
+            };
+            return fields(*this) == fields(other);
+        }
+        bool operator!=(const AgentDevice& other) const { return !(*this == other); }
+    };
+    std::vector<AgentDevice> agent_devices;
     // Orca: a printer agent's lanes (afc_lanes), for the runout lane controls of the tray popup and the
     // Auto Refill dialog (is_support_runout_lane). color is "RRGGBBAA" ("" unknown), family the material
     // family the agent compares ("PLA" for "PLA+"), remain_g -1 when unknown, runout the lane it runs out
@@ -900,6 +939,8 @@ public:
     int command_clear_agent_message();
     int command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type, const std::string& flow);
     int command_clear_agent_log();
+    // Orca: updates one of the printer agent's devices (agent_devices) to its newest firmware.
+    int command_agent_device_update(const std::string& id);
     // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
     // lanes with the same filament linked ("match") or none ("clear").
     int command_set_runout_lane(const std::string& lane, const std::string& runout);

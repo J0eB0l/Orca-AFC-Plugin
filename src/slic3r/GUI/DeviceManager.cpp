@@ -1551,6 +1551,15 @@ int MachineObject::command_clear_agent_log()
     return this->publish_json(j);
 }
 
+int MachineObject::command_agent_device_update(const std::string& id)
+{
+    json j;
+    j["print"]["command"]     = "afc_device_update";
+    j["print"]["device"]      = id;
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return this->publish_json(j);
+}
+
 const MachineObject::AgentLane* MachineObject::agent_lane(const std::string& name) const
 {
     for (const AgentLane& lane : agent_lanes)
@@ -3542,6 +3551,42 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     for (const auto& [branch, newest] : latest.items())
                         if (newest.is_string())
                             agent_version.latest[branch] = newest.get<std::string>();
+                }
+                if (jj.contains("afc_devices") && jj["afc_devices"].is_array()) {
+                    auto text = [](const json& item, const char* key) {
+                        auto it = item.find(key);
+                        return it != item.end() && it->is_string() ? it->get<std::string>() : std::string();
+                    };
+                    auto flag = [](const json& item, const char* key) {
+                        auto it = item.find(key);
+                        return it != item.end() && it->is_boolean() && it->get<bool>();
+                    };
+                    agent_devices.clear();
+                    for (const json& item : jj["afc_devices"]) {
+                        if (!item.is_object() || text(item, "id").empty())
+                            continue;
+                        AgentDevice device;
+                        device.id        = text(item, "id");
+                        device.kind      = text(item, "kind");
+                        device.icon      = text(item, "icon");
+                        device.title     = text(item, "title");
+                        device.model     = text(item, "model");
+                        device.link      = text(item, "link");
+                        device.units     = text(item, "units");
+                        device.address   = text(item, "address");
+                        device.version   = text(item, "version");
+                        device.latest    = text(item, "latest");
+                        device.newer     = flag(item, "newer");
+                        device.updatable = flag(item, "updatable");
+                        device.ready     = flag(item, "ready");
+                        device.resume    = flag(item, "resume");
+                        device.state     = text(item, "state");
+                        device.message   = text(item, "message");
+                        auto progress    = item.find("progress");
+                        if (progress != item.end() && progress->is_number())
+                            device.progress = std::clamp(progress->get<int>(), -1, 100);
+                        agent_devices.push_back(std::move(device));
+                    }
                 }
 
               m_fan->ParseV2_0(jj);

@@ -29,6 +29,9 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "MainFrame.hpp"
+#include "MsgDialog.hpp"
+#include "format.hpp"
 #include "Plater.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
@@ -257,6 +260,7 @@ MachineInfoPanel::MachineInfoPanel(wxWindow* parent, wxWindowID id, const wxPoin
     createExhaustFan(m_main_left_sizer);      // Orca: accessory firmware version display
     createAmshubWidgets(m_main_left_sizer);   // Orca: accessory firmware version display
     createAfcWidgets(m_main_left_sizer);      // Orca: a printer agent's AFC version
+    createAgentDeviceWidgets(m_main_left_sizer); // Orca: a printer agent's devices
 
     // nozzle rack widgets (H2C induction hotend rack; hidden unless GetNozzleRack()->IsSupported())
     createNozzleRackWidgets(m_main_left_sizer);
@@ -542,6 +546,8 @@ void MachineInfoPanel::msw_rescale()
         amspanel->msw_rescale();
     }
     m_ext_panel->msw_rescale();
+    for (AgentDevicePanel* panel : m_agent_device_panels)
+        panel->msw_rescale();
     Layout();
     Fit();
 }
@@ -690,6 +696,7 @@ void MachineInfoPanel::update(MachineObject* obj)
         update_amshub(obj);       // Orca: accessory firmware version display
         update_nozzle_rack(obj);
         update_afc(obj);          // Orca: a printer agent's AFC version
+        update_agent_devices(obj); // Orca: a printer agent's devices
 
         //update progress
         int upgrade_percent = obj->get_upgrade_percent();
@@ -1433,9 +1440,9 @@ void MachineInfoPanel::show_air_pump(bool show)
 {
     if (m_air_pump_version->IsShown() != show)
     {
-        m_air_pump_img->Show(show);
         m_air_pump_line_above->Show(show);
-        m_air_pump_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_air_pump_sizer->ShowItems(show);
     }
 }
 
@@ -1443,9 +1450,9 @@ void MachineInfoPanel::show_cut(bool show)
 {
     if (m_cutting_version->IsShown() != show)
     {
-        m_cutting_img->Show(show);
         m_cutting_line_above->Show(show);
-        m_cutting_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_cutting_sizer->ShowItems(show);
     }
 }
 
@@ -1453,9 +1460,9 @@ void MachineInfoPanel::show_laszer(bool show)
 {
     if (m_laser_version->IsShown() != show)
     {
-        m_lazer_img->Show(show);
         m_laser_line_above->Show(show);
-        m_laser_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_laser_sizer->ShowItems(show);
     }
 }
 
@@ -1463,9 +1470,9 @@ void MachineInfoPanel::show_extinguish(bool show)
 {
     if (m_extinguish_version->IsShown() != show)
     {
-        m_extinguish_img->Show(show);
         m_extinguish_line_above->Show(show);
-        m_extinguish_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_extinguish_sizer->ShowItems(show);
     }
 }
 
@@ -1473,9 +1480,9 @@ void MachineInfoPanel::show_filatrack(bool show)
 {
     if (m_filatrack_version->IsShown() != show)
     {
-        m_filatrack_img->Show(show);
         m_filatrack_line_above->Show(show);
-        m_filatrack_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_filatrack_sizer->ShowItems(show);
     }
 }
 
@@ -1484,9 +1491,9 @@ void MachineInfoPanel::show_rotary(bool show)
 {
     if (m_rotary_version->IsShown() != show)
     {
-        m_rotary_img->Show(show);
         m_rotary_line_above->Show(show);
-        m_rotary_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_rotary_sizer->ShowItems(show);
     }
 }
 
@@ -1495,9 +1502,9 @@ void MachineInfoPanel::show_exhaustfan(bool show)
 {
     if (m_exhaustfan_version->IsShown() != show)
     {
-        m_exhaustfan_img->Show(show);
         m_exhaustfan_line_above->Show(show);
-        m_exhaustfan_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_exhaustfan_sizer->ShowItems(show);
     }
 }
 
@@ -1506,9 +1513,9 @@ void MachineInfoPanel::show_amshub(bool show)
 {
     if (m_amshub_version->IsShown() != show)
     {
-        m_amshub_img->Show(show);
         m_amshub_line_above->Show(show);
-        m_amshub_version->Show(show);
+        // Orca: the whole row, with the spacer above its version, which kept a gap when hidden
+        m_amshub_sizer->ShowItems(show);
     }
 }
 
@@ -1642,6 +1649,33 @@ void MachineInfoPanel::createAfcWidgets(wxBoxSizer* main_left_sizer)
     main_left_sizer->Add(m_afc_sizer, 0, wxEXPAND, 0);
     main_left_sizer->Hide(m_afc_sizer);
     m_afc_line_above->Hide();
+}
+
+void MachineInfoPanel::createAgentDeviceWidgets(wxBoxSizer* main_left_sizer)
+{
+    m_agent_devices_sizer = new wxBoxSizer(wxVERTICAL);
+    main_left_sizer->Add(m_agent_devices_sizer, 0, wxEXPAND, 0);
+}
+
+void MachineInfoPanel::update_agent_devices(MachineObject* obj)
+{
+    const std::vector<MachineObject::AgentDevice>& devices = obj->agent_devices;
+    // A device that came or went, or changed its kind or picture, has the rows built again.
+    bool same = devices.size() == m_agent_device_panels.size();
+    for (size_t i = 0; same && i < devices.size(); ++i)
+        same = m_agent_device_panels[i]->shows(devices[i]);
+    if (!same) {
+        for (AgentDevicePanel* panel : m_agent_device_panels)
+            panel->Destroy();
+        m_agent_device_panels.clear();
+        for (const MachineObject::AgentDevice& device : devices) {
+            auto panel = new AgentDevicePanel(this, device);
+            m_agent_devices_sizer->Add(panel, 0, wxEXPAND, 0);
+            m_agent_device_panels.push_back(panel);
+        }
+    }
+    for (size_t i = 0; i < devices.size(); ++i)
+        m_agent_device_panels[i]->update(obj, devices[i]);
 }
 
 void MachineInfoPanel::update_afc(MachineObject* obj)
@@ -1815,6 +1849,7 @@ void UpgradePanel::clean_push_upgrade_panel()
     if (m_push_upgrade_panel) {
         delete m_push_upgrade_panel;
         m_push_upgrade_panel = nullptr;
+        m_push_panel_size    = wxSize();
     }
 }
 
@@ -1893,6 +1928,13 @@ void UpgradePanel::update(MachineObject *obj)
     //update panels
     if (m_push_upgrade_panel) {
         m_push_upgrade_panel->update(obj);
+        // Orca: a printer agent's device rows come, go and grow, so the page scrolls over the panel's new size.
+        const wxSize size = m_push_upgrade_panel->GetSizer()->GetMinSize();
+        if (size != m_push_panel_size) {
+            m_push_panel_size = size;
+            m_push_upgrade_panel->InvalidateBestSize();
+            m_scrolledWindow->FitInside();
+        }
     }
 
     if (!obj)
@@ -2115,6 +2157,206 @@ bool UpgradePanel::Show(bool show)
  {
 
  }
+
+// Orca: the picture of a printer agent's device, by the icon its row names.
+static std::string agent_device_image(const std::string& icon)
+{
+    if (icon == "bridgebox")
+        return "afc_bridgebox";
+    if (icon == "display")
+        return "afc_bridgebox_display";
+    if (icon == "ams_ht")
+        return "monitor_upgrade_n3s";
+    if (icon == "ams_lite")
+        return "extra_icon_png";
+    return "monitor_upgrade_ams_png";
+}
+
+// Orca: asks before a printer agent's device is updated, then has the agent update it on the printer still
+// selected. It runs after the Update button's handler returns and keeps nothing of the row, which the page
+// can build again while the question is open.
+static void confirm_agent_device_update(const std::string& dev_id, const MachineObject::AgentDevice& device)
+{
+    wxString question;
+    if (device.kind == "bridge")
+        // TRN %1% is a BridgeBox as the Update page names it, such as "BridgeBox 2"; %2% the firmware version it gets
+        question = format_wxstr(_L("Update %1% to %2%? It restarts once the firmware is written, and its AMS units are "
+                                   "offline until it is back."),
+                                from_u8(device.title), from_u8(device.latest));
+    else if (device.kind == "display")
+        // TRN %1% is a BridgeBox display's network address; %2% the firmware version it gets, such as AFC-1.60
+        question = format_wxstr(_L("Update the BridgeBox display at %1% to %2%? It restarts once the firmware is "
+                                   "written."),
+                                from_u8(device.address), from_u8(device.latest));
+    else if (device.resume)
+        // TRN %1% is the name AFC gives an AMS unit, such as Bambu_AMS_1
+        question = format_wxstr(_L("Finish the firmware update of %1% that stopped?"), from_u8(device.title));
+    else
+        // TRN %1% is the name AFC gives an AMS unit, such as Bambu_AMS_1; %2% the firmware version it gets
+        question = format_wxstr(_L("Update %1% to %2%? It can't feed filament until it restarts on the new "
+                                   "firmware."),
+                                from_u8(device.title), from_u8(device.latest));
+    MessageDialog dlg(wxGetApp().mainframe, question, _L("Update firmware"), wxYES_NO | wxICON_QUESTION);
+    if (dlg.ShowModal() != wxID_YES)
+        return;
+    DeviceManager* manager = wxGetApp().getDeviceManager();
+    MachineObject* obj     = manager ? manager->get_selected_machine() : nullptr;
+    if (obj && obj->get_dev_id() == dev_id)
+        obj->command_agent_device_update(device.id);
+}
+
+AgentDevicePanel::AgentDevicePanel(wxWindow* parent, const MachineObject::AgentDevice& device)
+    : wxPanel(parent, wxID_ANY), m_id(device.id), m_kind(device.kind), m_icon(device.icon), m_unit(device.kind == "ams")
+{
+    SetBackgroundColour(*wxWHITE);
+    m_img        = ScalableBitmap(this, agent_device_image(m_icon), m_unit ? 120 : 160);
+    m_green_icon = ScalableBitmap(this, "monitor_upgrade_online", 5);
+
+    auto top = new wxBoxSizer(wxVERTICAL);
+    // A BridgeBox, with its AMS units under it, and a display each start a section of the page.
+    if (!m_unit) {
+        auto line = new wxStaticLine(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL);
+        line->SetBackgroundColour(wxColour(206, 206, 206));
+        top->Add(line, 0, wxEXPAND | wxLEFT, FromDIP(40));
+    }
+    const int box = m_unit ? 150 : 200;
+    m_bitmap = new wxStaticBitmap(this, wxID_ANY, m_img.bmp(), wxDefaultPosition, wxSize(FromDIP(box), FromDIP(box)));
+
+    auto grid = new wxFlexGridSizer(0, 2, 0, 0);
+    grid->AddGrowableCol(1);
+    grid->SetFlexibleDirection(wxHORIZONTAL);
+    grid->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
+    m_model = add_field(grid, _L("Model:"));
+    // TRN The name AFC gives an AMS unit, such as Bambu_AMS_1
+    m_name = add_field(grid, _L("Name:"));
+    // TRN How a BridgeBox reaches the printer: WiFi or USB
+    m_link  = add_field(grid, _L("Connection:"));
+    m_units = add_field(grid, _L("Units:"));
+    // TRN A BridgeBox display's network address, such as 192.168.1.20
+    m_address = add_field(grid, _L("Address:"));
+
+    auto version_name = new wxBoxSizer(wxHORIZONTAL);
+    version_name->Add(0, 0, 1, wxEXPAND, 0);
+    m_new_version_img = new wxStaticBitmap(this, wxID_ANY, m_green_icon.bmp(), wxDefaultPosition, wxSize(FromDIP(5), FromDIP(5)));
+    m_new_version_img->Hide();
+    version_name->Add(m_new_version_img, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    auto version_label = new wxStaticText(this, wxID_ANY, _L("Version:"));
+    version_label->SetFont(Label::Head_14);
+    version_name->Add(version_label, 0, wxALL, FromDIP(5));
+    grid->Add(version_name, 0, wxEXPAND, 0);
+    m_version_val = new wxStaticText(this, wxID_ANY, "-");
+    grid->Add(m_version_val, 0, wxALL | wxEXPAND, FromDIP(5));
+    // TRN The newest firmware out for a BridgeBox, a BridgeBox display or an AMS unit
+    m_latest = add_field(grid, _L("Latest:"));
+
+    // The agent's words on an update, with its progress while it runs.
+    m_message  = new wxStaticText(this, wxID_ANY, wxEmptyString);
+    m_progress = new ProgressBar(this, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(54), FromDIP(14)));
+    m_progress->SetMinSize(wxSize(FromDIP(54), FromDIP(14)));
+    m_percent = new wxStaticText(this, wxID_ANY, wxEmptyString);
+    auto status = new wxBoxSizer(wxHORIZONTAL);
+    status->Add(m_message, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    status->Add(m_progress, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    status->Add(m_percent, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(5));
+    m_message->Hide();
+    m_progress->Hide();
+    m_percent->Hide();
+
+    m_update = new Button(this, _L("Update"));
+    m_update->SetStyle(ButtonStyle::Confirm, ButtonType::Window);
+    m_update->Hide();
+    m_update->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        wxGetApp().CallAfter([dev_id = m_dev_id, device = m_device] { confirm_agent_device_update(dev_id, device); });
+    });
+
+    auto content = new wxBoxSizer(wxVERTICAL);
+    content->Add(0, 0, 1, wxEXPAND, 0);
+    content->Add(grid, 0, wxEXPAND, 0);
+    content->Add(status, 0, wxEXPAND, 0);
+    content->Add(m_update, 0, wxLEFT | wxTOP, FromDIP(10));
+    content->Add(0, 0, 1, wxEXPAND, 0);
+
+    auto row = new wxBoxSizer(wxHORIZONTAL);
+    if (m_unit)
+        row->AddSpacer(FromDIP(40));
+    row->Add(m_bitmap, 0, wxALIGN_TOP | wxALL, FromDIP(5));
+    row->Add(content, 1, wxEXPAND | wxBOTTOM, FromDIP(5));
+    top->Add(row, 0, wxEXPAND, 0);
+    SetSizer(top);
+    wxGetApp().UpdateDarkUIWin(this);
+}
+
+AgentDevicePanel::Field AgentDevicePanel::add_field(wxFlexGridSizer* grid, const wxString& name)
+{
+    auto label = new wxStaticText(this, wxID_ANY, name);
+    label->SetFont(Label::Head_14);
+    grid->Add(label, 0, wxALIGN_RIGHT | wxALL, FromDIP(5));
+    auto value = new wxStaticText(this, wxID_ANY, "-");
+    grid->Add(value, 0, wxALL | wxEXPAND, FromDIP(5));
+    return {label, value};
+}
+
+void AgentDevicePanel::show_field(const Field& field, const std::string& value)
+{
+    field.first->Show(!value.empty());
+    field.second->Show(!value.empty());
+    field.second->SetLabelText(from_u8(value));
+}
+
+bool AgentDevicePanel::shows(const MachineObject::AgentDevice& device) const
+{
+    return device.id == m_id && device.kind == m_kind && device.icon == m_icon;
+}
+
+void AgentDevicePanel::update(MachineObject* obj, const MachineObject::AgentDevice& device)
+{
+    const bool connected = obj && obj->is_connected();
+    m_dev_id             = obj ? obj->get_dev_id() : std::string();
+    if (device == m_device && connected == m_connected)
+        return;
+    m_device    = device;
+    m_connected = connected;
+
+    // An AMS unit shows its model and the name AFC gives it; a BridgeBox or a display shows its name as its model.
+    m_model.second->SetLabelText(from_u8(device.model.empty() ? device.title : device.model));
+    show_field(m_name, device.model.empty() ? std::string() : device.title);
+    show_field(m_link, device.link);
+    show_field(m_units, device.units);
+    show_field(m_address, device.address);
+    m_version_val->SetLabelText(device.version.empty() ? wxString("-") : from_u8(device.version));
+    m_latest.second->SetLabelText(device.latest.empty() ? wxString("-") : from_u8(device.latest));
+    m_new_version_img->Show(device.newer);
+
+    m_message->Show(!device.message.empty());
+    m_message->SetForegroundColour(device.state == "failed" ? TEXT_FAILED_CLR : TEXT_NORMAL_CLR);
+    m_message->SetLabelText(from_u8(device.message));
+    m_message->Wrap(FromDIP(560));
+    const bool progress = device.state == "running" && device.progress >= 0;
+    m_progress->Show(progress);
+    m_percent->Show(progress);
+    if (progress) {
+        m_progress->SetValue(device.progress);
+        m_percent->SetLabelText(wxString::Format("%d%%", device.progress));
+    }
+    m_update->Show(device.updatable);
+    m_update->Enable(device.ready && connected);
+    Layout();
+}
+
+void AgentDevicePanel::msw_rescale()
+{
+    const int box = m_unit ? 150 : 200;
+    m_img.msw_rescale();
+    m_bitmap->SetMinSize(wxSize(FromDIP(box), FromDIP(box)));
+    m_bitmap->SetBitmap(m_img.bmp());
+    m_green_icon.msw_rescale();
+    m_new_version_img->SetBitmap(m_green_icon.bmp());
+    m_progress->SetMinSize(wxSize(FromDIP(54), FromDIP(14)));
+    m_update->Rescale();
+    m_message->SetLabelText(from_u8(m_device.message));
+    m_message->Wrap(FromDIP(560));
+    Layout();
+}
 
 }
 }

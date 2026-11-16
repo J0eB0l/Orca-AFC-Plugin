@@ -20,6 +20,9 @@
 #include <wx/sizer.h>
 #include <wx/scrolwin.h>
 #include <wx/statline.h>
+#include <wx/statbmp.h>
+#include <wx/stattext.h>
+#include <utility>
 #include "ReleaseNote.hpp"
 
 namespace Slic3r {
@@ -83,6 +86,42 @@ public:
 };
 
 WX_DEFINE_ARRAY(AmsPanel*, AmsPanelHash);
+
+// Orca: a device a printer agent updates besides itself, under the AFC row on the Update page
+// (MachineObject::AgentDevice): a BridgeBox, an AMS unit on it (indented under it) or a BridgeBox display,
+// with its picture, its firmware beside the newest out, the agent's words on an update, and Update.
+class AgentDevicePanel : public wxPanel
+{
+public:
+    AgentDevicePanel(wxWindow* parent, const MachineObject::AgentDevice& device);
+    // Whether the panel shows `device`: one whose kind or picture changed needs a new panel.
+    bool shows(const MachineObject::AgentDevice& device) const;
+    void update(MachineObject* obj, const MachineObject::AgentDevice& device);
+    void msw_rescale();
+
+private:
+    using Field = std::pair<wxStaticText*, wxStaticText*>;  // its name and its value
+    Field add_field(wxFlexGridSizer* grid, const wxString& name);
+    void  show_field(const Field& field, const std::string& value);
+
+    std::string                m_id;      // the device the panel was built for, of this kind and picture
+    std::string                m_kind;
+    std::string                m_icon;
+    bool                       m_unit {false};    // an AMS unit, which sits under its BridgeBox
+    std::string                m_dev_id;  // the printer it is on
+    MachineObject::AgentDevice m_device;  // as shown
+    bool                       m_connected {false};
+    ScalableBitmap             m_img;
+    ScalableBitmap             m_green_icon;
+    wxStaticBitmap*            m_bitmap {nullptr};
+    wxStaticBitmap*            m_new_version_img {nullptr};
+    Field                      m_model, m_name, m_link, m_units, m_address, m_latest;
+    wxStaticText*              m_version_val {nullptr};
+    wxStaticText*              m_message {nullptr};
+    ProgressBar*               m_progress {nullptr};
+    wxStaticText*              m_percent {nullptr};
+    Button*                    m_update {nullptr};
+};
 
 
 class MachineInfoPanel : public wxPanel
@@ -195,6 +234,9 @@ protected:
     // Orca: the firmware update column (button, progress, release note), hidden for a printer agent's printer
     wxBoxSizer*     m_main_right_sizer = nullptr;
     bool            m_firmware_hidden = false;
+    // Orca: a printer agent's devices under the AFC row (MachineObject::agent_devices), one panel each
+    wxBoxSizer*                    m_agent_devices_sizer = nullptr;
+    std::vector<AgentDevicePanel*> m_agent_device_panels;
 
     /* upgrade widgets */
     wxBoxSizer*     m_upgrading_sizer;
@@ -282,6 +324,7 @@ private:
     void createAmshubWidgets(wxBoxSizer* main_left_sizer);      // Orca: accessory firmware version display
     void createNozzleRackWidgets(wxBoxSizer* main_left_sizer);
     void createAfcWidgets(wxBoxSizer* main_left_sizer);         // Orca: a printer agent's AFC version
+    void createAgentDeviceWidgets(wxBoxSizer* main_left_sizer); // Orca: a printer agent's devices
 
     void update_air_pump(MachineObject* obj);
     void update_cut(MachineObject* obj);
@@ -293,6 +336,7 @@ private:
     void update_amshub(MachineObject* obj);                     // Orca: accessory firmware version display
     void update_nozzle_rack(MachineObject* obj);
     void update_afc(MachineObject* obj);                        // Orca: a printer agent's AFC version
+    void update_agent_devices(MachineObject* obj);              // Orca: a printer agent's devices
 
     void show_air_pump(bool show = true);
     void show_cut(bool show = true);
@@ -321,6 +365,7 @@ protected:
     wxScrolledWindow* m_scrolledWindow;
     wxBoxSizer* m_machine_list_sizer;
     MachineInfoPanel *m_push_upgrade_panel{nullptr};
+    wxSize m_push_panel_size;  // Orca: the panel's size the page last scrolled over
 
     //enable_select_firmware only in debug mode
     bool enable_select_firmware = false;
