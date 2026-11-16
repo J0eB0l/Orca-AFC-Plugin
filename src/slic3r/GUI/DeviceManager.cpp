@@ -1577,10 +1577,12 @@ int MachineObject::command_agent_installer_watch(bool on)
     return this->publish_json(j);
 }
 
-int MachineObject::command_agent_installer_start(const std::string& mode)
+int MachineObject::command_agent_installer_start(const std::string& mode, const std::string& branch)
 {
     json j            = agent_installer_request("start");
     j["print"]["mode"] = mode;
+    if (!branch.empty())
+        j["print"]["branch"] = branch;
     return this->publish_json(j);
 }
 
@@ -3671,6 +3673,9 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     agent_installer.known      = !installer.empty();
                     agent_installer.available  = installer.value("available", false);
                     agent_installer.why        = installer.value("why", std::string());
+                    agent_installer.branches   = installer.contains("git");
+                    agent_installer.git        = installer.value("git", false);
+                    agent_installer.branch     = installer.value("branch", std::string());
                     agent_installer.running    = installer.value("running", false);
                     agent_installer.mode       = installer.value("mode", std::string());
                 }

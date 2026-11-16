@@ -230,6 +230,7 @@ protected:
     // Orca: AFC's updater and installer, each run in AgentInstallerDialog; "Show" while that one runs
     Button*         m_afc_run_update = nullptr;
     Button*         m_afc_run_install = nullptr;
+    Button*         m_afc_choose_branch = nullptr;
     ScalableBitmap  m_img_afc;
     std::string     m_afc_url;
     // Orca: the printer image is its printer preset's (a printer agent's printer has no Bambu model image)

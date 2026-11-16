@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <regex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -509,7 +510,108 @@ void InstallerScreen::on_menu(wxContextMenuEvent&)
     });
 }
 
-void AgentInstallerDialog::show(const std::string& dev_id, const std::string& mode, bool start)
+// A branch the agent and AFC_INSTALLER take: letters, digits, '.', '_', '-' and '/', starting with a letter or digit
+// and ending with neither '.' nor '/', with no ".." or "//", at most 100 characters.
+static bool branch_ok(const std::string& branch)
+{
+    static const std::regex name(R"((?!.*\.\.)(?!.*//)[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,98}[A-Za-z0-9_-])?)");
+    return std::regex_match(branch, name);
+}
+
+// Asks for the branch AFC's updater or installer runs on, and which of the two: the script switches AFC's checkout
+// to the branch first. Ends with wxID_OK once one is picked.
+class InstallerBranchDialog : public DPIDialog
+{
+public:
+    InstallerBranchDialog(wxWindow* parent, const std::string& branch);
+
+    std::string        branch() const { return into_u8(m_branch->GetTextCtrl()->GetValue().Strip(wxString::both)); }
+    const std::string& mode() const { return m_mode; }
+
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
+private:
+    // Lets the scripts run while the box holds a branch.
+    void check();
+    void run(const std::string& mode);
+
+    ::TextInput*   m_branch {nullptr};
+    DialogButtons* m_buttons {nullptr};
+    std::string    m_mode;
+};
+
+InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string& branch)
+    // TRN Title of the dialog where the branch AFC's updater or installer runs on is typed
+    : DPIDialog(parent, wxID_ANY, _L("Choose branch"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+{
+    SetBackgroundColour(*wxWHITE);
+    SetFont(Label::Body_14);
+
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* text  = new wxStaticText(this, wxID_ANY,
+                                   _L("AFC's updater or installer switches AFC to this branch first, then its menu shows in "
+                                       "a window here. Klipper restarts when it exits after changing anything."));
+    text->Wrap(FromDIP(440));
+    sizer->Add(text, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
+    m_branch = new ::TextInput(this, from_u8(branch), wxEmptyString, wxEmptyString, wxDefaultPosition,
+                               wxSize(FromDIP(440), FromDIP(32)));
+    m_branch->GetTextCtrl()->Bind(wxEVT_TEXT, [this](wxCommandEvent& event) {
+        event.Skip();
+        check();
+    });
+    sizer->Add(m_branch, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    // TRN Under the box where the branch for AFC's updater or installer is typed: the characters a branch may hold
+    auto* rule = new wxStaticText(this, wxID_ANY, _L("Letters, digits, '.', '_', '-' and '/'"));
+    rule->SetFont(Label::Body_12);
+    sizer->Add(rule, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+
+    m_buttons = new DialogButtons(this, {L("Run updater"), L("Run installer"), "Cancel"}, _L("Run updater"));
+    m_buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("update"); });
+    m_buttons->GetButtonFromIndex(1)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("install"); });
+    m_buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    sizer->Add(m_buttons, 0, wxEXPAND | wxTOP, FromDIP(10));
+
+    check();
+    SetSizerAndFit(sizer);
+    CenterOnParent();
+    wxGetApp().UpdateDlgDarkUI(this);
+}
+
+void InstallerBranchDialog::check()
+{
+    const bool ok = branch_ok(branch());
+    m_buttons->GetButtonFromIndex(0)->Enable(ok);
+    m_buttons->GetButtonFromIndex(1)->Enable(ok);
+}
+
+void InstallerBranchDialog::run(const std::string& mode)
+{
+    if (!branch_ok(branch()))
+        return;
+    m_mode = mode;
+    EndModal(wxID_OK);
+}
+
+void InstallerBranchDialog::on_dpi_changed(const wxRect&)
+{
+    m_branch->Rescale();
+    GetSizer()->SetSizeHints(this);
+    Refresh();
+}
+
+void AgentInstallerDialog::choose_branch(const std::string& dev_id)
+{
+    DeviceManager* manager = wxGetApp().getDeviceManager();
+    MachineObject* obj     = manager ? manager->get_selected_machine() : nullptr;
+    if (!obj || obj->get_dev_id() != dev_id)
+        return;
+    InstallerBranchDialog dlg(wxGetApp().mainframe, obj->agent_installer.branch);
+    if (dlg.ShowModal() == wxID_OK)
+        show(dev_id, dlg.mode(), true, dlg.branch());
+}
+
+void AgentInstallerDialog::show(const std::string& dev_id, const std::string& mode, bool start, const std::string& branch)
 {
     DeviceManager* manager = wxGetApp().getDeviceManager();
     MachineObject* obj     = manager ? manager->get_selected_machine() : nullptr;
@@ -531,7 +633,7 @@ void AgentInstallerDialog::show(const std::string& dev_id, const std::string& mo
     AgentInstallerDialog dlg(wxGetApp().mainframe, dev_id, mode);
     // The start goes before the watch, so the first screen the window gets is the new session's.
     if (start)
-        obj->command_agent_installer_start(mode);
+        obj->command_agent_installer_start(mode, branch);
     obj->command_agent_installer_watch(true);
     dlg.ShowModal();
     if (MachineObject* still = dlg.machine())

@@ -32,8 +32,11 @@ class AgentInstallerDialog : public DPIDialog
 {
 public:
     // Opens the window for the selected printer `dev_id`: a new session in `mode` ("update" or "install")
-    // when `start`, else the one that runs.
-    static void show(const std::string& dev_id, const std::string& mode, bool start);
+    // when `start`, on `branch` when one is named, else the one that runs.
+    static void show(const std::string& dev_id, const std::string& mode, bool start, const std::string& branch = {});
+    // Asks for a branch, starting from the one AFC's checkout is on, and which script runs on it, then opens the
+    // window on a new session of that script for the selected printer `dev_id`. Nothing starts when cancelled.
+    static void choose_branch(const std::string& dev_id);
 
 protected:
     void on_dpi_changed(const wxRect& suggested_rect) override;

@@ -764,16 +764,18 @@ public:
     };
     std::vector<AgentDevice> agent_devices;
     // Orca: the printer agent's installer for its filament system (AFC), which the AFC row on the Update page
-    // opens in AgentInstallerDialog. known, available, why, running and mode come with each push
+    // opens in AgentInstallerDialog. known, available, why, git, branch, running and mode come with each push
     // (afc_installer): known when the agent's AFC can run one at all, available when it can on this printer
-    // (else why says why not). While the window watches, the agent also sends the session's screen (command
-    // afc_installer, parse_agent_installer()): its lines as runs of [color, text] or [color, text, background],
-    // the answers its prompt takes as [answer, label] choices, its result ("running", "done", "failed" or
-    // "stopped") with its exit status (-1 for none), starting while a start is on its way, away while Klipper
-    // does not answer, ended "restarted" when Klipper restarted while it ran, error the printer's words on the
-    // window's last request, and hint "password" while the script waits on a password prompt, which takes no
-    // answer from the window, or "sudo" when sudo wanted a password. screens counts the screens received, so
-    // the window draws only a new one.
+    // (else why says why not), git when AFC's folder there is a git checkout, which a session can switch to
+    // another branch, and branch the one it is on ("" for none). branches when the push carries git at all, as
+    // from an AFC that runs a session on a branch the window names. While the window watches, the agent also
+    // sends the session's screen (command afc_installer, parse_agent_installer()): its lines as runs of [color,
+    // text] or [color, text, background], the answers its prompt takes as [answer, label] choices, its result
+    // ("running", "done", "failed" or "stopped") with its exit status (-1 for none), starting while a start is
+    // on its way, away while Klipper does not answer, ended "restarted" when Klipper restarted while it ran,
+    // error the printer's words on the window's last request, and hint "password" while the script waits on a
+    // password prompt, which takes no answer from the window, or "sudo" when sudo wanted a password. screens
+    // counts the screens received, so the window draws only a new one.
     struct AgentInstaller
     {
         // Text in one color over one background, each "#rrggbb", or "" for the terminal's own.
@@ -790,6 +792,9 @@ public:
         bool                                             known {false};
         bool                                             available {false};
         std::string                                      why;
+        bool                                             branches {false};
+        bool                                             git {false};
+        std::string                                      branch;
         bool                                             running {false};
         std::string                                      mode;
         std::vector<std::vector<Run>>                    lines;
@@ -983,9 +988,10 @@ public:
     // Orca: updates one of the printer agent's devices (agent_devices) to its newest firmware.
     int command_agent_device_update(const std::string& id);
     // Orca: the AFC installer window (agent_installer): watched while it is open, which the window renews; a
-    // session started in a mode ("update" or "install"); an answer typed or picked, sent with Enter; a stop.
+    // session started in a mode ("update" or "install"), on a branch when one is named; an answer typed or
+    // picked, sent with Enter; a stop.
     int command_agent_installer_watch(bool on);
-    int command_agent_installer_start(const std::string& mode);
+    int command_agent_installer_start(const std::string& mode, const std::string& branch = {});
     int command_agent_installer_answer(const std::string& text);
     int command_agent_installer_stop();
     // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
