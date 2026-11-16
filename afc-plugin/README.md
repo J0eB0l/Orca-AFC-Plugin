@@ -251,7 +251,10 @@ Then:
   answer. The answers go to `AFC_INSTALLER_ANSWER`, as hex, since G-code drops
   what follows a `;` or `#`. The script has no terminal it could ask a password
   on, so a step that needs `sudo` with a password fails, and the window says
-  so. When the script restarts Klipper to apply its changes, the window keeps
+  so. A password prompt that reads the script's input, as `su` does on a
+  Snapmaker U1 to restart Klipper, shows on the screen, but the window sends it
+  no answer, since G-code goes to Klipper's log, and says to finish that step
+  over SSH. When the script restarts Klipper to apply its changes, the window keeps
   its last screen and says Klipper restarted. A window closed while the script
   runs leaves it running, and the row's **Show updater** or **Show installer**
   opens it again; **Stop** interrupts it as Ctrl+C does. Neither starts while

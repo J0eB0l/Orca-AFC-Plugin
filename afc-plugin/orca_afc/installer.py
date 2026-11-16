@@ -7,7 +7,9 @@ While the window is open, the agent reads the log as it grows and keeps the
 screen a terminal would show (Screen), which it sends to the window with the
 answers the screen's prompt takes (choices()). The window's answers go to
 AFC_INSTALLER_ANSWER as hex digits (answer_gcode()), since Klipper's G-code
-drops what follows a ; or #.
+drops what follows a ; or #. No answer goes to a password prompt, such as the
+one su shows on a Snapmaker U1 to restart Klipper: G-code goes to Klipper's
+log.
 
 The script restarts Klipper when it changed AFC's files, which ends the
 session with Klipper. Its log keeps what it showed, so the window reads the
@@ -33,6 +35,7 @@ KEEPALIVE = 5.0      # seconds after which an unchanged screen is sent again
 LINES = 400          # lines the screen keeps
 WIDTH = 300          # characters it keeps of a line
 GCODE_TIMEOUT = 30.0
+NO_PASSWORDS = "No answer is sent to a password prompt from here: G-code goes to Klipper's log."
 _PENDING_MAX = 4096  # characters an unfinished escape sequence may hold before it is dropped
 
 # A terminal's 16 colors (as VS Code's dark terminal draws them), then xterm's
@@ -86,20 +89,21 @@ def _escape_end(text: str, at: int):
 
 class Screen:
     """What a terminal shows of a byte stream: its lines since the last clear,
-    up to LINES, with colors. Lines are not wrapped, and the cursor stays on
-    the last line, where a carriage return sends it back to the start: enough
-    for a script that prints, clears and asks."""
+    up to LINES, with colors and background colors. Lines are not wrapped, and
+    the cursor stays on the last line, where a carriage return sends it back to
+    the start: enough for a script that prints, clears and asks."""
 
     def __init__(self):
         self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._pending = ""   # an escape sequence the last feed ended inside
         self._fg = None      # None (the default), a palette index or #rrggbb
+        self._bg = None      # the background, the same way
         self._bold = False
         self.clear()
 
     def clear(self) -> None:
         self._chars = [[]]   # each line's characters
-        self._colors = [[]]  # and each one's color, "" for the default
+        self._styles = [[]]  # and each one's (color, background), "" for the default
         self._col = 0
 
     def feed(self, data: bytes) -> None:
@@ -127,14 +131,20 @@ class Screen:
             at = after
 
     def lines(self) -> list:
-        """Each line as [color, text] runs, without the spaces at its end."""
+        """Each line as runs of [color, text], or [color, text, background]
+        where the background is not the terminal's own, without the spaces on
+        the terminal's background at its end. Logos drawn with half blocks
+        need the background: it is the other half of each cell."""
         out = []
-        for chars, colors in zip(self._chars, self._colors):
-            text = "".join(chars).rstrip(" ")
+        for chars, styles in zip(self._chars, self._styles):
+            end = len(chars)
+            while end and chars[end - 1] == " " and not styles[end - 1][1]:
+                end -= 1
             runs, at = [], 0
-            for color, group in itertools.groupby(colors[:len(text)]):
+            for (color, background), group in itertools.groupby(styles[:end]):
                 size = sum(1 for _ in group)
-                runs.append([color, text[at:at + size]])
+                text = "".join(chars[at:at + size])
+                runs.append([color, text, background] if background else [color, text])
                 at += size
             out.append(runs)
         return out
@@ -146,33 +156,35 @@ class Screen:
 
     # -- the stream
 
-    def _color(self) -> str:
-        fg = self._fg
+    def _style(self) -> tuple:
+        fg, bg = self._fg, self._bg
         if isinstance(fg, int):
             # Bold makes the 8 basic colors bright, as most terminals draw them.
-            return palette(fg + 8 if self._bold and fg < 8 else fg)
-        return fg or ""
+            fg = palette(fg + 8 if self._bold and fg < 8 else fg)
+        if isinstance(bg, int):
+            bg = palette(bg)
+        return (fg or "", bg or "")
 
     def _write(self, chunk: str) -> None:
-        chars, colors = self._chars[-1], self._colors[-1]
+        chars, styles = self._chars[-1], self._styles[-1]
         col = self._col
         if col < WIDTH:
             if col > len(chars):
                 pad = col - len(chars)
                 chars.extend(" " * pad)
-                colors.extend([""] * pad)
+                styles.extend([("", "")] * pad)
             piece = chunk[:WIDTH - col]
             chars[col:col + len(piece)] = piece
-            colors[col:col + len(piece)] = [self._color()] * len(piece)
+            styles[col:col + len(piece)] = [self._style()] * len(piece)
         self._col = col + len(chunk)
 
     def _control(self, char: str) -> None:
         if char == "\n":
             self._chars.append([])
-            self._colors.append([])
+            self._styles.append([])
             self._col = 0
             if len(self._chars) > LINES:
-                del self._chars[0], self._colors[0]
+                del self._chars[0], self._styles[0]
         elif char == "\r":
             self._col = 0
         elif char == "\b":
@@ -183,23 +195,23 @@ class Screen:
     def _escape(self, sequence: str) -> None:
         if sequence == "\x1bc":  # a full reset
             self.clear()
-            self._fg, self._bold = None, False
+            self._fg, self._bg, self._bold = None, None, False
             return
         if not sequence.startswith("\x1b[") or sequence[2:3] in ("?", "<", "=", ">"):
             return  # other sequences, and a terminal's private modes, show nothing
         params = [int(p) if p.isdigit() else None for p in sequence[2:-1].replace(":", ";").split(";")]
         final, first = sequence[-1], params[0] or 0
-        chars, colors = self._chars[-1], self._colors[-1]
+        chars, styles = self._chars[-1], self._styles[-1]
         if final == "m":
             self._sgr(params)
         elif final == "J" and first in (2, 3):
             self.clear()
         elif final in "JK" and first == 0:  # to the end of the line (the screen's, for J)
-            del chars[self._col:], colors[self._col:]
+            del chars[self._col:], styles[self._col:]
         elif final == "K" and first in (1, 2):
             end = len(chars) if first == 2 else min(self._col + 1, len(chars))
             chars[:end] = " " * end
-            colors[:end] = [""] * end
+            styles[:end] = [("", "")] * end
         elif final == "G":
             self._col = max(0, first - 1)
         elif final == "C":
@@ -212,7 +224,7 @@ class Screen:
         while at < len(params):
             p = params[at] or 0
             if p == 0:
-                self._fg, self._bold = None, False
+                self._fg, self._bg, self._bold = None, None, False
             elif p == 1:
                 self._bold = True
             elif p == 22:
@@ -223,13 +235,24 @@ class Screen:
                 self._fg = p - 90 + 8
             elif p == 39:
                 self._fg = None
-            elif p in (38, 48):  # 38;5;n or 38;2;r;g;b; 48 is the background, which is left out
+            elif 40 <= p <= 47:
+                self._bg = p - 40
+            elif 100 <= p <= 107:
+                self._bg = p - 100 + 8
+            elif p == 49:
+                self._bg = None
+            elif p in (38, 48):  # 38;5;n or 38;2;r;g;b, and 48 the same for the background
                 kind = params[at + 1] if at + 1 < len(params) else None
                 values = params[at + 2:at + (3 if kind == 5 else 5)]
-                if p == 38 and kind == 5 and values and values[0] is not None and values[0] < 256:
-                    self._fg = values[0]
-                elif p == 38 and kind == 2 and len(values) == 3:
-                    self._fg = "#%02x%02x%02x" % tuple(min(255, v or 0) for v in values)
+                color = None
+                if kind == 5 and values and values[0] is not None and values[0] < 256:
+                    color = values[0]
+                elif kind == 2 and len(values) == 3:
+                    color = "#%02x%02x%02x" % tuple(min(255, v or 0) for v in values)
+                if color is not None and p == 38:
+                    self._fg = color
+                elif color is not None:
+                    self._bg = color
                 at += 1 + (len(values) if kind in (2, 5) else 0)
             at += 1
 
@@ -242,10 +265,11 @@ _LETTERS = re.compile(r"\[\s*([A-Za-z](?:\s*/\s*[A-Za-z])+)\s*\]")
 _MENU = re.compile(r"\bchoice\b", re.I)
 _ENTER = re.compile(r"\bpress enter\b", re.I)
 _SUDO = re.compile(r"sudo: .*(?:password is required|terminal is required)", re.I)
+_PASSWORD = re.compile(r"\bpass(?:word|phrase)\b[^?]*:$", re.I)  # not a question about one
 
 
 def _texts(lines: list) -> list:
-    return ["".join(text for _, text in line) for line in lines]
+    return ["".join(run[1] for run in line) for line in lines]
 
 
 def _option(text: str):
@@ -262,7 +286,7 @@ def choices(lines: list, prompt: str) -> list:
     those letters, named after the prompt's (o)verwrite words, a "Press Enter"
     prompt an empty answer, and any other prompt the list just above it, as
     when the script lists serial ports to choose from."""
-    if not prompt:
+    if not prompt or _PASSWORD.search(prompt):
         return []
     if _YES_NO.search(prompt):
         return [["y", "Yes"], ["n", "No"]]
@@ -294,9 +318,12 @@ def choices(lines: list, prompt: str) -> list:
     return out
 
 
-def hint(lines: list) -> str:
-    """What the window explains about the session: "sudo" when sudo wanted a
-    password, which cannot be typed here, else ""."""
+def hint(lines: list, prompt: str = "") -> str:
+    """What the window explains about the session: "password" when the
+    script waits on a password prompt, "sudo" when sudo wanted a password,
+    neither of which can be answered here, else ""."""
+    if _PASSWORD.search(prompt):
+        return "password"
     return "sudo" if any(_SUDO.search(text) for text in _texts(lines)) else ""
 
 
@@ -345,6 +372,11 @@ class Watch:
 
     def watching(self, now: float) -> bool:
         return now < self.until
+
+    def asks_password(self) -> bool:
+        """Whether the script waits on a password prompt, which no answer from
+        the window goes to."""
+        return bool(_PASSWORD.search(self.screen.prompt()))
 
     def start(self) -> None:
         """A start was sent: the screen is cleared for the session it starts."""
@@ -419,11 +451,12 @@ class Watch:
         state = self.state
         running = state.get("running") is True
         lines = self.screen.lines()
+        live = running and not self.away
         exit_code = state.get("exit_code")
         return {"available": state.get("available") is True, "why": str(state.get("why") or ""),
                 "running": running, "mode": str(state.get("mode") or ""), "session": self.session or 0,
                 "result": "" if self.ended else str(state.get("result") or ""),
                 "exit_code": None if self.ended or not isinstance(exit_code, int) else exit_code,
                 "starting": self.starting, "away": self.away, "ended": self.ended, "error": self.error,
-                "hint": hint(lines), "lines": lines,
-                "choices": choices(lines, self.screen.prompt()) if running and not self.away else []}
+                "hint": hint(lines, self.screen.prompt() if live else ""), "lines": lines,
+                "choices": choices(lines, self.screen.prompt()) if live else []}

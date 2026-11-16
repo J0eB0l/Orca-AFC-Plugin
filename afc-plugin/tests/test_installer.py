@@ -17,7 +17,7 @@ UPDATE_MENU = (b"Starting update process...\r\n" + CLEAR + GREEN + "╭─╮".e
 
 
 def texts(screen):
-    return ["".join(text for _, text in line) for line in screen.lines()]
+    return ["".join(run[1] for run in line) for line in screen.lines()]
 
 
 def shown(data, chunk=None):
@@ -48,8 +48,26 @@ class ScreenTest(unittest.TestCase):
 
     def test_true_and_bright_colors(self):
         screen = shown(b"\x1b[38;2;1;2;300ma\x1b[94mb\x1b[48;5;12;37mc\x1b[48;2;1;2;3;31md\x1b[mx")
-        self.assertEqual(screen.lines(), [[["#0102ff", "a"], ["#3b8eea", "b"], ["#e5e5e5", "c"],
-                                           ["#cd3131", "d"], ["", "x"]]])
+        self.assertEqual(screen.lines(), [[["#0102ff", "a"], ["#3b8eea", "b"], ["#e5e5e5", "c", "#3b8eea"],
+                                           ["#cd3131", "d", "#010203"], ["", "x"]]])
+
+    def test_backgrounds(self):
+        screen = shown(b"\x1b[41ma\x1b[103mb\x1b[49mc\x1b[48;5;232md\x1b[0me")
+        self.assertEqual(screen.lines(), [[["", "a", installer.palette(1)], ["", "b", installer.palette(11)],
+                                           ["", "c"], ["", "d", "#080808"], ["", "e"]]])
+
+    def test_a_logo_of_half_blocks(self):
+        # Each cell is two pixels: the half block's color over the background's.
+        screen = shown(b"\x1b[38;5;143;48;5;16m\xe2\x96\x80\x1b[49m\xe2\x96\x84\x1b[m")
+        self.assertEqual(screen.lines(), [[["#afaf5f", "\u2580", installer.palette(16)], ["#afaf5f", "\u2584"]]])
+
+    def test_spaces_on_a_background_are_kept(self):
+        screen = shown(b"ab\x1b[44m  \x1b[m  ")
+        self.assertEqual(screen.lines(), [[["", "ab"], ["", "  ", installer.palette(4)]]])
+
+    def test_erasing_takes_the_terminal_background(self):
+        screen = shown(b"\x1b[44mabcdef\x1b[2Kx")
+        self.assertEqual(screen.lines(), [[["", "      "], ["", "x", installer.palette(4)]]])
 
     def test_broken_color_sequences_change_nothing(self):
         screen = shown(b"\x1b[38;5;300ma\x1b[38;2;1ma\x1b[38ma\x1b[38;9ma")
@@ -79,6 +97,7 @@ class ScreenTest(unittest.TestCase):
 
     def test_a_reset_clears_the_screen_and_its_color(self):
         self.assertEqual(shown(b"old" + GREEN + b"\x1bcnew").lines(), [[["", "new"]]])
+        self.assertEqual(shown(b"\x1b[44mold\x1bcnew").lines(), [[["", "new"]]])
 
     def test_other_sequences_show_nothing(self):
         data = (b"\x1b[?25la\x1b]8;;http://x\x07b\x1b]0;title\x1b\\c\x1bP1$r\x1b\\d\x1b(Be\x1b=f\x1b[1 qg"
@@ -151,6 +170,12 @@ class ChoicesTest(unittest.TestCase):
     def test_no_prompt(self):
         self.assertEqual(self.choices(UPDATE_MENU + b"U\r\n"), [])
 
+    def test_a_password_prompt_takes_no_answers(self):
+        self.assertEqual(self.choices(UPDATE_MENU + b"Q\r\nPassword: "), [])
+        self.assertEqual(self.choices(b"1. one\r\n[sudo] password for pi: "), [])
+        self.assertEqual(self.choices(b"Enter passphrase for key '/home/pi/.ssh/id_ed25519': "), [])
+        self.assertEqual(self.choices(b"Set a password? (y/n): "), [["y", "Yes"], ["n", "No"]])
+
 
 class HelpersTest(unittest.TestCase):
     def test_hint(self):
@@ -158,6 +183,10 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(installer.hint(sudo.lines()), "sudo")
         self.assertEqual(installer.hint(shown(b"sudo: a password is required\r\n").lines()), "sudo")
         self.assertEqual(installer.hint(shown(UPDATE_MENU).lines()), "")
+        self.assertEqual(installer.hint(shown(UPDATE_MENU).lines(), "Password:"), "password")
+        self.assertEqual(installer.hint(sudo.lines(), "[sudo] password for pi:"), "password")
+        self.assertEqual(installer.hint(sudo.lines(), "Enter your choice:"), "sudo")
+        self.assertEqual(installer.hint([], "Set a password? (y/n):"), "")
 
     def test_summary(self):
         self.assertEqual(installer.summary({"available": True, "why": "", "running": True, "mode": "update"}),
@@ -322,6 +351,16 @@ class WatchTest(unittest.TestCase):
         self.assertEqual((message["starting"], message["error"]), (False, "AFC's installer cannot run while printing"))
         self.watch.note("")
         self.assertEqual(self.update(status(0, 0, running=False, result=""), 1.0)["error"], "")
+
+    def test_a_password_prompt(self):
+        self.log.data = UPDATE_MENU + b"Q\r\nRestarting Klipper...\r\nPassword: "
+        self.assertFalse(self.watch.asks_password())
+        message = self.update(status(2, len(self.log.data)))
+        self.assertTrue(self.watch.asks_password())
+        self.assertEqual((message["hint"], message["choices"]), ("password", []))
+        # Once the session ended, nothing waits on the prompt the screen still shows.
+        message = self.update(status(2, len(self.log.data), running=False, result="stopped"), 1.0)
+        self.assertEqual((message["hint"], message["choices"]), ("", []))
 
     def test_a_failed_session(self):
         message = self.update(status(4, 0, running=False, result="failed", exit_code=1))

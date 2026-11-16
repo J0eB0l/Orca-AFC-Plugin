@@ -16,6 +16,7 @@ from fake_orca import Preset, PresetBundle, PrinterConnectionParams, PrintParams
 import test_devices
 from orca_afc import agent as afc_agent
 from orca_afc import devices
+from orca_afc import installer
 from orca_afc.protocol import Lane
 from orca_afc.agent import AFCAgent
 from orca_afc.protocol import Snapshot
@@ -1333,6 +1334,21 @@ class InstallerTest(Case):
         self.settle()
         self.assertEqual(self.fake.scripts, ["AFC_INSTALLER MODE=UPDATE", "AFC_INSTALLER_ANSWER HEX=55",
                                              "AFC_INSTALLER_ANSWER", "AFC_INSTALLER_STOP"])
+
+    def test_no_answer_goes_to_a_password_prompt(self):
+        self.fake.logs["AFC_installer.log"] = self.MENU + b"Q\r\nPassword: "
+        self.fake.objects["AFC_installer"]["size"] = len(self.fake.logs["AFC_installer.log"])
+        self.connect()
+        self.installer(action="watch", on=True)
+        self.assertEqual(self.screens()[-1]["installer"]["hint"], "password")
+        self.assertEqual(self.installer(action="answer", text="secret"), 0)
+        self.settle()
+        self.assertEqual(self.screens(2)[-1]["installer"]["error"], installer.NO_PASSWORDS)
+        self.assertEqual(self.fake.scripts, [])
+        # Stopping it still goes.
+        self.installer(action="stop")
+        self.settle()
+        self.assertEqual(self.fake.scripts, ["AFC_INSTALLER_STOP"])
 
     def test_a_start_afc_refuses(self):
         self.fake.objects["AFC_installer"].update(running=False, result="done", session=1)

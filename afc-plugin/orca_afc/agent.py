@@ -1551,6 +1551,10 @@ else:
             def run():
                 if action == "start":
                     watch.start()
+                elif action == "answer" and watch.asks_password():
+                    watch.note(installer.NO_PASSWORDS)
+                    self._installer_now(printer)
+                    return
                 try:
                     printer.client.gcode(script, timeout=installer.GCODE_TIMEOUT)
                     watch.note("")
