@@ -21,6 +21,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/AboutDialog.cpp
     GUI/AFCLayoutDialog.cpp
     GUI/AFCLayoutDialog.hpp
+    GUI/AgentInstallerDialog.cpp
+    GUI/AgentInstallerDialog.hpp
     GUI/AboutDialog.hpp
     GUI/AnimatedTexture.cpp
     GUI/AnimatedTexture.hpp

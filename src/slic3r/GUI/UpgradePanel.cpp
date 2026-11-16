@@ -13,6 +13,7 @@
 #include <slic3r/GUI/I18N.hpp>
 #include <wx/anybutton.h>
 #include <wx/colour.h>
+#include <wx/defs.h>
 #include <unordered_map>
 #include <wx/string.h>
 #include <wx/event.h>
@@ -30,6 +31,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
+#include "AgentInstallerDialog.hpp"
 #include "MsgDialog.hpp"
 #include "format.hpp"
 #include "Plater.hpp"
@@ -548,6 +550,9 @@ void MachineInfoPanel::msw_rescale()
     m_ext_panel->msw_rescale();
     for (AgentDevicePanel* panel : m_agent_device_panels)
         panel->msw_rescale();
+    m_afc_github->Rescale();
+    m_afc_run_update->Rescale();
+    m_afc_run_install->Rescale();
     Layout();
     Fit();
 }
@@ -1583,6 +1588,25 @@ void MachineInfoPanel::show_nozzle_rack(bool show)
     }
 }
 
+// Orca: opens the window that runs AFC's updater or installer on the printer still selected, asking first when
+// it starts a new session. It runs after the button's handler returns.
+static void open_afc_installer(const std::string& dev_id, const std::string& mode, bool start)
+{
+    if (start) {
+        const bool install = mode == "install";
+        const wxString question =
+            install ? _L("Run AFC's installer on the printer? Its menu shows in a window here, and Klipper restarts "
+                         "when it exits after changing anything.") :
+                      _L("Run AFC's updater on the printer? It pulls the newest AFC first, then its menu shows in a "
+                         "window here, and Klipper restarts when it exits after changing anything.");
+        MessageDialog dlg(wxGetApp().mainframe, question, install ? _L("AFC installer") : _L("AFC updater"),
+                          wxYES_NO | wxICON_QUESTION);
+        if (dlg.ShowModal() != wxID_YES)
+            return;
+    }
+    AgentInstallerDialog::show(dev_id, mode, start);
+}
+
 void MachineInfoPanel::createAfcWidgets(wxBoxSizer* main_left_sizer)
 {
     m_afc_line_above = new wxStaticLine(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLI_HORIZONTAL);
@@ -1637,10 +1661,35 @@ void MachineInfoPanel::createAfcWidgets(wxBoxSizer* main_left_sizer)
             wxLaunchDefaultBrowser(from_u8(m_afc_url));
     });
 
+    // Shown when AFC can run its updater and installer for Orca; update_afc() names and enables them.
+    auto installer_button = [this](const wxString& label, const std::string& mode) {
+        auto button = new Button(this, label);
+        button->SetStyle(ButtonStyle::Regular, ButtonType::Window);
+        button->EnableTooltipEvenDisabled(); // the tip says why it is disabled
+        button->Bind(wxEVT_BUTTON, [this, mode](wxCommandEvent&) {
+            if (!m_obj)
+                return;
+            const MachineObject::AgentInstaller& installer = m_obj->agent_installer;
+            const bool start = !(installer.running && installer.mode == mode);
+            wxGetApp().CallAfter([dev_id = m_obj->get_dev_id(), mode, start] { open_afc_installer(dev_id, mode, start); });
+        });
+        button->Hide();
+        return button;
+    };
+    // TRN Runs AFC's updater (update-afc.sh) on the printer, in a window where its menu is answered
+    m_afc_run_update = installer_button(_L("Run updater"), "update");
+    // TRN Runs AFC's installer (install-afc.sh) on the printer, in a window where its menu is answered
+    m_afc_run_install = installer_button(_L("Run installer"), "install");
+
+    auto buttons = new wxBoxSizer(wxHORIZONTAL);
+    buttons->Add(m_afc_github, 0, 0, 0);
+    buttons->Add(m_afc_run_update, 0, wxLEFT, FromDIP(10));
+    buttons->Add(m_afc_run_install, 0, wxLEFT, FromDIP(10));
+
     auto content = new wxBoxSizer(wxVERTICAL);
     content->Add(0, 0, 1, wxEXPAND, 0);
     content->Add(info, 0, wxEXPAND, 0);
-    content->Add(m_afc_github, 0, wxLEFT | wxTOP, FromDIP(10));
+    content->Add(buttons, 0, wxLEFT | wxTOP, FromDIP(10));
     content->Add(0, 0, 1, wxEXPAND, 0);
 
     m_afc_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1694,6 +1743,23 @@ void MachineInfoPanel::update_afc(MachineObject* obj)
     m_afc_new_version_img->Show(afc.newer);
     m_afc_url = afc.url;
     m_afc_github->Enable(!m_afc_url.empty());
+
+    // AFC's updater and installer: one starts while the printer is idle, and the one that runs opens its window.
+    const MachineObject::AgentInstaller& installer = obj->agent_installer;
+    const bool idle = !installer.running && installer.available && obj->is_connected() && !obj->is_in_printing();
+    const wxString why = installer.available ? wxString() : from_u8(installer.why);
+    auto show_installer = [&](Button* button, const std::string& mode, const wxString& run, const wxString& open) {
+        const bool runs = installer.running && installer.mode == mode;
+        button->Show(installer.known);
+        button->SetLabel(runs ? open : run);
+        button->Enable(runs || idle);
+        if (button->GetToolTipText() != why)
+            button->SetToolTip(why);
+    };
+    // TRN Opens the window of AFC's updater, which runs on the printer
+    show_installer(m_afc_run_update, "update", _L("Run updater"), _L("Show updater"));
+    // TRN Opens the window of AFC's installer, which runs on the printer
+    show_installer(m_afc_run_install, "install", _L("Run installer"), _L("Show installer"));
 }
 
 void MachineInfoPanel::show_afc(bool show)

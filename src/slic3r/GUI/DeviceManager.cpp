@@ -1560,6 +1560,81 @@ int MachineObject::command_agent_device_update(const std::string& id)
     return this->publish_json(j);
 }
 
+// Orca: a request of the AFC installer window, with what goes with it.
+static json agent_installer_request(const std::string& action)
+{
+    json j;
+    j["print"]["command"]     = "afc_installer";
+    j["print"]["action"]      = action;
+    j["print"]["sequence_id"] = std::to_string(MachineObject::m_sequence_id++);
+    return j;
+}
+
+int MachineObject::command_agent_installer_watch(bool on)
+{
+    json j          = agent_installer_request("watch");
+    j["print"]["on"] = on;
+    return this->publish_json(j);
+}
+
+int MachineObject::command_agent_installer_start(const std::string& mode)
+{
+    json j            = agent_installer_request("start");
+    j["print"]["mode"] = mode;
+    return this->publish_json(j);
+}
+
+int MachineObject::command_agent_installer_answer(const std::string& text)
+{
+    json j            = agent_installer_request("answer");
+    j["print"]["text"] = text;
+    return this->publish_json(j);
+}
+
+int MachineObject::command_agent_installer_stop() { return this->publish_json(agent_installer_request("stop")); }
+
+void MachineObject::parse_agent_installer(const json& screen)
+{
+    auto text = [&screen](const char* key) {
+        auto it = screen.find(key);
+        return it != screen.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    auto flag = [&screen](const char* key) {
+        auto it = screen.find(key);
+        return it != screen.end() && it->is_boolean() && it->get<bool>();
+    };
+    AgentInstaller& installer = agent_installer;
+    installer.available       = flag("available");
+    installer.why             = text("why");
+    installer.running         = flag("running");
+    installer.mode            = text("mode");
+    installer.result          = text("result");
+    auto exit_code            = screen.find("exit_code");
+    installer.exit_code       = exit_code != screen.end() && exit_code->is_number_integer() ? exit_code->get<int>() : -1;
+    installer.starting        = flag("starting");
+    installer.away            = flag("away");
+    installer.ended           = text("ended");
+    installer.error           = text("error");
+    installer.hint            = text("hint");
+    installer.lines.clear();
+    if (auto lines = screen.find("lines"); lines != screen.end() && lines->is_array())
+        for (const json& line : *lines) {
+            std::vector<AgentInstaller::Run> runs;
+            if (line.is_array())
+                for (const json& run : line)
+                    if (run.is_array() && run.size() == 2 && run[0].is_string() && run[1].is_string())
+                        runs.emplace_back(run[0].get<std::string>(), run[1].get<std::string>());
+            installer.lines.push_back(std::move(runs));
+        }
+    installer.choices.clear();
+    if (auto choices = screen.find("choices"); choices != screen.end() && choices->is_array())
+        for (const json& choice : *choices)
+            if (choice.is_array() && choice.size() == 2 && choice[0].is_string() && choice[1].is_string())
+                installer.choices.emplace_back(choice[0].get<std::string>(), choice[1].get<std::string>());
+    installer.known = true;
+    ++installer.screens;
+}
+
 const MachineObject::AgentLane* MachineObject::agent_lane(const std::string& name) const
 {
     for (const AgentLane& lane : agent_lanes)
@@ -3588,6 +3663,15 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         agent_devices.push_back(std::move(device));
                     }
                 }
+                // Orca: whether the agent's AFC can run its installer in the Update page's window.
+                if (jj.contains("afc_installer") && jj["afc_installer"].is_object()) {
+                    const json& installer      = jj["afc_installer"];
+                    agent_installer.known      = !installer.empty();
+                    agent_installer.available  = installer.value("available", false);
+                    agent_installer.why        = installer.value("why", std::string());
+                    agent_installer.running    = installer.value("running", false);
+                    agent_installer.mode       = installer.value("mode", std::string());
+                }
 
               m_fan->ParseV2_0(jj);
                 m_fila_switch->ParseFilaSwitchInfo(jj);
@@ -4517,6 +4601,10 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 } else if (jj["command"].get<std::string>() == "gcode_line") {
                     //ack of gcode_line
                     BOOST_LOG_TRIVIAL(debug) << "parse_json, ack of gcode_line = " << j.dump(4);
+                } else if (jj["command"].get<std::string>() == "afc_installer") {
+                    // Orca: the screen of the printer agent's installer session, for AgentInstallerDialog.
+                    if (jj.contains("installer") && jj["installer"].is_object())
+                        parse_agent_installer(jj["installer"]);
                 } else if (jj["command"].get<std::string>() == "project_prepare") {
                     //ack of project file
                     BOOST_LOG_TRIVIAL(info) << "parse_json, ack of project_prepare = " << j.dump(4);
