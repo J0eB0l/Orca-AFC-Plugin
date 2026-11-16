@@ -214,6 +214,12 @@ class RowsTest(unittest.TestCase):
         self.assertEqual([r["title"] for r in found], ["BridgeBox 1", "Bambu_AMS_1", "BridgeBox 2", "Bambu_HT_1"])
         self.assertEqual(found[2]["link"], "WiFi")
 
+    def test_a_bridge_whose_firmware_has_wifi_on_a_serial_device(self):
+        # It may talk over WiFi with its USB device still as its port, so the page does not say which.
+        status = printer_status(Bambu_AMS_1=unit_status(bridge_wifi=True),
+                                Bambu_HT_1=unit_status(bridge_wifi=True, ams_model="ht"))
+        self.assertEqual(rows(status, found=[])[0]["link"], "")
+
     def test_a_bridgebox_not_connected(self):
         status = printer_status(Bambu_AMS_1=unit_status(bridge_connected=False),
                                 Bambu_HT_1=unit_status(bridge_connected=False, ams_model="ht"))

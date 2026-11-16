@@ -214,7 +214,7 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
         latest = str((newest.get("bridge") or {}).get(chip) or "")
         title = "BridgeBox" if len(bridges) == 1 else "BridgeBox %d" % number
         row = _row("bridge:" + port, "bridge", "bridgebox", title)
-        row.update(link="WiFi" if bridge["wifi"] else "USB" if bridge["wifi"] is False else "",
+        row.update(link=_link(port, bridge["wifi"]),
                    units=", ".join(bridge["units"]), version=bridge["fw"], latest=latest,
                    updatable=bool(latest and chip in BRIDGE_IMAGES and bridge["connected"]),
                    do={"unit": bridge["units"][0], "chip": chip, "version": latest})
@@ -245,6 +245,17 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
         row["ready"] = (row["updatable"] and idle and not busy and not row["do"].get("offline")
                         and (row["newer"] or row["resume"]))
     return out
+
+
+def _link(port: str, wifi) -> str:
+    """How a bridge reaches the printer, as far as its units' status tells:
+    WiFi at a tcp: address, USB when its firmware has no WiFi, "" otherwise.
+    bridge_wifi says whether the firmware has WiFi, not whether the bridge
+    uses it, and with connection: wifi a bridge keeps its USB device as its
+    port while it talks over WiFi."""
+    if port.startswith("tcp:"):
+        return "WiFi"
+    return "USB" if wifi is False else ""
 
 
 def _row(row_id: str, kind: str, icon: str, title: str) -> dict:
