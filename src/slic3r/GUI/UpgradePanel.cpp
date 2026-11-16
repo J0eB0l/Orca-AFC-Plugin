@@ -1770,16 +1770,11 @@ void MachineInfoPanel::update_afc(MachineObject* obj)
     show_installer(m_afc_run_update, "update", _L("Run updater"), _L("Show updater"));
     // TRN Opens the window of AFC's installer, which runs on the printer
     show_installer(m_afc_run_install, "install", _L("Run installer"), _L("Show installer"));
-    // Another branch where the agent's AFC takes one, and only where the scripts can switch AFC's folder to it,
-    // a git checkout.
-    wxString branch_why = why;
-    if (installer.available && !installer.git)
-        // TRN Tip of the AFC row's Choose branch button when AFC's folder on the printer is no git checkout
-        branch_why = _L("AFC's folder on this printer is not a git checkout, so the scripts can't switch its branch.");
+    // Another branch where the agent's AFC takes one: a git checkout switches to it, a copy only shows it.
     m_afc_choose_branch->Show(installer.known && installer.branches);
-    m_afc_choose_branch->Enable(idle && installer.git);
-    if (m_afc_choose_branch->GetToolTipText() != branch_why)
-        m_afc_choose_branch->SetToolTip(branch_why);
+    m_afc_choose_branch->Enable(idle);
+    if (m_afc_choose_branch->GetToolTipText() != why)
+        m_afc_choose_branch->SetToolTip(why);
 }
 
 void MachineInfoPanel::show_afc(bool show)

@@ -519,11 +519,12 @@ static bool branch_ok(const std::string& branch)
 }
 
 // Asks for the branch AFC's updater or installer runs on, and which of the two: the script switches AFC's checkout
-// to the branch first. Ends with wxID_OK once one is picked.
+// to the branch first where AFC's folder is a git checkout (`git`), and elsewhere only shows it. Ends with wxID_OK
+// once one is picked.
 class InstallerBranchDialog : public DPIDialog
 {
 public:
-    InstallerBranchDialog(wxWindow* parent, const std::string& branch);
+    InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git);
 
     std::string        branch() const { return into_u8(m_branch->GetTextCtrl()->GetValue().Strip(wxString::both)); }
     const std::string& mode() const { return m_mode; }
@@ -541,7 +542,7 @@ private:
     std::string    m_mode;
 };
 
-InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string& branch)
+InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git)
     // TRN Title of the dialog where the branch AFC's updater or installer runs on is typed
     : DPIDialog(parent, wxID_ANY, _L("Choose branch"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
@@ -550,8 +551,13 @@ InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     auto* text  = new wxStaticText(this, wxID_ANY,
-                                   _L("AFC's updater or installer switches AFC to this branch first, then its menu shows in "
-                                       "a window here. Klipper restarts when it exits after changing anything."));
+                                   git ? _L("AFC's updater or installer switches AFC's checkout to this branch first, then its "
+                                             "menu shows in a window here. Klipper restarts when it exits after changing "
+                                             "anything.") :
+                                         // TRN In the Choose branch dialog when AFC's folder on the printer is no git checkout
+                                         _L("AFC's folder on this printer is not a git checkout, so the updater or installer "
+                                            "runs on the files it holds and only shows this branch. Its menu shows in a window "
+                                            "here, and Klipper restarts when it exits after changing anything."));
     text->Wrap(FromDIP(440));
     sizer->Add(text, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
     m_branch = new ::TextInput(this, from_u8(branch), wxEmptyString, wxEmptyString, wxDefaultPosition,
@@ -606,7 +612,7 @@ void AgentInstallerDialog::choose_branch(const std::string& dev_id)
     MachineObject* obj     = manager ? manager->get_selected_machine() : nullptr;
     if (!obj || obj->get_dev_id() != dev_id)
         return;
-    InstallerBranchDialog dlg(wxGetApp().mainframe, obj->agent_installer.branch);
+    InstallerBranchDialog dlg(wxGetApp().mainframe, obj->agent_installer.branch, obj->agent_installer.git);
     if (dlg.ShowModal() == wxID_OK)
         show(dev_id, dlg.mode(), true, dlg.branch());
 }

@@ -767,15 +767,16 @@ public:
     // opens in AgentInstallerDialog. known, available, why, git, branch, running and mode come with each push
     // (afc_installer): known when the agent's AFC can run one at all, available when it can on this printer
     // (else why says why not), git when AFC's folder there is a git checkout, which a session can switch to
-    // another branch, and branch the one it is on ("" for none). branches when the push carries git at all, as
-    // from an AFC that runs a session on a branch the window names. While the window watches, the agent also
-    // sends the session's screen (command afc_installer, parse_agent_installer()): its lines as runs of [color,
-    // text] or [color, text, background], the answers its prompt takes as [answer, label] choices, its result
-    // ("running", "done", "failed" or "stopped") with its exit status (-1 for none), starting while a start is
-    // on its way, away while Klipper does not answer, ended "restarted" when Klipper restarted while it ran,
-    // error the printer's words on the window's last request, and hint "password" while the script waits on a
-    // password prompt, which takes no answer from the window, or "sudo" when sudo wanted a password. screens
-    // counts the screens received, so the window draws only a new one.
+    // another branch, and branch the one it is on ("" for none), or for a copy without git the one its sessions
+    // show, main unless the window names another. branches when the push carries git at all, as from an AFC that
+    // runs a session on a branch the window names. While the window watches, the agent also sends the session's
+    // screen (command afc_installer, parse_agent_installer()): its lines as runs of [color, text] or [color,
+    // text, background], the answers its prompt takes as [answer, label] choices, its result ("running", "done",
+    // "failed" or "stopped") with its exit status (-1 for none), starting while a start is on its way, away
+    // while Klipper does not answer, ended "restarted" when Klipper restarted while it ran, error the printer's
+    // words on the window's last request, and hint "password" while the script waits on a password prompt, which
+    // takes no answer from the window, or "sudo" when sudo wanted a password. screens counts the screens
+    // received, so the window draws only a new one.
     struct AgentInstaller
     {
         // Text in one color over one background, each "#rrggbb", or "" for the terminal's own.
