@@ -1593,6 +1593,20 @@ int MachineObject::command_agent_installer_answer(const std::string& text)
     return this->publish_json(j);
 }
 
+int MachineObject::command_agent_installer_password(const std::string& password)
+{
+    json j            = agent_installer_request("password");
+    j["print"]["text"] = password;
+    // why: publish_json() logs each command it sends, and this one carries a password, so it is sent the way
+    // publish_json() sends and logged with the password blanked. The agent only offers the window a password box
+    // when it takes this command, so no not-supported answer needs showing.
+    const std::string sent = j.dump();
+    const int         rtn  = is_lan_mode_printer() ? local_publish_json(sent) : cloud_publish_json(sent);
+    j["print"]["text"]     = "***";
+    BOOST_LOG_TRIVIAL(info) << "publish_json: " << j.dump() << " code: " << rtn;
+    return rtn;
+}
+
 int MachineObject::command_agent_installer_stop() { return this->publish_json(agent_installer_request("stop")); }
 
 void MachineObject::parse_agent_installer(const json& screen)
@@ -1618,6 +1632,7 @@ void MachineObject::parse_agent_installer(const json& screen)
     installer.ended           = text("ended");
     installer.error           = text("error");
     installer.hint            = text("hint");
+    installer.password        = flag("password");
     installer.lines.clear();
     if (auto lines = screen.find("lines"); lines != screen.end() && lines->is_array())
         for (const json& line : *lines) {

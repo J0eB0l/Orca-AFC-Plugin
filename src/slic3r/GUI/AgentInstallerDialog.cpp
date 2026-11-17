@@ -610,6 +610,63 @@ void InstallerBranchDialog::on_dpi_changed(const wxRect&)
     Refresh();
 }
 
+// Asks for the password the script's password prompt waits on, such as su's for root on a Snapmaker U1. The box
+// hides what is typed. Ends with wxID_OK on Send or Enter.
+class InstallerPasswordDialog : public DPIDialog
+{
+public:
+    explicit InstallerPasswordDialog(wxWindow* parent);
+
+    std::string password() const { return into_u8(m_password->GetTextCtrl()->GetValue()); }
+
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
+private:
+    ::TextInput* m_password {nullptr};
+};
+
+InstallerPasswordDialog::InstallerPasswordDialog(wxWindow* parent)
+    // TRN Title of the dialog where the password AFC's updater or installer asks for is typed
+    : DPIDialog(parent, wxID_ANY, _L("Password"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+{
+    SetBackgroundColour(*wxWHITE);
+    SetFont(Label::Body_14);
+
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* text  = new wxStaticText(this, wxID_ANY,
+                                   _L("The script on the printer is asking for a password. It goes to the script "
+                                      "directly, not through G-code, so it stays out of the printer's console history."));
+    text->Wrap(FromDIP(440));
+    sizer->Add(text, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
+    m_password = new ::TextInput(this, wxEmptyString, wxEmptyString, wxEmptyString, wxDefaultPosition,
+                                 wxSize(FromDIP(440), FromDIP(32)), wxTE_PASSWORD);
+    m_password->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) { CallAfter([this] { EndModal(wxID_OK); }); });
+    sizer->Add(m_password, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    // TRN Under the box where a password for AFC's updater or installer is typed. snapmaker is the password itself:
+    // keep it as it is
+    auto* note = new wxStaticText(this, wxID_ANY, _L("A Snapmaker U1's root password is snapmaker unless it was changed."));
+    note->SetFont(Label::Body_12);
+    sizer->Add(note, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
+
+    auto* buttons = new DialogButtons(this, {L("Send"), "Cancel"}, _L("Send"));
+    buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    sizer->Add(buttons, 0, wxEXPAND | wxTOP, FromDIP(10));
+
+    SetSizerAndFit(sizer);
+    CenterOnParent();
+    wxGetApp().UpdateDlgDarkUI(this);
+    m_password->GetTextCtrl()->SetFocus();
+}
+
+void InstallerPasswordDialog::on_dpi_changed(const wxRect&)
+{
+    m_password->Rescale();
+    GetSizer()->SetSizeHints(this);
+    Refresh();
+}
+
 void AgentInstallerDialog::choose_branch(const std::string& dev_id)
 {
     DeviceManager* manager = wxGetApp().getDeviceManager();
@@ -636,6 +693,7 @@ void AgentInstallerDialog::show(const std::string& dev_id, const std::string& mo
         installer.ended.clear();
         installer.error.clear();
         installer.hint.clear();
+        installer.password  = false;
         installer.exit_code = -1;
         installer.starting  = true;
         installer.mode      = mode;
@@ -685,9 +743,15 @@ AgentInstallerDialog::AgentInstallerDialog(wxWindow* parent, const std::string& 
     m_send = new Button(this, _L("Send"));
     m_send->SetStyle(ButtonStyle::Confirm, ButtonType::Choice);
     m_send->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { CallAfter([this] { send_typed(); }); });
+    // TRN Opens the box where the password AFC's updater or installer asks for is typed
+    m_password_button = new Button(this, _L("Enter password"));
+    m_password_button->SetStyle(ButtonStyle::Confirm, ButtonType::Choice);
+    m_password_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { CallAfter([this] { ask_password(); }); });
+    m_password_button->Hide();
     answer_row->Add(answer_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
     answer_row->Add(m_answer, 1, wxALIGN_CENTER_VERTICAL);
     answer_row->Add(m_send, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
+    answer_row->Add(m_password_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
     sizer->Add(answer_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
 
     m_buttons = new DialogButtons(this, {L("Stop"), L("Close")}, "", 1);
@@ -746,8 +810,11 @@ void AgentInstallerDialog::draw(const MachineObject& obj)
     if (!installer.mode.empty())
         SetTitle(installer.mode == "install" ? _L("AFC installer") : _L("AFC updater"));
 
-    wxString status;
-    bool     failed = false;
+    // The agent takes a password while AFC says the script's terminal waits on one.
+    const bool live     = m_connected && installer.running && !installer.away;
+    const bool password = live && installer.password;
+    wxString   status;
+    bool       failed = false;
     if (!m_connected) {
         status = _L("The printer is not connected.");
         failed = true;
@@ -760,6 +827,8 @@ void AgentInstallerDialog::draw(const MachineObject& obj)
         status = _L("Klipper is not answering. This is the last of what the script showed.");
     else if (installer.ended == "restarted")
         status = _L("Klipper restarted, which ended the script. This is the last of what it showed.");
+    else if (password)
+        status = _L("The script is asking for a password.");
     else if (installer.running)
         status = _L("Running on the printer.");
     else if (installer.result == "done")
@@ -776,7 +845,7 @@ void AgentInstallerDialog::draw(const MachineObject& obj)
     } else
         status = _L("Waiting for the printer...");
     wxString hint;
-    if (installer.hint == "password")
+    if (installer.hint == "password" && !password)
         // TRN Shown while AFC's updater or installer waits for a password, such as su asking for root's password
         hint = _L("The script is asking for a password, which can't be typed here: answers go through G-code, "
                   "which Klipper writes to its log. Stop the script and run that step over SSH.");
@@ -784,11 +853,35 @@ void AgentInstallerDialog::draw(const MachineObject& obj)
         hint = _L("A step needed sudo, which asked for a password. No password can be typed here: "
                   "run that step over SSH, or let this user run sudo without a password.");
 
-    const bool answers = m_connected && installer.running && !installer.away && installer.hint != "password";
+    // No answer goes to a password prompt: answers travel as G-code.
+    const bool answers = live && installer.hint != "password" && !installer.password;
     m_screen->set_lines(installer.lines);
     draw_choices(answers ? installer.choices : Choices());
+    m_password_button->Show(password);
     draw_status(status, failed, hint);
     enable(answers, m_connected && installer.running);
+    // The password box opens by itself once for each prompt; Enter password opens it again.
+    if (!password)
+        m_asked = false;
+    else if (!m_asked) {
+        m_asked = true;
+        CallAfter([this] { ask_password(); });
+    }
+}
+
+void AgentInstallerDialog::ask_password()
+{
+    MachineObject* obj = machine();
+    if (m_asking || !obj || !obj->agent_installer.password)
+        return;
+    m_asking = true;
+    InstallerPasswordDialog dlg(this);
+    const bool send = dlg.ShowModal() == wxID_OK;
+    m_asking = false;
+    // The prompt may have ended, or another printer been picked, while the box was open.
+    MachineObject* still = machine();
+    if (send && still && still->agent_installer.password)
+        still->command_agent_installer_password(dlg.password());
 }
 
 void AgentInstallerDialog::draw_choices(const Choices& choices)
@@ -899,6 +992,7 @@ void AgentInstallerDialog::on_dpi_changed(const wxRect&)
 {
     m_answer->Rescale();
     m_send->Rescale();
+    m_password_button->Rescale();
     m_screen->rescale();
     // The choices' rows were laid out for the old size.
     const Choices choices = m_choices;

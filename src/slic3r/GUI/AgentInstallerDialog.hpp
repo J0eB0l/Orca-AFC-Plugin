@@ -25,7 +25,8 @@ class InstallerScreen;
 
 // Orca: AFC's updater or installer, which a printer agent's AFC runs on the printer for this window
 // (MachineObject::AgentInstaller): the script's screen as a terminal shows it (InstallerScreen), the answers
-// its prompt takes as buttons, a box for any other answer, and Stop. The window watches the session while it
+// its prompt takes as buttons, a box for any other answer, a box that hides what is typed for a password prompt
+// the agent takes a password for, and Stop. The window watches the session while it
 // is open and renews the watch, which the agent lets lapse otherwise. Closing it leaves the script running,
 // and the Update page's AFC row opens it again.
 class AgentInstallerDialog : public DPIDialog
@@ -58,6 +59,8 @@ private:
     void           enable(bool answers, bool stoppable);
     void           send_answer(const std::string& text);
     void           send_typed();
+    // Asks for the password the script's prompt waits on and sends it, unless the prompt ended meanwhile.
+    void           ask_password();
     void           stop();
     // Grows the window to fit what it shows, never shrinking it, so it does not jump between screens.
     void           grow_to_fit();
@@ -70,6 +73,8 @@ private:
     bool                 m_drawn {false};
     bool                 m_gone {false};
     bool                 m_connected {false};
+    bool                 m_asked {false};  // the password box opened for the prompt that waits now
+    bool                 m_asking {false}; // the password box is open
     Clock::time_point    m_renew_at;
     Choices              m_choices;
     wxColour             m_text_color;
@@ -80,6 +85,7 @@ private:
     std::vector<Button*> m_choice_buttons;
     ::TextInput*         m_answer {nullptr};
     Button*              m_send {nullptr};
+    Button*              m_password_button {nullptr};
     DialogButtons*       m_buttons {nullptr};
     wxTimer              m_timer;
 };

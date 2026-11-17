@@ -774,9 +774,10 @@ public:
     // text, background], the answers its prompt takes as [answer, label] choices, its result ("running", "done",
     // "failed" or "stopped") with its exit status (-1 for none), starting while a start is on its way, away
     // while Klipper does not answer, ended "restarted" when Klipper restarted while it ran, error the printer's
-    // words on the window's last request, and hint "password" while the script waits on a password prompt, which
-    // takes no answer from the window, or "sudo" when sudo wanted a password. screens counts the screens
-    // received, so the window draws only a new one.
+    // words on the window's last request, hint "password" while the script waits on a password prompt, which
+    // takes no answer from the window, or "sudo" when sudo wanted a password, and password while the agent takes
+    // a password for that prompt (command_agent_installer_password()), as AFC says its terminal waits on one.
+    // screens counts the screens received, so the window draws only a new one.
     struct AgentInstaller
     {
         // Text in one color over one background, each "#rrggbb", or "" for the terminal's own.
@@ -807,6 +808,7 @@ public:
         std::string                                      ended;
         std::string                                      error;
         std::string                                      hint;
+        bool                                             password {false};
         unsigned                                         screens {0};
     };
     AgentInstaller agent_installer;
@@ -990,10 +992,12 @@ public:
     int command_agent_device_update(const std::string& id);
     // Orca: the AFC installer window (agent_installer): watched while it is open, which the window renews; a
     // session started in a mode ("update" or "install"), on a branch when one is named; an answer typed or
-    // picked, sent with Enter; a stop.
+    // picked, sent with Enter; a password for the script's password prompt, sent with Enter and logged without
+    // it; a stop.
     int command_agent_installer_watch(bool on);
     int command_agent_installer_start(const std::string& mode, const std::string& branch = {});
     int command_agent_installer_answer(const std::string& text);
+    int command_agent_installer_password(const std::string& password);
     int command_agent_installer_stop();
     // Orca: a printer agent's runout lanes (afc_runout): one lane's ("" to pause), or every set of
     // lanes with the same filament linked ("match") or none ("clear").
