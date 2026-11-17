@@ -523,12 +523,12 @@ static bool branch_ok(const std::string& branch)
 }
 
 // Asks for the branch AFC's updater or installer runs on, and which of the two: the script switches AFC's checkout
-// to the branch first where AFC's folder is a git checkout (`git`), and elsewhere only shows it. Ends with wxID_OK
-// once one is picked.
+// to the branch first where AFC's folder is a git checkout (`git`), and elsewhere only shows it. Offers the updater
+// only where AFC runs it (`update`). Ends with wxID_OK once one is picked.
 class InstallerBranchDialog : public DPIDialog
 {
 public:
-    InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git);
+    InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git, bool update);
 
     std::string        branch() const { return into_u8(m_branch->GetTextCtrl()->GetValue().Strip(wxString::both)); }
     const std::string& mode() const { return m_mode; }
@@ -541,12 +541,13 @@ private:
     void check();
     void run(const std::string& mode);
 
-    ::TextInput*   m_branch {nullptr};
-    DialogButtons* m_buttons {nullptr};
-    std::string    m_mode;
+    ::TextInput* m_branch {nullptr};
+    Button*      m_update {nullptr};
+    Button*      m_install {nullptr};
+    std::string  m_mode;
 };
 
-InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git)
+InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string& branch, bool git, bool update)
     // TRN Title of the dialog where the branch AFC's updater or installer runs on is typed
     : DPIDialog(parent, wxID_ANY, _L("Choose branch"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
@@ -576,11 +577,20 @@ InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string
     rule->SetFont(Label::Body_12);
     sizer->Add(rule, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(6));
 
-    m_buttons = new DialogButtons(this, {L("Run updater"), L("Run installer"), "Cancel"}, _L("Run updater"));
-    m_buttons->GetButtonFromIndex(0)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("update"); });
-    m_buttons->GetButtonFromIndex(1)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("install"); });
-    m_buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
-    sizer->Add(m_buttons, 0, wxEXPAND | wxTOP, FromDIP(10));
+    std::vector<wxString> labels;
+    if (update)
+        labels.push_back(L("Run updater"));
+    labels.push_back(L("Run installer"));
+    labels.push_back("Cancel");
+    auto* buttons = new DialogButtons(this, labels, update ? _L("Run updater") : _L("Run installer"));
+    if (update) {
+        m_update = buttons->GetButtonFromIndex(0);
+        m_update->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("update"); });
+    }
+    m_install = buttons->GetButtonFromIndex(update ? 1 : 0);
+    m_install->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { run("install"); });
+    buttons->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    sizer->Add(buttons, 0, wxEXPAND | wxTOP, FromDIP(10));
 
     check();
     SetSizerAndFit(sizer);
@@ -591,8 +601,9 @@ InstallerBranchDialog::InstallerBranchDialog(wxWindow* parent, const std::string
 void InstallerBranchDialog::check()
 {
     const bool ok = branch_ok(branch());
-    m_buttons->GetButtonFromIndex(0)->Enable(ok);
-    m_buttons->GetButtonFromIndex(1)->Enable(ok);
+    if (m_update)
+        m_update->Enable(ok);
+    m_install->Enable(ok);
 }
 
 void InstallerBranchDialog::run(const std::string& mode)
@@ -673,7 +684,8 @@ void AgentInstallerDialog::choose_branch(const std::string& dev_id)
     MachineObject* obj     = manager ? manager->get_selected_machine() : nullptr;
     if (!obj || obj->get_dev_id() != dev_id)
         return;
-    InstallerBranchDialog dlg(wxGetApp().mainframe, obj->agent_installer.branch, obj->agent_installer.git);
+    const MachineObject::AgentInstaller& installer = obj->agent_installer;
+    InstallerBranchDialog dlg(wxGetApp().mainframe, installer.branch, installer.git, installer.update);
     if (dlg.ShowModal() == wxID_OK)
         show(dev_id, dlg.mode(), true, dlg.branch());
 }

@@ -1758,18 +1758,20 @@ void MachineInfoPanel::update_afc(MachineObject* obj)
     const MachineObject::AgentInstaller& installer = obj->agent_installer;
     const bool idle = !installer.running && installer.available && obj->is_connected() && !obj->is_in_printing();
     const wxString why = installer.available ? wxString() : from_u8(installer.why);
-    auto show_installer = [&](Button* button, const std::string& mode, const wxString& run, const wxString& open) {
+    // The updater only where AFC offers it: a Snapmaker U1's AFC runs only its installer, for its configs.
+    auto show_installer = [&](Button* button, const std::string& mode, bool offered, const wxString& run,
+                              const wxString& open) {
         const bool runs = installer.running && installer.mode == mode;
-        button->Show(installer.known);
+        button->Show(installer.known && (offered || runs));
         button->SetLabel(runs ? open : run);
         button->Enable(runs || idle);
         if (button->GetToolTipText() != why)
             button->SetToolTip(why);
     };
     // TRN Opens the window of AFC's updater, which runs on the printer
-    show_installer(m_afc_run_update, "update", _L("Run updater"), _L("Show updater"));
+    show_installer(m_afc_run_update, "update", installer.update, _L("Run updater"), _L("Show updater"));
     // TRN Opens the window of AFC's installer, which runs on the printer
-    show_installer(m_afc_run_install, "install", _L("Run installer"), _L("Show installer"));
+    show_installer(m_afc_run_install, "install", true, _L("Run installer"), _L("Show installer"));
     // Another branch where the agent's AFC takes one: a git checkout switches to it, a copy only shows it.
     m_afc_choose_branch->Show(installer.known && installer.branches);
     m_afc_choose_branch->Enable(idle);

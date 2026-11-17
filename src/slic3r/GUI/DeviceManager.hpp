@@ -764,9 +764,9 @@ public:
     };
     std::vector<AgentDevice> agent_devices;
     // Orca: the printer agent's installer for its filament system (AFC), which the AFC row on the Update page
-    // opens in AgentInstallerDialog. known, available, why, git, branch, running and mode come with each push
-    // (afc_installer): known when the agent's AFC can run one at all, available when it can on this printer
-    // (else why says why not), git when AFC's folder there is a git checkout, which a session can switch to
+    // opens in AgentInstallerDialog. known, available, why, update, git, branch, running and mode come with each
+    // push (afc_installer): known when the agent's AFC can run one at all, available when it can on this printer
+    // (else why says why not), update unless AFC runs only its installer there (a Snapmaker U1), git when AFC's folder there is a git checkout, which a session can switch to
     // another branch, and branch the one it is on ("" for none), or for a copy without git the one its sessions
     // show, main unless the window names another. branches when the push carries git at all, as from an AFC that
     // runs a session on a branch the window names. While the window watches, the agent also sends the session's
@@ -794,6 +794,7 @@ public:
         bool                                             known {false};
         bool                                             available {false};
         std::string                                      why;
+        bool                                             update {true};
         bool                                             branches {false};
         bool                                             git {false};
         std::string                                      branch;
