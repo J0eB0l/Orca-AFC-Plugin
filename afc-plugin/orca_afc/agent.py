@@ -1532,8 +1532,10 @@ else:
 
         def _installer_command(self, printer: _Printer, job: dict) -> int:
             """The installer window (installer.py): watch, while it is open, then
-            start AFC's updater or installer, answer it, or stop it. Each runs on
-            the installer thread, whose next read sends the window what came of it."""
+            start AFC's updater or installer, answer it, type a password into it,
+            or stop it. Each runs on the installer thread, whose next read sends
+            the window what came of it. A password goes to AFC's endpoint, never
+            as G-code, and is kept nowhere."""
             action, watch = job.get("action"), printer.installer
             if action == "watch":
                 on = job.get("on") is True
@@ -1549,6 +1551,8 @@ else:
                 script = installer.start_gcode(job["mode"], branch)
             elif action == "answer" and isinstance(job.get("text"), str):
                 script = installer.answer_gcode(job["text"])
+            elif action == "password" and isinstance(job.get("text"), str):
+                script = ""
             elif action == "stop":
                 script = "AFC_INSTALLER_STOP"
             else:
@@ -1561,8 +1565,16 @@ else:
                     watch.note(installer.NO_PASSWORDS)
                     self._installer_now(printer)
                     return
+                elif action == "password" and not watch.takes_password():
+                    watch.note(installer.NOT_ASKING)
+                    self._installer_now(printer)
+                    return
                 try:
-                    printer.client.gcode(script, timeout=installer.GCODE_TIMEOUT)
+                    if action == "password":
+                        printer.client.post(installer.PASSWORD_PATH, {"password": job["text"]},
+                                            timeout=installer.GCODE_TIMEOUT)
+                    else:
+                        printer.client.gcode(script, timeout=installer.GCODE_TIMEOUT)
                     watch.note("")
                 except MoonrakerError as error:
                     watch.note(str(error))

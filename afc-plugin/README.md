@@ -253,9 +253,14 @@ Then:
   what follows a `;` or `#`. The script has no terminal it could ask a password
   on, so a step that needs `sudo` with a password fails, and the window says
   so. A password prompt that reads the script's input, as `su` does on a
-  Snapmaker U1 to restart Klipper, shows on the screen, but the window sends it
-  no answer, since G-code goes to Klipper's log, and says to finish that step
-  over SSH. When the script restarts Klipper to apply its changes, the window keeps
+  Snapmaker U1 to restart Klipper, shows on the screen, and the window offers a
+  password box while AFC says the script's terminal is not echoing (its
+  `asks_password`). The password goes in a POST to AFC's
+  `afc/installer_password` endpoint, never as G-code, which Moonraker keeps in
+  its console history, and AFC types it into the script only while the terminal
+  is not echoing, so it shows neither on the screen nor in `AFC_installer.log`.
+  An AFC without the endpoint gets no box, and the window says to finish that
+  step over SSH. When the script restarts Klipper to apply its changes, the window keeps
   its last screen and says Klipper restarted. A window closed while the script
   runs leaves it running, and the row's **Show updater** or **Show installer**
   opens it again; **Stop** interrupts it as Ctrl+C does. Neither starts while

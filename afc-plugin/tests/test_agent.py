@@ -1368,6 +1368,52 @@ class InstallerTest(Case):
         self.settle()
         self.assertEqual(self.fake.scripts, ["AFC_INSTALLER_STOP"])
 
+    def asking_password(self, asks=True):
+        """The script at su's prompt, its terminal not echoing when `asks`, and
+        no asks_password in AFC's status when it is None, as an older AFC."""
+        self.fake.logs["AFC_installer.log"] = self.MENU + b"Q\r\nPassword: "
+        self.fake.objects["AFC_installer"]["size"] = len(self.fake.logs["AFC_installer.log"])
+        if asks is not None:
+            self.fake.objects["AFC_installer"]["asks_password"] = asks
+        self.connect()
+        self.installer(action="watch", on=True)
+
+    def test_a_password_goes_to_afcs_endpoint_and_never_as_gcode(self):
+        self.asking_password()
+        screen = self.screens()[-1]["installer"]
+        self.assertEqual((screen["hint"], screen["password"]), ("password", True))
+        self.assertEqual(self.installer(action="password", text="snap;#maker"), 0)
+        self.settle()
+        self.assertEqual(self.fake.passwords, ["snap;#maker"])
+        self.assertEqual(self.fake.scripts, [])
+        self.assertEqual(self.screens()[-1]["installer"]["error"], "")
+
+    def test_no_password_goes_while_the_terminal_echoes(self):
+        self.asking_password(asks=False)
+        self.assertFalse(self.screens()[-1]["installer"]["password"])
+        self.installer(action="password", text="snapmaker")
+        self.settle()
+        self.assertEqual(self.screens(2)[-1]["installer"]["error"], installer.NOT_ASKING)
+        self.assertEqual((self.fake.passwords, self.fake.scripts), ([], []))
+
+    def test_an_afc_without_the_endpoint_offers_no_password_box(self):
+        self.fake.password_endpoint = False
+        self.asking_password(asks=None)
+        screen = self.screens()[-1]["installer"]
+        self.assertEqual((screen["hint"], screen["password"]), ("password", False))
+        self.installer(action="password", text="snapmaker")
+        self.settle()
+        self.assertEqual(self.fake.passwords, [])
+
+    def test_a_password_afc_refuses_says_why_and_not_what(self):
+        self.fake.password_error = "AFC's installer is not asking for a password"
+        self.asking_password()
+        self.installer(action="password", text="snapmaker")
+        self.settle()
+        error = self.screens(2)[-1]["installer"]["error"]
+        self.assertEqual(error, "AFC's installer is not asking for a password")
+        self.assertNotIn("snapmaker", error)
+
     def test_a_start_afc_refuses(self):
         self.fake.objects["AFC_installer"].update(running=False, result="done", session=1)
         self.fake.gcode_error = "AFC's installer cannot run while printing"
@@ -1381,6 +1427,7 @@ class InstallerTest(Case):
     def test_requests_it_cannot_take(self):
         self.connect()
         for request in ({"action": "start", "mode": "remove"}, {"action": "answer", "text": 5}, {"action": "go"},
+                        {"action": "password", "text": None},
                         {"action": "start", "mode": "update", "branch": "DEV\nFIRMWARE_RESTART"},
                         {"action": "start", "mode": "update", "branch": 5}):
             self.assertEqual(self.installer(**request), afc_agent.ERR_INVALID_RESULT)

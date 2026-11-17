@@ -35,6 +35,8 @@ class FakeMoonraker:
     timelapse moonraker-timelapse's settings, or None for a 404 (no component)
     offline   True to answer everything 503, as Moonraker does while Klipper restarts
     gcode_store  /server/gcode_store entries ({"message", "time", "type"}), oldest first
+    passwords the passwords POSTed to AFC_installer's endpoint, which answers
+              password_error when set, and 404 when password_endpoint is False
     """
 
     def __init__(self):
@@ -67,6 +69,9 @@ class FakeMoonraker:
         self.timelapse = None
         self.offline = False
         self.gcode_store = []
+        self.passwords = []
+        self.password_error = ""
+        self.password_endpoint = True
         self.gcode_help = {}  # /printer/gcode/help: command -> description
         self.requests = []   # (method, path, body)
         self.scripts = []    # G-code scripts run
@@ -154,6 +159,11 @@ class FakeMoonraker:
             if self.gcode_error:
                 return 400, {"error": {"code": 400, "message": self.gcode_error}}
             return 200, {"result": "ok"}
+        if method == "POST" and path == "/printer/afc/installer_password" and self.password_endpoint:
+            self.passwords.append(body.get("password"))
+            if self.password_error:
+                return 400, {"error": {"code": 400, "message": self.password_error}}
+            return 200, {"result": {"sent": True}}
         if method == "GET" and path == "/server/gcode_store":
             count = int(query.get("count") or 100)
             return 200, {"result": {"gcode_store": self.gcode_store[-count:]}}

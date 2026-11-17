@@ -8,8 +8,11 @@ screen a terminal would show (Screen), which it sends to the window with the
 answers the screen's prompt takes (choices()). The window's answers go to
 AFC_INSTALLER_ANSWER as hex digits (answer_gcode()), since Klipper's G-code
 drops what follows a ; or #. No answer goes to a password prompt, such as the
-one su shows on a Snapmaker U1 to restart Klipper: G-code goes to Klipper's
-log.
+one su shows on a Snapmaker U1 to restart Klipper: Moonraker keeps every
+G-code line in its console history. A password goes in a POST to AFC's
+afc/installer_password endpoint instead (PASSWORD_PATH), which an AFC that
+has it says it takes by its asks_password status: true while the script's
+terminal waits on input it does not echo.
 
 The script restarts Klipper when it changed AFC's files, which ends the
 session with Klipper. Its log keeps what it showed, so the window reads the
@@ -25,7 +28,7 @@ import re
 from .moonraker import MoonrakerError
 
 OBJECT = "AFC_installer"  # AFC's Klipper object that runs it
-FIELDS = ["available", "why", "running", "mode", "session", "size", "result", "exit_code"]
+FIELDS = ["available", "why", "running", "mode", "session", "size", "result", "exit_code", "asks_password"]
 # What the Update page's buttons need, read at each push.
 SUMMARY = ["available", "why", "git", "branch", "running", "mode"]
 LOG_NAME = "AFC_installer.log"
@@ -37,6 +40,8 @@ LINES = 400          # lines the screen keeps
 WIDTH = 300          # characters it keeps of a line
 GCODE_TIMEOUT = 30.0
 NO_PASSWORDS = "No answer is sent to a password prompt from here: G-code goes to Klipper's log."
+NOT_ASKING = "The script is not asking for a password."
+PASSWORD_PATH = "/printer/afc/installer_password"  # AFC_installer's endpoint, through Moonraker
 _PENDING_MAX = 4096  # characters an unfinished escape sequence may hold before it is dropped
 # A branch the window may start the script on, as AFC_INSTALLER takes it: nothing in it ends the
 # G-code line early or reads as one of the script's options.
@@ -397,6 +402,11 @@ class Watch:
         the window goes to."""
         return bool(_PASSWORD.search(self.screen.prompt()))
 
+    def takes_password(self) -> bool:
+        """Whether the window may send a password: the script runs and AFC
+        says its terminal waits on input it does not echo."""
+        return self.state.get("running") is True and not self.away and self.state.get("asks_password") is True
+
     def start(self) -> None:
         """A start was sent: the screen is cleared for the session it starts."""
         self.screen = Screen()
@@ -478,4 +488,5 @@ class Watch:
                 "exit_code": None if self.ended or not isinstance(exit_code, int) else exit_code,
                 "starting": self.starting, "away": self.away, "ended": self.ended, "error": self.error,
                 "hint": hint(lines, self.screen.prompt() if live else ""), "lines": lines,
-                "choices": choices(lines, self.screen.prompt()) if live else []}
+                "choices": choices(lines, self.screen.prompt()) if live else [],
+                "password": self.takes_password()}

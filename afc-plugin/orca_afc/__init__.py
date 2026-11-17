@@ -13,7 +13,7 @@ from .agent import AFCAgent
 from .page import AFCPage
 from .postprocess import AFCGcode
 
-__version__ = "0.2.105"
+__version__ = "0.2.106"
 
 
 @orca.plugin

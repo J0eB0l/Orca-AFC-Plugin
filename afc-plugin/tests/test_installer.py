@@ -379,6 +379,19 @@ class WatchTest(unittest.TestCase):
         message = self.update(status(2, len(self.log.data), running=False, result="stopped"), 1.0)
         self.assertEqual((message["hint"], message["choices"]), ("", []))
 
+    def test_the_password_box_follows_afcs_terminal(self):
+        self.log.data = UPDATE_MENU + b"Q\r\nRestarting Klipper...\r\nPassword: "
+        message = self.update(dict(status(2, len(self.log.data)), asks_password=True))
+        self.assertTrue(message["password"] and self.watch.takes_password())
+        # An older AFC says nothing of its terminal, so the window offers no box.
+        self.assertFalse(self.update(status(2, len(self.log.data)), 1.0)["password"])
+        # Nor once Klipper stops answering, or the session ended.
+        self.update(dict(status(2, len(self.log.data)), asks_password=True), 2.0)
+        self.assertFalse(self.update(None, 3.0)["password"])
+        message = self.update(dict(status(2, len(self.log.data), running=False, result="done"), asks_password=True),
+                              4.0)
+        self.assertFalse(message["password"] or self.watch.takes_password())
+
     def test_a_failed_session(self):
         message = self.update(status(4, 0, running=False, result="failed", exit_code=1))
         self.assertEqual((message["result"], message["exit_code"], message["choices"]), ("failed", 1, []))
