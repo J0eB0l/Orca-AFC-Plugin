@@ -1421,12 +1421,15 @@ else:
             self._web.submit(read)
 
         def _device_job(self, printer: _Printer, row_id: str, state: str = "", message: str = "",
-                        progress: int = -1, push: bool = False) -> None:
+                        progress: int = -1, push: bool = False, arrived: tuple = ()) -> None:
             """What the update the agent runs on a row is doing, shown on the
-            row; no state ends it, so the printer's own report shows again."""
+            row; no state ends it, so the printer's own report shows again.
+            `arrived` is (version, message): the message the row shows instead
+            once it reports that version."""
             with self._lock:
                 if state:
-                    printer.device_jobs[row_id] = {"state": state, "message": message, "progress": progress}
+                    printer.device_jobs[row_id] = {"state": state, "message": message, "progress": progress,
+                                                   "arrived": arrived}
                 else:
                     printer.device_jobs.pop(row_id, None)
             if push:
@@ -1501,7 +1504,8 @@ else:
             except MoonrakerError as error:
                 self._device_job(printer, row_id, "failed", str(error), push=True)
                 return
-            self._device_job(printer, row_id, "done", "The BridgeBox is restarting on %s" % version, push=True)
+            self._device_job(printer, row_id, "done", "The BridgeBox is restarting on %s" % version, push=True,
+                             arrived=(version, "The BridgeBox now runs %s (was %s)" % (version, row["version"])))
 
         def _update_display(self, printer: _Printer, row: dict) -> None:
             """A display's update: the display image from GitHub, sent to the
@@ -1523,7 +1527,8 @@ else:
                 self._device_job(printer, row_id, "failed",
                                  "The display did not take the update: %s" % devices.reason(error), push=True)
                 return
-            self._device_job(printer, row_id, "done", "The display is restarting on %s" % version, push=True)
+            self._device_job(printer, row_id, "done", "The display is restarting on %s" % version, push=True,
+                             arrived=(version, "The display now runs %s (was %s)" % (version, row["version"])))
 
         def _installer_command(self, printer: _Printer, job: dict) -> int:
             """The installer window (installer.py): watch, while it is open, then

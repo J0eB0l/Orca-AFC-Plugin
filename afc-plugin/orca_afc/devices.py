@@ -242,7 +242,9 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
     for row in out:
         job = (jobs or {}).get(row["id"])
         if job:
-            row.update(state=job.get("state", ""), message=job.get("message", ""), progress=job.get("progress", -1))
+            arrived = job.get("arrived") or ()
+            message = arrived[1] if arrived and row["version"] == arrived[0] else job.get("message", "")
+            row.update(state=job.get("state", ""), message=message, progress=job.get("progress", -1))
         row["newer"] = newer(row["version"], row["latest"])
         row["ready"] = (row["updatable"] and idle and not busy and not row["do"].get("offline")
                         and (row["newer"] or row["resume"]))

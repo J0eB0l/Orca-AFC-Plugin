@@ -1188,6 +1188,11 @@ class BridgeBoxUpdateTest(Case):
         self.assertEqual(self.fake.scripts, ["AFC_BAMBU_FLASH UNIT=Bambu_AMS_1 FILE=bridgebox/signed_s3.bin"])
         bridge = self.rows(3)[self.BRIDGE]
         self.assertEqual((bridge["state"], bridge["message"]), ("done", "The BridgeBox is restarting on AFC-2.94"))
+        # Once AFC reports the new version, the row says the BridgeBox is on it.
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"]["bridge_fw"] = "AFC-2.94"
+        self.agent._printers()[0].devices_due = 0.0  # the next push reads the rows again
+        bridge = self.rows(4)[self.BRIDGE]
+        self.assertEqual((bridge["version"], bridge["message"]), ("AFC-2.94", "The BridgeBox now runs AFC-2.94 (was AFC-2.93)"))
 
     def test_a_bridgebox_that_refuses_the_image(self):
         image, manifest = test_devices.bridge_image(294)
@@ -1224,6 +1229,10 @@ class BridgeBoxUpdateTest(Case):
         self.assertEqual(send.call_args[0][:2], ("http://192.168.1.50", image))
         display = self.rows(3)[self.DISPLAY]
         self.assertEqual((display["state"], display["message"]), ("done", "The display is restarting on AFC-1.61"))
+        self.fake.database[devices.DISPLAY_NAMESPACE]["a0b1c2d3e4f5"].update(version="AFC-1.61", seq=2)
+        self.agent._printers()[0].devices_due = 0.0  # the next push reads the rows again
+        display = self.rows(4)[self.DISPLAY]
+        self.assertEqual((display["version"], display["message"]), ("AFC-1.61", "The display now runs AFC-1.61 (was AFC-1.60)"))
 
     def test_a_display_that_does_not_answer(self):
         self.ready()

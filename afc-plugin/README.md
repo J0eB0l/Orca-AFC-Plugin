@@ -236,8 +236,9 @@ Then:
   the bridge with `AFC_BAMBU_FLASH`; an AMS unit runs `AFC_BAMBU_FIRMWARE` with
   `CONFIRM=1`, or finishes an update that stopped; a display gets its image
   straight from OrcaSlicer at its address, after OrcaSlicer asks once whether it
-  may reach it. Nothing updates while the printer prints or while another
-  update runs. A display keeps its address and version in Moonraker's database
+  may reach it. The row says the part is restarting on the new version, then
+  that it runs it once the printer reports it. Nothing updates while the
+  printer prints or while another update runs. A display keeps its address and version in Moonraker's database
   (namespace `bridgebox_display`) and rewrites them every 10 minutes; one that
   stops for half an hour leaves the page. A BridgeBox that does not report its
   chip gets no newest version or **Update**.
