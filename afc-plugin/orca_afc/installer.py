@@ -30,7 +30,7 @@ from .moonraker import MoonrakerError
 OBJECT = "AFC_installer"  # AFC's Klipper object that runs it
 FIELDS = ["available", "why", "running", "mode", "session", "size", "result", "exit_code", "asks_password"]
 # What the Update page's buttons need, read at each push.
-SUMMARY = ["available", "why", "git", "branch", "running", "mode"]
+SUMMARY = ["available", "why", "git", "branch", "running", "mode", "update"]
 LOG_NAME = "AFC_installer.log"
 MODES = ("update", "install")
 EVERY = 0.5          # seconds between reads while a window is open
@@ -338,14 +338,17 @@ def hint(lines: list, prompt: str = "") -> str:
 
 def summary(status) -> dict:
     """The Update page's view of the installer, from AFC's object at a push:
-    {} when AFC has none (an older AFC), so the page offers no window, and
-    git and branch only from an AFC that can run it on another branch."""
+    {} when AFC has none (an older AFC), so the page offers no window,
+    git and branch only from an AFC that can run it on another branch, and
+    update only from an AFC that says whether its updater runs there."""
     if not isinstance(status, dict) or not isinstance(status.get("available"), bool):
         return {}
     out = {"available": status["available"], "why": str(status.get("why") or ""),
            "running": status.get("running") is True, "mode": str(status.get("mode") or "")}
     if isinstance(status.get("git"), bool):  # an AFC that runs it on a branch the window names
         out.update(git=status["git"], branch=str(status.get("branch") or ""))
+    if isinstance(status.get("update"), bool):  # false where only the installer runs, as on a U1
+        out["update"] = status["update"]
     return out
 
 

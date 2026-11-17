@@ -269,7 +269,9 @@ Then:
   AFC's checkout to that branch first; the box starts on the branch the checkout
   is on. Where AFC's folder is a copy without git, as on a Snapmaker U1, the
   script runs on the files the copy holds and only shows the branch, `main`
-  unless one is chosen.
+  unless one is chosen. On a Snapmaker U1, AFC runs only the installer, which
+  changes AFC's configs and leaves Klipper's modules alone, so the row has no
+  **Run updater** there (`AFC_installer`'s `update` is false).
 - **Print** opens OrcaSlicer's print dialog, where each filament gets a tray, so a
   lane. The agent renumbers the file's tool changes to those T numbers, adds the
   lane-change purges, spool flow K and U1 top cover mode the AFC G-code step adds

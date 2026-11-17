@@ -196,6 +196,11 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(installer.summary({"available": True, "why": "", "git": False, "branch": None,
                                             "running": False, "mode": ""}),
                          {"available": True, "why": "", "git": False, "branch": "", "running": False, "mode": ""})
+        # A Snapmaker U1's AFC runs the installer only, for configs.
+        self.assertEqual(installer.summary({"available": True, "why": "", "git": False, "branch": "main",
+                                            "running": False, "mode": "", "update": False}),
+                         {"available": True, "why": "", "git": False, "branch": "main", "running": False,
+                          "mode": "", "update": False})
         # An AFC from before branches answers them null, and the page gets neither.
         self.assertEqual(installer.summary({"available": False, "why": "root", "git": None, "branch": None,
                                             "running": None, "mode": None}),
