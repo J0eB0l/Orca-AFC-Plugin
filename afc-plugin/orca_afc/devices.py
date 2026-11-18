@@ -15,6 +15,10 @@ firmware, the newest one out, and an Update that writes the newest.
   (DISPLAY_NAMESPACE, one item per display, keyed by its MAC address). The
   newest is the display image on the BridgeBox branch, whose app header holds
   its version. Update sends that image to the display's own update server.
+- A USB BoxTurtle reports the firmware its board runs (turtle.firmware).
+  The newest is the image on the BoxTurtle firmware's branch, whose manifest
+  names its version and protocol. Update puts the image and its manifest in
+  the printer's config folder and has AFC_TURTLE_FLASH write them over USB.
 
 Nothing updates while the printer prints, nor while another update runs."""
 
@@ -33,6 +37,8 @@ FIRMWARE = "AFC_BambuAMS_firmware"  # AFC's AMS updater, in Klipper
 FIRMWARE_FIELDS = ["updater", "running", "waiting", "result", "units"]
 UNIT_FIELDS = ["ams_model", "fw_version", "bridge_fw", "bridge_port", "bridge_wifi", "bridge_link", "bridge_chip",
                "bridge_connected"]
+TURTLE_TYPE = "BOXTURTLEUSB"  # a USB BoxTurtle's unit type, as bambu_units() compares types
+TURTLE_FIELDS = ["turtle"]
 DISPLAY_NAMESPACE = "bridgebox_display"
 EVERY = 30.0             # seconds between reads while no update runs; each push while one does
 DISPLAY_STALE = 1800.0   # seconds a display's record may stay as it was: it rewrites it every 10 minutes
@@ -41,8 +47,13 @@ NEWEST_RETRY = 600.0     # ... and before a read that found nothing is tried aga
 FIRMWARES = "https://raw.githubusercontent.com/J0eB0l/AFC-Klipper-Add-On/BridgeBox/firmwares"
 BRIDGE_IMAGES = {"ESP32S3": FIRMWARES + "/BridgeBox/signed_s3.bin"}  # chip -> its signed image
 DISPLAY_IMAGE = FIRMWARES + "/BridgeBox_Display/bridgebox-update-app-0x10000.bin"
+# The BoxTurtle firmware's own branch, until it joins the BridgeBox branch.
+TURTLE_IMAGE = ("https://raw.githubusercontent.com/J0eB0l/AFC-Klipper-Add-On/BridgeBox-turtle/firmwares"
+                "/BoxTurtleUSB/boxturtle.bin")
 BRIDGE_FOLDER = "bridgebox"  # in the printer's config folder, beside printer.cfg
+TURTLE_FOLDER = "boxturtle"  # ... where AFC_TURTLE_FLASH looks first
 FLASH_TIMEOUT = 600.0    # seconds AFC_BAMBU_FLASH may take: the whole image goes over the bridge link
+TURTLE_TIMEOUT = 300.0   # ... and AFC_TURTLE_FLASH: bootloader, write, check, restart
 CONTACT_TIMEOUT = 4.0    # seconds to wait for a display that is asked for its state
 SEND_TIMEOUT = 120.0     # ... and for each part of the image it is sent
 
@@ -96,10 +107,20 @@ def _get(url: str, opener, timeout: float, size: int = 0) -> bytes:
         return answer.read(size) if size else answer.read()
 
 
+def turtle_manifest(raw: bytes) -> dict:
+    """A BoxTurtle image's manifest, checked to be one. ValueError when not."""
+    manifest = json.loads(raw.decode("utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("format") != "BTFW1" \
+            or not isinstance(manifest.get("version"), str) or not manifest["version"]:
+        raise ValueError("the manifest on GitHub is not a BoxTurtle firmware manifest")
+    return manifest
+
+
 def read_newest(opener=urllib.request.urlopen, timeout: float = 15.0) -> dict:
     """The newest firmware on GitHub: {"bridge": {chip: version}, "display":
-    version}, with what GitHub did not answer for left out."""
-    out = {"bridge": {}, "display": ""}
+    version, "turtle": {"version", "proto"}}, with what GitHub did not answer
+    for left out."""
+    out = {"bridge": {}, "display": "", "turtle": {}}
     for chip, url in BRIDGE_IMAGES.items():
         try:
             manifest = json.loads(_get(url + ".manifest.json", opener, timeout).decode("utf-8"))
@@ -110,6 +131,11 @@ def read_newest(opener=urllib.request.urlopen, timeout: float = 15.0) -> dict:
         out["display"] = app_version(_get(DISPLAY_IMAGE, opener, timeout, _HEAD))
     except (urllib.error.URLError, OSError, ValueError):
         pass
+    try:
+        manifest = turtle_manifest(_get(TURTLE_IMAGE + ".json", opener, timeout))
+        out["turtle"] = {"version": manifest["version"], "proto": str(manifest.get("proto") or "")}
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
     return out
 
 
@@ -117,18 +143,22 @@ def read_newest(opener=urllib.request.urlopen, timeout: float = 15.0) -> dict:
 
 def query(snapshot) -> dict:
     """The Klipper objects to read for the page: AFC's AMS updater and each
-    Bambu unit; {} for a printer with none."""
+    Bambu unit, and each USB BoxTurtle; {} for a printer with none."""
     units = bambu_units(snapshot)
-    if not units:
-        return {}
-    out = {FIRMWARE: list(FIRMWARE_FIELDS)}
+    out = {FIRMWARE: list(FIRMWARE_FIELDS)} if units else {}
     for unit in units:
         out["AFC_%s %s" % (unit.type, unit.name)] = list(UNIT_FIELDS)
+    for unit in turtle_units(snapshot):
+        out["AFC_%s %s" % (unit.type, unit.name)] = list(TURTLE_FIELDS)
     return out
 
 
 def bambu_units(snapshot) -> list:
     return [u for u in getattr(snapshot, "units", None) or [] if u.type.upper().startswith("BAMBU")]
+
+
+def turtle_units(snapshot) -> list:
+    return [u for u in getattr(snapshot, "units", None) or [] if u.type.upper() == TURTLE_TYPE]
 
 
 def display_url(value) -> str:
@@ -167,12 +197,12 @@ def displays(items, seen: dict, now: float) -> list:
 
 
 def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_state: str) -> list:
-    """The page's rows: each BridgeBox, the AMS units on it, then the
-    displays. `status` is the objects query of query(), `found` displays(),
+    """The page's rows: each BridgeBox, the AMS units on it, the displays,
+    then each USB BoxTurtle. `status` is the objects query of query(), `found` displays(),
     `newest` read_newest(), `jobs` the updates the agent runs (row id ->
     {"state", "message", "progress"}) and `print_state` print_stats' state.
 
-    Each row is {"id", "kind" (bridge, ams or display), "icon", "title",
+    Each row is {"id", "kind" (bridge, ams, display or turtle), "icon", "title",
     "model", "link", "units", "address", "version", "latest", "newer",
     "updatable" (Orca can update it), "ready" (... now), "resume" (Update
     finishes an update that stopped), "state" ("", running, done or failed),
@@ -236,8 +266,12 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
         row.update(address=urllib.parse.urlsplit(display["url"]).netloc, version=display["version"], latest=latest,
                    updatable=bool(latest), do={"url": display["url"], "version": latest})
         out.append(row)
+    for unit in turtle_units(snapshot):
+        out.append(_turtle_row(unit, obj("AFC_%s %s" % (unit.type, unit.name)).get("turtle"),
+                               newest.get("turtle")))
 
-    busy = running or any(job.get("state") == "running" for job in (jobs or {}).values())
+    busy = running or any(job.get("state") == "running" for job in (jobs or {}).values()) \
+        or any(row["state"] == "running" for row in out)
     idle = str(print_state or "").lower() not in _PRINTING
     for row in out:
         job = (jobs or {}).get(row["id"])
@@ -245,6 +279,10 @@ def rows(status: dict, snapshot, found: list, newest: dict, jobs: dict, print_st
             arrived = job.get("arrived") or ()
             message = arrived[1] if arrived and row["version"] == arrived[0] else job.get("message", "")
             row.update(state=job.get("state", ""), message=message, progress=job.get("progress", -1))
+            live = row["do"].get("live")
+            if job.get("state") == "running" and live:
+                # The printer's own words on the part of the update it runs.
+                row.update(message=live["message"], progress=live["progress"])
         row["newer"] = newer(row["version"], row["latest"])
         row["ready"] = (row["updatable"] and idle and not busy and not row["do"].get("offline")
                         and (row["newer"] or row["resume"]))
@@ -272,6 +310,44 @@ def _row(row_id: str, kind: str, icon: str, title: str) -> dict:
     return {"id": row_id, "kind": kind, "icon": icon, "title": title, "model": "", "link": "", "units": "",
             "address": "", "version": "", "latest": "", "newer": False, "updatable": False, "ready": False,
             "resume": False, "state": "", "message": "", "progress": -1, "do": {}}
+
+
+def _turtle_row(unit, turtle, newest) -> dict:
+    """A USB BoxTurtle's row: the firmware its board runs and the newest on
+    GitHub, which it can take when it speaks the protocol of the AFC on the
+    printer. AFC's own report on an update shows while it runs or after it
+    failed; a board left in its bootloader takes Update to finish."""
+    turtle = turtle if isinstance(turtle, dict) else {}
+    newest = newest if isinstance(newest, dict) else {}
+    row = _row("turtle:" + unit.name, "turtle", "boxturtle", unit.name)
+    port = str(turtle.get("port") or "")
+    connected = bool(turtle.get("connected"))
+    usb = port.startswith("/dev/")
+    latest = str(newest.get("version") or "")
+    fits = not turtle.get("proto") or newest.get("proto") == turtle.get("proto")
+    row.update(model="BoxTurtle", link="BridgeHub" if port.startswith("tcp:") else "USB" if usb else "",
+               version=str(turtle.get("firmware") or "") if connected else "", latest=latest,
+               resume=not connected and bool(turtle.get("bootloader")),
+               do={"unit": unit.name, "version": latest})
+    row["updatable"] = bool(latest and fits and turtle.get("flash_tool") and (connected and usb or row["resume"]))
+    if not connected and not row["resume"]:
+        row["message"] = "Not connected to the printer"
+    elif connected and not usb:
+        row["message"] = "Its firmware is updated over USB"
+    elif latest and not fits:
+        row["message"] = "The newest firmware needs a newer AFC; update AFC first"
+    elif latest and not turtle.get("flash_tool"):
+        row["message"] = "Katapult's flashtool is not installed on the printer (~/katapult)"
+    elif row["resume"]:
+        row["state"], row["message"] = "failed", "The BoxTurtle is waiting in its bootloader; Update finishes it"
+    flash = turtle.get("flash") if isinstance(turtle.get("flash"), dict) else {}
+    if flash.get("state") in ("running", "failed") and flash.get("message"):
+        progress = flash.get("progress")
+        live = {"message": str(flash["message"]), "progress": progress if isinstance(progress, int) else -1}
+        if flash["state"] == "running":
+            row["do"]["live"] = live
+        row.update(state=flash["state"], **live)
+    return row
 
 
 def _ams_row(unit, own: dict, info, firmware: dict, result: dict, running: bool, waiting: str) -> dict:
@@ -335,6 +411,17 @@ def bridge_files(chip: str, opener=urllib.request.urlopen, timeout: float = 60.0
     if manifest.get("len") != len(image) or manifest.get("sha512") != hashlib.sha512(image).hexdigest():
         raise ValueError("the image on GitHub does not match its manifest; try again later")
     return image, manifest_raw, bridge_version(manifest["ver"])
+
+
+def turtle_files(opener=urllib.request.urlopen, timeout: float = 60.0) -> tuple:
+    """The BoxTurtle image and its manifest from GitHub, as (image, manifest
+    bytes, version). ValueError when they do not belong together."""
+    manifest_raw = _get(TURTLE_IMAGE + ".json", opener, timeout)
+    image = _get(TURTLE_IMAGE, opener, timeout)
+    manifest = turtle_manifest(manifest_raw)
+    if manifest.get("len") != len(image) or manifest.get("sha256") != hashlib.sha256(image).hexdigest():
+        raise ValueError("the BoxTurtle image on GitHub does not match its manifest; try again later")
+    return image, manifest_raw, manifest["version"]
 
 
 def display_image(opener=urllib.request.urlopen, timeout: float = 60.0) -> tuple:

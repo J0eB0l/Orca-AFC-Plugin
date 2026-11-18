@@ -98,7 +98,25 @@ def printer_status(**units):
     return status
 
 
+def turtle_image(version="0.1.2", proto="boxturtle-1"):
+    """A BoxTurtle image and its manifest."""
+    image = struct.pack("<II", 0x20000000, 0x08020101) + b"\x55" * 100
+    manifest = {"format": "BTFW1", "version": version, "proto": proto, "len": len(image),
+                "sha256": hashlib.sha256(image).hexdigest()}
+    return image, json.dumps(manifest).encode()
+
+
+def turtle_status(**changes):
+    """A USB BoxTurtle's status, as AFC reports it."""
+    status = {"connected": True, "port": "/dev/serial/by-id/usb-AFC_BoxTurtle_0E0010000B51333235363331-if00",
+              "firmware": "0.1.1", "proto": "boxturtle-1", "flash_tool": True,
+              "flash": {"state": "", "message": "", "progress": -1, "version": ""}}
+    status.update(changes)
+    return {"turtle": status}
+
+
 NEWEST = {"bridge": {"ESP32S3": "AFC-2.94"}, "display": "AFC-1.61"}
+TURTLE_NEWEST = dict(NEWEST, turtle={"version": "0.1.2", "proto": "boxturtle-1"})
 DISPLAY = [{"key": "a0b1c2d3e4f5", "url": "http://192.168.1.50", "version": "AFC-1.60"}]
 
 
@@ -128,17 +146,22 @@ class VersionTest(unittest.TestCase):
 
 
 class NewestTest(unittest.TestCase):
-    def test_bridge_and_display(self):
+    def test_bridge_display_and_boxturtle(self):
         image, manifest = bridge_image(294)
-        web = Web({BRIDGE + ".manifest.json": manifest, devices.DISPLAY_IMAGE: app_image("AFC-1.61")})
-        self.assertEqual(devices.read_newest(web), {"bridge": {"ESP32S3": "AFC-2.94"}, "display": "AFC-1.61"})
-        # Only the head of the display image is read.
+        _, turtle = turtle_image("0.1.2")
+        web = Web({BRIDGE + ".manifest.json": manifest, devices.DISPLAY_IMAGE: app_image("AFC-1.61"),
+                   devices.TURTLE_IMAGE + ".json": turtle})
+        self.assertEqual(devices.read_newest(web), {"bridge": {"ESP32S3": "AFC-2.94"}, "display": "AFC-1.61",
+                                                    "turtle": {"version": "0.1.2", "proto": "boxturtle-1"}})
+        # Only the head of the display image is read, and only the BoxTurtle's manifest.
         self.assertIn((devices.DISPLAY_IMAGE, "bytes=0-511"), web.asked)
+        self.assertNotIn(devices.TURTLE_IMAGE, [url for url, _ in web.asked])
 
     def test_what_github_does_not_answer_is_left_out(self):
-        self.assertEqual(devices.read_newest(Web()), {"bridge": {}, "display": ""})
-        web = Web({BRIDGE + ".manifest.json": b"not json", devices.DISPLAY_IMAGE: b"\0" * 512})
-        self.assertEqual(devices.read_newest(web), {"bridge": {}, "display": ""})
+        self.assertEqual(devices.read_newest(Web()), {"bridge": {}, "display": "", "turtle": {}})
+        web = Web({BRIDGE + ".manifest.json": b"not json", devices.DISPLAY_IMAGE: b"\0" * 512,
+                   devices.TURTLE_IMAGE + ".json": b"[]"})
+        self.assertEqual(devices.read_newest(web), {"bridge": {}, "display": "", "turtle": {}})
 
 
 class QueryTest(unittest.TestCase):
@@ -150,6 +173,10 @@ class QueryTest(unittest.TestCase):
     def test_nothing_without_a_bambu_unit(self):
         self.assertEqual(devices.query(snapshot(("Turtle_1", "Box_Turtle"))), {})
         self.assertEqual(devices.query(None), {})
+
+    def test_a_usb_boxturtle(self):
+        self.assertEqual(devices.query(snapshot(("Turtle_1", "BoxTurtleUSB"))),
+                         {"AFC_BoxTurtleUSB Turtle_1": ["turtle"]})
 
 
 class DisplaysTest(unittest.TestCase):
@@ -307,6 +334,106 @@ class RowsTest(unittest.TestCase):
         self.assertEqual(devices.ams_gcode(rows(status)[1]),
                          "AFC_BAMBU_FIRMWARE UNIT=Bambu_AMS_1 VERSION=00.00.07.10 FILE=n3f_rev5_00.00.07.10.bin "
                          "CONFIRM=1")
+
+
+class TurtleRowsTest(unittest.TestCase):
+    SNAP = snapshot(("Turtle_1", "BoxTurtleUSB"))
+
+    def row(self, newest=TURTLE_NEWEST, jobs=None, state="standby", **turtle):
+        found = devices.rows({"AFC_BoxTurtleUSB Turtle_1": turtle_status(**turtle)}, self.SNAP, [], newest,
+                             jobs or {}, state)
+        self.assertEqual(len(found), 1)
+        return found[0]
+
+    def test_a_usb_boxturtle(self):
+        row = self.row()
+        self.assertEqual((row["id"], row["kind"], row["icon"], row["title"], row["model"], row["link"]),
+                         ("turtle:Turtle_1", "turtle", "boxturtle", "Turtle_1", "BoxTurtle", "USB"))
+        self.assertEqual((row["version"], row["latest"], row["message"]), ("0.1.1", "0.1.2", ""))
+        self.assertTrue(row["newer"] and row["updatable"] and row["ready"])
+        self.assertEqual(row["do"], {"unit": "Turtle_1", "version": "0.1.2"})
+
+    def test_up_to_date(self):
+        row = self.row(firmware="0.1.2")
+        self.assertTrue(row["updatable"])
+        self.assertFalse(row["newer"] or row["ready"])
+
+    def test_nothing_newest_read_yet(self):
+        row = self.row(newest=NEWEST)
+        self.assertEqual(row["latest"], "")
+        self.assertFalse(row["updatable"])
+
+    def test_not_connected(self):
+        row = self.row(connected=False)
+        self.assertEqual((row["version"], row["message"]), ("", "Not connected to the printer"))
+        self.assertFalse(row["updatable"])
+
+    def test_over_a_bridgehub(self):
+        row = self.row(port="tcp:192.168.6.76:4001")
+        self.assertEqual((row["link"], row["message"]), ("BridgeHub", "Its firmware is updated over USB"))
+        self.assertFalse(row["updatable"])
+
+    def test_a_firmware_for_a_newer_afc(self):
+        row = self.row(newest=dict(NEWEST, turtle={"version": "0.2.0", "proto": "boxturtle-2"}))
+        self.assertEqual(row["message"], "The newest firmware needs a newer AFC; update AFC first")
+        self.assertFalse(row["updatable"])
+
+    def test_without_katapults_flashtool(self):
+        row = self.row(flash_tool=False)
+        self.assertEqual(row["message"], "Katapult's flashtool is not installed on the printer (~/katapult)")
+        self.assertFalse(row["updatable"])
+
+    def test_left_in_its_bootloader(self):
+        row = self.row(connected=False, bootloader=True)
+        self.assertTrue(row["resume"] and row["updatable"] and row["ready"])
+        self.assertEqual((row["state"], row["message"]),
+                         ("failed", "The BoxTurtle is waiting in its bootloader; Update finishes it"))
+
+    def test_afc_writing_it(self):
+        flash = {"state": "running", "message": "Writing the firmware", "progress": 42, "version": "0.1.2"}
+        row = self.row(flash=flash)
+        self.assertEqual((row["state"], row["message"], row["progress"]), ("running", "Writing the firmware", 42))
+        self.assertFalse(row["ready"])
+        # While the agent runs the update, AFC's words on its part show.
+        row = self.row(flash=flash, jobs={"turtle:Turtle_1": {"state": "running", "message": "Writing it to the "
+                                                                                               "BoxTurtle",
+                                                              "progress": -1}})
+        self.assertEqual((row["message"], row["progress"]), ("Writing the firmware", 42))
+
+    def test_how_afc_says_it_failed(self):
+        flash = {"state": "failed", "message": "Turtle_1: the BoxTurtle did not start its bootloader",
+                 "progress": -1, "version": "0.1.2"}
+        row = self.row(flash=flash)
+        self.assertEqual((row["state"], row["message"]), ("failed", flash["message"]))
+        self.assertTrue(row["ready"])  # it can be tried again
+
+    def test_with_the_bridgebox_rows(self):
+        status = printer_status()
+        status["AFC_BoxTurtleUSB Turtle_1"] = turtle_status()
+        snap = snapshot(("Bambu_AMS_1", "BambuAMS"), ("Bambu_HT_1", "BambuAMS"), ("Turtle_1", "BoxTurtleUSB"))
+        found = devices.rows(status, snap, DISPLAY, TURTLE_NEWEST, {}, "standby")
+        self.assertEqual([r["kind"] for r in found], ["bridge", "ams", "ams", "display", "turtle"])
+
+
+class TurtleFilesTest(unittest.TestCase):
+    def test_the_image_and_its_manifest(self):
+        image, manifest = turtle_image("0.1.2")
+        web = Web({devices.TURTLE_IMAGE: image, devices.TURTLE_IMAGE + ".json": manifest})
+        self.assertEqual(devices.turtle_files(web), (image, manifest, "0.1.2"))
+
+    def test_an_image_that_does_not_match_its_manifest(self):
+        image, manifest = turtle_image()
+        with self.assertRaisesRegex(ValueError, "does not match its manifest"):
+            devices.turtle_files(Web({devices.TURTLE_IMAGE: image + b"x", devices.TURTLE_IMAGE + ".json": manifest}))
+
+    def test_not_a_manifest(self):
+        image, _ = turtle_image()
+        with self.assertRaisesRegex(ValueError, "not a BoxTurtle firmware manifest"):
+            devices.turtle_files(Web({devices.TURTLE_IMAGE: image, devices.TURTLE_IMAGE + ".json": b'{"x": 1}'}))
+
+    def test_github_not_answering(self):
+        with self.assertRaises(OSError):
+            devices.turtle_files(Web())
 
 
 class BridgeFilesTest(unittest.TestCase):

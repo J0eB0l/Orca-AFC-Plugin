@@ -242,6 +242,18 @@ Then:
   (namespace `bridgebox_display`) and rewrites them every 10 minutes; one that
   stops for half an hour leaves the page. A BridgeBox that does not report its
   chip gets no newest version or **Update**.
+- On a printer with a USB BoxTurtle (`AFC_BoxTurtleUSB`), the **Update** page
+  lists each one with the firmware its board runs and the newest on
+  AFC-Klipper-Add-On's `BridgeBox-turtle` branch, read from the image's
+  manifest every 6 hours. **Update** asks first, checks the image against its
+  manifest, copies both to `boxturtle/` in the printer's config folder and runs
+  `AFC_TURTLE_FLASH`, which restarts the board into its USB bootloader, writes
+  the image with Katapult's `flashtool.py` and waits for the board to report the
+  new version; the row shows AFC's progress while it runs. A board left in its
+  bootloader shows **Update** to finish it. The row has no **Update** when the
+  BoxTurtle is reached through a BridgeHub, when Katapult's flashtool is not on
+  the printer, or when the newest image speaks another protocol than the
+  printer's AFC, which then needs updating first.
 - When AFC can run its own installer for a panel (its `AFC_installer` object,
   on a printer whose Klipper does not run as root), the **Update** page's AFC
   row also has **Run updater** and **Run installer**. Each opens a window on

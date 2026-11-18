@@ -1262,6 +1262,68 @@ class BridgeBoxUpdateTest(Case):
         self.assertEqual(self.fake.scripts, [])
 
 
+class BoxTurtleUpdateTest(Case):
+    """The Update page's USB BoxTurtle row and its Update (devices.py)."""
+
+    ROW = "turtle:Turtle_1"
+
+    def setUp(self):
+        super().setUp()
+        self.fake.webhook["status:"]["AFC"]["Turtle_1"]["system"]["type"] = "BoxTurtleUSB"
+        self.fake.objects["AFC_BoxTurtleUSB Turtle_1"] = test_devices.turtle_status()
+
+    def ready(self):
+        self.connect()
+        with mock.patch.object(devices, "read_newest", return_value=test_devices.TURTLE_NEWEST):
+            self.push()
+            self.agent._web.call(lambda: None, 5)  # GitHub read
+            return {row["id"]: row for row in self.push(2)["afc_devices"]}
+
+    def rows(self, count):
+        return {row["id"]: row for row in self.push(count)["afc_devices"]}
+
+    def update(self):
+        return self.send({"print": {"command": "afc_device_update", "device": self.ROW, "sequence_id": "9"}})
+
+    def test_the_row(self):
+        row = self.ready()[self.ROW]
+        self.assertEqual((row["model"], row["version"], row["latest"], row["ready"]),
+                         ("BoxTurtle", "0.1.1", "0.1.2", True))
+
+    def test_an_update(self):
+        image, manifest = test_devices.turtle_image("0.1.2")
+        self.ready()
+        with mock.patch.object(devices, "turtle_files", return_value=(image, manifest, "0.1.2")):
+            self.assertEqual(self.update(), 0)
+            self.agent._gcode.call(lambda: None, 5)
+        # In the config folder, where AFC_TURTLE_FLASH reads the image and its manifest.
+        self.assertEqual(self.fake.uploads["boxturtle/boxturtle.bin"], image)
+        self.assertEqual(self.fake.uploads["boxturtle/boxturtle.bin.json"], manifest)
+        self.assertEqual(set(self.fake.upload_roots.values()), {"config"})
+        self.assertEqual(self.fake.scripts, ["AFC_TURTLE_FLASH UNIT=Turtle_1 FILE=boxturtle/boxturtle.bin"])
+        row = self.rows(4)[self.ROW]
+        self.assertEqual((row["state"], row["message"]), ("done", "The BoxTurtle now runs 0.1.2 (was 0.1.1)"))
+
+    def test_an_update_afc_refuses(self):
+        image, manifest = test_devices.turtle_image("0.1.2")
+        self.ready()
+        self.fake.gcode_error = "Turtle_1: the BoxTurtle did not start its bootloader"
+        with mock.patch.object(devices, "turtle_files", return_value=(image, manifest, "0.1.2")):
+            self.update()
+            self.agent._gcode.call(lambda: None, 5)
+        row = self.rows(4)[self.ROW]
+        self.assertEqual(row["state"], "failed")
+        self.assertIn("did not start its bootloader", row["message"])
+
+    def test_github_does_not_serve_it(self):
+        self.ready()
+        with mock.patch.object(devices, "turtle_files", side_effect=OSError("timed out")):
+            self.update()
+            self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual((self.fake.uploads, self.fake.scripts), ({}, []))
+        self.assertEqual(self.rows(4)[self.ROW]["message"], "Could not download the BoxTurtle firmware: timed out")
+
+
 class InstallerTest(Case):
     """AFC's updater and installer in the Update page's window (installer.py):
     the push says whether AFC can run them, and the window's watch gets the

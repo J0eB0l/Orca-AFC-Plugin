@@ -415,7 +415,7 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
     `flow_calibration` whether AFC autocal can measure a lane's K here
     (FLOW_K_CALIBRATION), `bed_keepouts` AFC's spots on the bed
     (keepouts.bed_keepouts()), None until read, and `device_rows` the
-    BridgeBox rows of the Update page (devices.rows())."""
+    BridgeBox and BoxTurtle rows of the Update page (devices.rows())."""
     job = job or {}
     def obj(name):
         value = objects.get(name) if isinstance(objects, dict) else None
@@ -835,7 +835,7 @@ class _Printer:
     prompt_until: float = 0.0                         # when to stop reading it (prompt.WATCH)
     manager: AFCManager = field(default_factory=AFCManager)  # its AFC reads, flow K and lane moves
     retry_at: float = 0.0                             # when to try a watched printer that is off again
-    devices: list = field(default_factory=list)       # devices.rows(): the Update page's BridgeBox rows
+    devices: list = field(default_factory=list)       # devices.rows(): the Update page's BridgeBox and BoxTurtle rows
     device_status: dict = field(default_factory=dict) # the last read of devices.query()
     device_items: object = None                       # the displays' items in Moonraker's database, last read
     displays_seen: dict = field(default_factory=dict) # devices.displays()' record of each display
@@ -900,7 +900,7 @@ else:
             self._offers = offers.Offers(self._edits.submit)
             self._latest = {}         # upstream.read(): AFC's newest versions on GitHub
             self._latest_due = 0.0
-            self._newest = {}         # devices.read_newest(): the BridgeBox's newest firmware on GitHub
+            self._newest = {}         # devices.read_newest(): the newest BridgeBox and BoxTurtle firmware on GitHub
             self._newest_due = 0.0
             # The installer window's reads and answers, every installer.EVERY s, from the first window on.
             self._installer = Worker("AFC printer agent installer", tick=self._installer_tick, every=installer.EVERY)
@@ -1370,11 +1370,12 @@ else:
 
             self._web.submit(read)
 
-        # -------------------------------------------------------- the Update page's BridgeBox rows
+        # -------------------------------------------------------- the Update page's BridgeBox and BoxTurtle rows
 
         def _devices(self, printer: _Printer, snapshot, print_state: str) -> None:
-            """The BridgeBox rows (devices.py): the printer's AMS updater, Bambu
-            units and displays, read every devices.EVERY s, and at each push
+            """The BridgeBox and BoxTurtle rows (devices.py): the printer's AMS
+            updater, Bambu units, displays and USB BoxTurtles, read every
+            devices.EVERY s, and at each push
             while an update runs; a failed read keeps the last."""
             wanted = devices.query(snapshot)
             if not wanted:
@@ -1404,7 +1405,7 @@ else:
             printer.devices = devices.rows(printer.device_status, snapshot, found, self._newest, jobs, print_state)
 
         def _newest_firmware(self) -> None:
-            """The BridgeBox's newest firmware on GitHub, read every
+            """The newest BridgeBox and BoxTurtle firmware on GitHub, read every
             devices.NEWEST_EVERY s on the GitHub worker; a read that finds none
             is tried again sooner."""
             if time.monotonic() < self._newest_due:
@@ -1413,7 +1414,7 @@ else:
 
             def read():
                 newest = devices.read_newest()
-                if newest["bridge"] or newest["display"]:
+                if newest["bridge"] or newest["display"] or newest.get("turtle"):
                     self._newest = newest
                 else:
                     self._newest_due = time.monotonic() + devices.NEWEST_RETRY
@@ -1437,10 +1438,11 @@ else:
                 self._work(printer).submit(lambda: self._push(printer))
 
         def _device_update(self, printer: _Printer, job: dict) -> int:
-            """The Update page's Update on a BridgeBox row, which OrcaSlicer
-            asked to confirm. An AMS unit's runs AFC's AMS updater, a BridgeBox's
-            sends it the newest image through AFC_BAMBU_FLASH, and a display's
-            sends the newest display image to the display itself."""
+            """The Update page's Update on a BridgeBox or BoxTurtle row, which
+            OrcaSlicer asked to confirm. An AMS unit's runs AFC's AMS updater, a
+            BridgeBox's sends it the newest image through AFC_BAMBU_FLASH, a
+            display's sends the newest display image to the display itself, and
+            a BoxTurtle's writes the newest through AFC_TURTLE_FLASH."""
             row = next((r for r in printer.devices if r["id"] == job.get("device")), None)
             if row is None or not row["ready"]:
                 return ERR_INVALID_RESULT
@@ -1460,6 +1462,9 @@ else:
             elif row["kind"] == "bridge":
                 self._device_job(printer, row_id, "running", "Downloading the BridgeBox firmware", 0, push=True)
                 self._gcode.submit(lambda: self._flash_bridge(printer, row))
+            elif row["kind"] == "turtle":
+                self._device_job(printer, row_id, "running", "Downloading the BoxTurtle firmware", 0, push=True)
+                self._gcode.submit(lambda: self._flash_turtle(printer, row))
             elif row["kind"] == "display":
                 url = row["do"]["url"]
                 try:
@@ -1506,6 +1511,35 @@ else:
                 return
             self._device_job(printer, row_id, "done", "The BridgeBox is restarting on %s" % version, push=True,
                              arrived=(version, "The BridgeBox now runs %s (was %s)" % (version, row["version"])))
+
+        def _flash_turtle(self, printer: _Printer, row: dict) -> None:
+            """A USB BoxTurtle's update: the image and its manifest from GitHub
+            into the printer's config folder, then AFC_TURTLE_FLASH, which
+            writes them over USB and waits for the board to come back on them."""
+            row_id, unit = row["id"], row["do"]["unit"]
+            name = devices.TURTLE_IMAGE.rsplit("/", 1)[1]
+            try:
+                image, manifest, version = devices.turtle_files()
+            except (OSError, ValueError) as error:
+                self._device_job(printer, row_id, "failed",
+                                 "Could not download the BoxTurtle firmware: %s" % devices.reason(error), push=True)
+                return
+
+            def copied(sent, total):
+                self._device_job(printer, row_id, "running", "Copying it to the printer", sent * 100 // max(total, 1))
+
+            try:
+                printer.client.upload(name + ".json", manifest, folder=devices.TURTLE_FOLDER, root="config")
+                printer.client.upload(name, image, copied, timeout=120.0, folder=devices.TURTLE_FOLDER, root="config")
+                self._device_job(printer, row_id, "running", "Writing it to the BoxTurtle", push=True)
+                printer.client.gcode("AFC_TURTLE_FLASH UNIT=%s FILE=%s/%s" % (unit, devices.TURTLE_FOLDER, name),
+                                     timeout=devices.TURTLE_TIMEOUT)
+            except MoonrakerError as error:
+                self._device_job(printer, row_id, "failed", str(error), push=True)
+                return
+            was = " (was %s)" % row["version"] if row["version"] else ""
+            self._device_job(printer, row_id, "done", "The BoxTurtle now runs %s%s" % (version, was), push=True,
+                             arrived=(version, "The BoxTurtle now runs %s%s" % (version, was)))
 
         def _update_display(self, printer: _Printer, row: dict) -> None:
             """A display's update: the display image from GitHub, sent to the
