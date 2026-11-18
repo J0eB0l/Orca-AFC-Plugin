@@ -2248,6 +2248,8 @@ static std::string agent_device_image(const std::string& icon)
         return "afc_bridgebox";
     if (icon == "display")
         return "afc_bridgebox_display";
+    if (icon == "boxturtle")
+        return "afc_boxturtle";
     if (icon == "ams_ht")
         return "monitor_upgrade_n3s";
     if (icon == "ams_lite")
@@ -2271,6 +2273,15 @@ static void confirm_agent_device_update(const std::string& dev_id, const Machine
         question = format_wxstr(_L("Update the BridgeBox display at %1% to %2%? It restarts once the firmware is "
                                    "written."),
                                 from_u8(device.address), from_u8(device.latest));
+    else if (device.kind == "turtle" && device.resume)
+        // TRN %1% is the name AFC gives a BoxTurtle unit, such as Turtle_1
+        question = format_wxstr(_L("Finish the firmware update of %1%? Its board is waiting in its bootloader."),
+                                from_u8(device.title));
+    else if (device.kind == "turtle")
+        // TRN %1% is the name AFC gives a BoxTurtle unit, such as Turtle_1; %2% the firmware version it gets, such as 0.1.2
+        question = format_wxstr(_L("Update %1% to %2%? Its board restarts to take the firmware, and its lanes are "
+                                   "offline until it is back."),
+                                from_u8(device.title), from_u8(device.latest));
     else if (device.resume)
         // TRN %1% is the name AFC gives an AMS unit, such as Bambu_AMS_1
         question = format_wxstr(_L("Finish the firmware update of %1% that stopped?"), from_u8(device.title));
@@ -2310,9 +2321,9 @@ AgentDevicePanel::AgentDevicePanel(wxWindow* parent, const MachineObject::AgentD
     grid->SetFlexibleDirection(wxHORIZONTAL);
     grid->SetNonFlexibleGrowMode(wxFLEX_GROWMODE_SPECIFIED);
     m_model = add_field(grid, _L("Model:"));
-    // TRN The name AFC gives an AMS unit, such as Bambu_AMS_1
+    // TRN The name AFC gives an AMS unit or a BoxTurtle, such as Bambu_AMS_1
     m_name = add_field(grid, _L("Name:"));
-    // TRN How a BridgeBox reaches the printer: WiFi or USB
+    // TRN How a BridgeBox or a BoxTurtle reaches the printer: WiFi, USB or BridgeHub
     m_link  = add_field(grid, _L("Connection:"));
     m_units = add_field(grid, _L("Units:"));
     // TRN A BridgeBox display's network address, such as 192.168.1.20
@@ -2329,7 +2340,7 @@ AgentDevicePanel::AgentDevicePanel(wxWindow* parent, const MachineObject::AgentD
     grid->Add(version_name, 0, wxEXPAND, 0);
     m_version_val = new wxStaticText(this, wxID_ANY, "-");
     grid->Add(m_version_val, 0, wxALL | wxEXPAND, FromDIP(5));
-    // TRN The newest firmware out for a BridgeBox, a BridgeBox display or an AMS unit
+    // TRN The newest firmware out for a BridgeBox, a BridgeBox display, an AMS unit or a BoxTurtle
     m_latest = add_field(grid, _L("Latest:"));
 
     // The agent's words on an update, with its progress while it runs.
@@ -2400,7 +2411,8 @@ void AgentDevicePanel::update(MachineObject* obj, const MachineObject::AgentDevi
     m_device    = device;
     m_connected = connected;
 
-    // An AMS unit shows its model and the name AFC gives it; a BridgeBox or a display shows its name as its model.
+    // An AMS unit or a BoxTurtle shows its model and the name AFC gives it; a BridgeBox or a display shows its name
+    // as its model.
     m_model.second->SetLabelText(from_u8(device.model.empty() ? device.title : device.model));
     show_field(m_name, device.model.empty() ? std::string() : device.title);
     show_field(m_link, device.link);

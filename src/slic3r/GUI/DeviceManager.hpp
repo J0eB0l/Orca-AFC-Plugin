@@ -724,14 +724,14 @@ public:
         int                                lanes {0};
     };
     AgentVersion agent_version;
-    // Orca: what the printer agent updates besides itself, under the AFC row on the Update page (afc_devices):
-    // for AFC each BridgeBox, the AMS units on it and the BridgeBox displays. kind is "bridge", "ams" or
-    // "display" and icon names the row's picture; model, link, units and address are shown when not empty, with
-    // the title as the model when there is none. version is the firmware installed and latest the newest out,
-    // newer when that is newer. updatable when the agent can update the device, ready when it can now (the
-    // printer is idle and no other update runs), resume when an update stopped and Update finishes it. state is
-    // "", "running", "done" or "failed", with message the agent's words on it and progress its percent (-1 for
-    // none). command_agent_device_update() updates one by its id.
+    // Orca: what the printer agent updates besides itself, under the AFC row on the Update page (afc_devices): for AFC
+    // each BridgeBox, the AMS units on it, the BridgeBox displays and each USB BoxTurtle. kind is "bridge", "ams",
+    // "display" or "turtle" and icon names the row's picture; model, link, units and address are shown when not empty,
+    // with the title as the model when there is none. version is the firmware installed and latest the newest out, newer
+    // when that is newer. updatable when the agent can update the device, ready when it can now (the printer is idle and
+    // no other update runs), resume when an update stopped and Update finishes it. state is "", "running", "done" or
+    // "failed", with message the agent's words on it and progress its percent (-1 for none). command_agent_device_update()
+    // updates one by its id.
     struct AgentDevice
     {
         std::string id;
