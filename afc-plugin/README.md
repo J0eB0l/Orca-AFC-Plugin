@@ -231,8 +231,10 @@ Then:
   the printer. Each row shows the firmware installed and the newest out: a BridgeBox's and a
   display's from AFC-Klipper-Add-On's `BridgeBox` branch on GitHub (read every 6
   hours), an AMS unit's from AFC's AMS updater. **Update** asks first, then
-  writes the newest. A BridgeBox's image and its manifest are checked against
-  each other, copied to `bridgebox/` in the printer's config folder and sent to
+  writes the newest. A BridgeBox gets the image for the chip it reports,
+  `signed_s3.bin` for an ESP32-S3 or `signed_c3.bin` for an ESP32-C3; the image
+  and its manifest are checked against each other, copied to `bridgebox/` in
+  the printer's config folder and sent to
   the bridge with `AFC_BAMBU_FLASH`; an AMS unit runs `AFC_BAMBU_FIRMWARE` with
   `CONFIRM=1`, or finishes an update that stopped; a display gets its image
   straight from OrcaSlicer at its address, after OrcaSlicer asks once whether it

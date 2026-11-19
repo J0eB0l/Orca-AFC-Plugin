@@ -1194,6 +1194,20 @@ class BridgeBoxUpdateTest(Case):
         bridge = self.rows(4)[self.BRIDGE]
         self.assertEqual((bridge["version"], bridge["message"]), ("AFC-2.94", "The BridgeBox now runs AFC-2.94 (was AFC-2.93)"))
 
+    def test_a_c3_bridgebox_update(self):
+        self.fake.objects["AFC_BambuAMS Bambu_AMS_1"] = test_devices.unit_status(bridge_chip="ESP32C3",
+                                                                                bridge_fw="AFC-2.95")
+        image, manifest = test_devices.bridge_image(296, chip=5)
+        with mock.patch.object(devices, "read_newest",
+                               return_value={"bridge": {"ESP32S3": "AFC-2.94", "ESP32C3": "AFC-2.96"}}):
+            self.ready()
+        with mock.patch.object(devices, "bridge_files", return_value=(image, manifest, "AFC-2.96")) as files:
+            self.assertEqual(self.update(self.BRIDGE), 0)
+            self.agent._gcode.call(lambda: None, 5)
+        files.assert_called_once_with("ESP32C3")
+        self.assertEqual(set(self.fake.uploads), {"bridgebox/signed_c3.bin", "bridgebox/signed_c3.bin.manifest.json"})
+        self.assertEqual(self.fake.scripts, ["AFC_BAMBU_FLASH UNIT=Bambu_AMS_1 FILE=bridgebox/signed_c3.bin"])
+
     def test_a_bridgebox_that_refuses_the_image(self):
         image, manifest = test_devices.bridge_image(294)
         self.ready()

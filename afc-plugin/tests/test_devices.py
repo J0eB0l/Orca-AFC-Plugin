@@ -13,6 +13,7 @@ from orca_afc import devices
 from orca_afc.protocol import Snapshot, Unit
 
 BRIDGE = devices.BRIDGE_IMAGES["ESP32S3"]
+BRIDGE_C3 = devices.BRIDGE_IMAGES["ESP32C3"]
 PORT = "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit-if00"
 
 
@@ -157,6 +158,12 @@ class NewestTest(unittest.TestCase):
         self.assertIn((devices.DISPLAY_IMAGE, "bytes=0-511"), web.asked)
         self.assertNotIn(devices.TURTLE_IMAGE, [url for url, _ in web.asked])
 
+    def test_each_bridge_chips_newest(self):
+        _, s3 = bridge_image(294)
+        _, c3 = bridge_image(296, chip=5)
+        web = Web({BRIDGE + ".manifest.json": s3, BRIDGE_C3 + ".manifest.json": c3})
+        self.assertEqual(devices.read_newest(web)["bridge"], {"ESP32S3": "AFC-2.94", "ESP32C3": "AFC-2.96"})
+
     def test_what_github_does_not_answer_is_left_out(self):
         self.assertEqual(devices.read_newest(Web()), {"bridge": {}, "display": "", "turtle": {}})
         web = Web({BRIDGE + ".manifest.json": b"not json", devices.DISPLAY_IMAGE: b"\0" * 512,
@@ -231,6 +238,21 @@ class RowsTest(unittest.TestCase):
         status = printer_status(Bambu_AMS_1=unit_status(bridge_chip=None),
                                 Bambu_HT_1=unit_status(bridge_chip=None, ams_model="ht"))
         bridge = rows(status)[0]
+        self.assertEqual(bridge["latest"], "")
+        self.assertFalse(bridge["updatable"] or bridge["ready"])
+
+    def test_a_c3_bridge_gets_the_c3_newest(self):
+        status = printer_status(Bambu_AMS_1=unit_status(bridge_chip="ESP32C3", bridge_fw="AFC-2.95"),
+                                Bambu_HT_1=unit_status(bridge_chip="ESP32C3", bridge_fw="AFC-2.95", ams_model="ht"))
+        bridge = rows(status, newest={"bridge": {"ESP32S3": "AFC-2.94", "ESP32C3": "AFC-2.96"}})[0]
+        self.assertEqual((bridge["version"], bridge["latest"]), ("AFC-2.95", "AFC-2.96"))
+        self.assertTrue(bridge["newer"] and bridge["updatable"] and bridge["ready"])
+        self.assertEqual(bridge["do"]["chip"], "ESP32C3")
+
+    def test_a_c3_bridge_is_not_offered_the_s3_image(self):
+        status = printer_status(Bambu_AMS_1=unit_status(bridge_chip="ESP32C3"),
+                                Bambu_HT_1=unit_status(bridge_chip="ESP32C3", ams_model="ht"))
+        bridge = rows(status)[0]  # GitHub had only the S3 image
         self.assertEqual(bridge["latest"], "")
         self.assertFalse(bridge["updatable"] or bridge["ready"])
 
@@ -451,6 +473,16 @@ class BridgeFilesTest(unittest.TestCase):
         image, manifest = bridge_image(294, chip=5)
         with self.assertRaisesRegex(ValueError, "not a BridgeBox image"):
             devices.bridge_files("ESP32S3", Web({BRIDGE: image, BRIDGE + ".manifest.json": manifest}))
+
+    def test_the_c3_image(self):
+        image, manifest = bridge_image(296, chip=5)
+        got = devices.bridge_files("ESP32C3", Web({BRIDGE_C3: image, BRIDGE_C3 + ".manifest.json": manifest}))
+        self.assertEqual(got, (image, manifest, "AFC-2.96"))
+
+    def test_an_s3_image_where_the_c3_image_belongs(self):
+        image, manifest = bridge_image(294)
+        with self.assertRaisesRegex(ValueError, "not a BridgeBox image"):
+            devices.bridge_files("ESP32C3", Web({BRIDGE_C3: image, BRIDGE_C3 + ".manifest.json": manifest}))
 
     def test_not_a_manifest(self):
         image, _ = bridge_image(294)

@@ -45,7 +45,8 @@ DISPLAY_STALE = 1800.0   # seconds a display's record may stay as it was: it rew
 NEWEST_EVERY = 6 * 3600.0  # seconds between reads of the newest firmware on GitHub
 NEWEST_RETRY = 600.0     # ... and before a read that found nothing is tried again
 FIRMWARES = "https://raw.githubusercontent.com/J0eB0l/AFC-Klipper-Add-On/BridgeBox/firmwares"
-BRIDGE_IMAGES = {"ESP32S3": FIRMWARES + "/BridgeBox/signed_s3.bin"}  # chip -> its signed image
+BRIDGE_IMAGES = {"ESP32S3": FIRMWARES + "/BridgeBox/signed_s3.bin",  # chip -> its signed image
+                 "ESP32C3": FIRMWARES + "/BridgeBox/signed_c3.bin"}
 DISPLAY_IMAGE = FIRMWARES + "/BridgeBox_Display/bridgebox-update-app-0x10000.bin"
 # The BoxTurtle firmware's own branch, until it joins the BridgeBox branch.
 TURTLE_IMAGE = ("https://raw.githubusercontent.com/J0eB0l/AFC-Klipper-Add-On/BridgeBox-turtle/firmwares"
@@ -59,7 +60,7 @@ SEND_TIMEOUT = 120.0     # ... and for each part of the image it is sent
 
 _ESP_MAGIC = 0xE9
 _APP_MAGIC = 0xABCD5432
-_CHIP_IDS = {"ESP32S3": 9}
+_CHIP_IDS = {"ESP32S3": 9, "ESP32C3": 5}  # chip -> the chip id in an ESP image header
 _DISPLAY_PROJECT = "bridgebox_display"
 _HEAD = 512              # an app image's header and description
 _CHUNK = 16 * 1024
