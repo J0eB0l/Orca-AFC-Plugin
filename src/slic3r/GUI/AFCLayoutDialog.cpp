@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <boost/algorithm/string/predicate.hpp>
 #include <cstddef>
-#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -109,10 +108,26 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         return false;
     }
 
-    // A unit that is not connected (set up but unplugged) has no lanes to load or move spools into.
+    std::set<unsigned int> used;
+    for (const auto& layer : layer_filaments)
+        used.insert(layer.begin(), layer.end());
+    // A unit that is not connected (set up but unplugged) has no lanes to load or move spools into. One
+    // whose lanes hold spools the print uses is named, as the layout then asks for those spools elsewhere;
+    // its sensors are not read, so a lane counts on the spool AFC last knew there, loaded or not.
     out.agent_lanes.clear();
-    std::copy_if(obj.agent_lanes.begin(), obj.agent_lanes.end(), std::back_inserter(out.agent_lanes),
-                 [](const MachineObject::AgentLane& lane) { return lane.online; });
+    out.offline.clear();
+    for (const MachineObject::AgentLane& lane : obj.agent_lanes) {
+        if (lane.online) {
+            out.agent_lanes.push_back(lane);
+            continue;
+        }
+        const bool holds_printed = std::any_of(used.begin(), used.end(), [&](unsigned int f) {
+            const bool mapped = std::find(lane.tools.begin(), lane.tools.end(), int(f)) != lane.tools.end();
+            return f < filaments && same_filament(lane, config, int(f), mapped);
+        });
+        if (holds_printed && std::find(out.offline.begin(), out.offline.end(), lane.unit) == out.offline.end())
+            out.offline.push_back(lane.unit);
+    }
     std::map<std::string, double> unit_seconds;
     {
         std::vector<std::string> names;
@@ -152,9 +167,6 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
                 placed.insert(int(f));
             }
 
-    std::set<unsigned int> used;
-    for (const auto& layer : layer_filaments)
-        used.insert(layer.begin(), layer.end());
     const std::vector<int> maps = print.get_filament_maps();
     out.current.assign(filaments, -1);
     for (unsigned int f : used)
@@ -327,6 +339,22 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
                                            m_suggestion.after.lane_changes),
                               TEXT_COLOUR);
     sizer->Add(summary, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
+    if (!m_suggestion.offline.empty()) {
+        wxString units;
+        for (const std::string& unit : m_suggestion.offline)
+            units += (units.empty() ? "" : ", ") + from_u8(unit);
+        // TRN %1%: AFC unit names, such as "Ace2_1" or "Ace2_1, Turtle_1".
+        auto* offline = add_label(this, Label::Body_14,
+                                  format_wxstr(_L_PLURAL("%1% holds spools this print uses but is not connected, so its lanes are left "
+                                                         "out of this layout. Connect it, then suggest the layout again.",
+                                                         "%1% hold spools this print uses but are not connected, so their lanes are left "
+                                                         "out of this layout. Connect them, then suggest the layout again.",
+                                                         unsigned(m_suggestion.offline.size())),
+                                               units),
+                                  StateColor::darkModeColorFor(WARN_COLOUR));
+        offline->Wrap(width);
+        sizer->Add(offline, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
+    }
     if (!m_suggestion.unsynced.empty()) {
         wxString numbers;
         for (int f : m_suggestion.unsynced)

@@ -31,6 +31,7 @@ struct Suggestion
     AFCLayout::Changes                    now, after;
     AFCLayout::Plan                       plan;
     std::vector<int>                      unsynced;    // printed filaments no lane holds, or sliced off their lane's toolhead
+    std::vector<std::string>              offline;     // units not connected whose lanes hold spools the print uses
 };
 
 // The layout for the plate's print on the printer's lanes, with its units ranked after `preferred`

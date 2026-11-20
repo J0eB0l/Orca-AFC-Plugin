@@ -57,6 +57,11 @@ sync leaves it (slot n prints as T(n-1)), and holds its color and material; othe
 lane with that color and material holds it. Materials compare by family, as the agent does: the
 leading word in upper case without a trailing '+', so a "PLA+" spool holds a PLA filament.
 
+A unit the printer agent reports as not connected (an ACE or BridgeBox unit whose link is down) has
+no lanes in the layout, since no spool can be loaded into it or taken out of it. When its lanes hold
+spools the print uses, by the same test on the spool AFC last knew in each, the layout asks for those
+spools elsewhere, so the dialog names the unit and asks to connect it and suggest the layout again.
+
 A printed filament that no loaded lane holds, or that the slice puts on another toolhead than its lane
 feeds, means the project's slots were not synced from these lanes, so "now" and the moves would be
 counted from slots that no longer match the spools. The dialog names those filaments and asks for a
