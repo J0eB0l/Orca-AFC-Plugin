@@ -299,20 +299,23 @@ def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict, filame
 
 
 def change_filament_gcode(snapshot: Snapshot, request: dict, shown: Layout) -> str:
-    """Load (a tray) or Unload (the unit's lane in a toolhead, the active
-    toolhead's lane first) from the Device tab, whose units are `shown`."""
+    """Load (a tray) or Unload from the Device tab, whose units are `shown`.
+
+    Unload takes the unit's own lane in a toolhead, the active toolhead's lane
+    first, and never another unit's: AFC switches to that lane's toolhead
+    first when it is docked. With no unit named (the external spool), it
+    takes the active toolhead's lane."""
     ams_id, slot_id = request.get("ams_id"), request.get("slot_id")
     if slot_id == NO_TRAY or request.get("target") == NO_TRAY:
         trays, box = lanes_by_tray(snapshot), shown.box(ams_id)
-        tools = box.tools if box is not None else []
-        loaded = [trays[t] for t in tools if t in trays and trays[t].tool_loaded]
         current = snapshot.find_lane(snapshot.current_lane) if snapshot.current_lane else None
-        if current is not None and current.tool_loaded and (not loaded or current in loaded):
-            lane = current
-        elif loaded:
-            lane = loaded[0]
+        if box is None:
+            loaded = [current] if current is not None and current.tool_loaded else []
         else:
+            loaded = [trays[t] for t in box.tools if t in trays and trays[t].tool_loaded]
+        if not loaded:
             raise AFCError("no lane is loaded in a toolhead")
+        lane = current if current in loaded else loaded[0]
         return protocol.build_lane_action_gcode(snapshot, lane.name, "unload")
     lane = lane_of(snapshot, shown.tool(ams_id, slot_id))
     if lane is None:

@@ -185,8 +185,14 @@ class TrayTest(unittest.TestCase):
         self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane6")
         unload["ams_id"] = 0  # the active toolhead's lane is in this unit
         self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane2")
-        unload["ams_id"] = 3  # nothing of this unit is loaded: the active toolhead's lane
+        unload["ams_id"] = 255  # the external spool: the active toolhead's lane
         self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane2")
+
+    def test_unload_never_takes_another_units_lane(self):
+        # Nothing of this unit is in a toolhead, though another unit's lane is on the shuttle.
+        self.snap.lanes[3].tool_loaded = False
+        with self.assertRaises(AFCError):
+            controls.change_filament_gcode(self.snap, {"ams_id": 1, "slot_id": 255, "target": 255}, self.shown)
 
     def test_nothing_to_load_or_unload(self):
         with self.assertRaises(AFCError):

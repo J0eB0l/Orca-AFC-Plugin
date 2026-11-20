@@ -1107,7 +1107,7 @@ class DeviceTabTest(Case):
 
     def test_load_and_unload(self):
         self.connect()
-        self.push()
+        self.assertTrue(self.push()["support_unit_toolhead"])  # the unit on screen controls its own toolhead
         load = {"command": "ams_change_filament", "ams_id": 0, "slot_id": 1, "target": 1, "curr_temp": 215, "tar_temp": 215}
         self.assertEqual(self.send({"print": load}), 0)
         self.agent._gcode.call(lambda: None, 5)

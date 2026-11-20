@@ -180,7 +180,11 @@ Then:
   tray does; in the AFC build, a lane in a docked tool shows its road out of
   the unit in its color. Official OrcaSlicer 2.5 then refuses the refresh buttons while a
   lane is loaded, as on a Bambu printer; the AFC build does not. **Load** and
-  **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. The lamp switches the printer's lights:
+  **Unload** run AFC's CHANGE_TOOL and TOOL_UNLOAD. In the AFC build, the unit
+  on screen shows its own toolhead: loaded, with the lane's path to it, when
+  one of its lanes is in it, whichever toolhead is on the shuttle. **Unload**
+  is available then and unloads that lane; AFC switches to its toolhead first
+  when it is docked. **Load** loads the slot picked in the unit on screen. The lamp switches the printer's lights:
   Klipper `led`, `neopixel`, `dotstar`, `pca9533`, `pca9632` and `output_pin`
   objects named with main, chamber, cavity, case, cabinet, enclosure, light or
   lamp (`[led main_led]`, `[output_pin caselight]`, the Snapmaker U1's

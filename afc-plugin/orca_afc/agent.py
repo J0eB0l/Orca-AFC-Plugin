@@ -442,6 +442,8 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         "support_upload_only": True,
         # ... and shows the tray popup's Factor K, saved as the spool's flow K.
         "support_tray_k": True,
+        # ... and shows the unit on screen with its own toolhead, whose lane Unload takes (controls.py).
+        "support_unit_toolhead": True,
         # ... and takes the drying popup on the units with a dryer (trays.ams_json()).
         "support_remote_dry": True,
         # AFC's runout lanes, as Bambu's auto refill groups below, which the AFC build of OrcaSlicer
