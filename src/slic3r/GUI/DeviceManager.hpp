@@ -641,6 +641,8 @@ public:
     bool is_support_send_to_sdcard {false};
     bool is_support_upload_only {false}; // Orca: a printer agent maps trays on a file it stores without starting it
     bool is_support_tray_k {false}; // Orca: a printer agent keeps the K typed in the tray popup
+    // Orca: a printer agent whose units each feed their own toolhead: the unit on screen shows and controls that toolhead
+    bool is_support_unit_toolhead {false};
     // Orca: a printer agent's measured lane load, lane unload and tool swap times, in seconds (-1 unknown)
     float measured_load_time {-1.f};
     float measured_unload_time {-1.f};

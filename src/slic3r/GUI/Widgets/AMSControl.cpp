@@ -345,6 +345,20 @@ std::string AMSControl::GetCurentShowAms(AMSPanelPos pos) {
     }
 }
 
+// Orca: the unit on screen, never the external spool: the left panel's, else the right one's.
+std::string AMSControl::GetShownUnit()
+{
+    auto is_unit = [this](const std::string &id) {
+        auto it = m_ams_item_list.find(id);
+        return it != m_ams_item_list.end() && it->second && it->second->get_ams_model() != AMSModel::EXT_AMS;
+    };
+    if (is_unit(m_current_show_ams_left))
+        return m_current_show_ams_left;
+    if (is_unit(m_current_show_ams_right))
+        return m_current_show_ams_right;
+    return "";
+}
+
 std::string AMSControl::GetCurrentCan(std::string amsid)
 {
     std::string current_can;

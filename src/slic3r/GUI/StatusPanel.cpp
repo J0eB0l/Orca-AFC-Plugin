@@ -3595,8 +3595,8 @@ void StatusPanel::update_ams(MachineObject *obj)
     last_reading_bits     = obj->tray_reading_bits;
     last_ams_version      = obj->ams_version;
 
-    std::string curr_ams_id = m_ams_control->GetCurentAms();
-    std::string curr_can_id = m_ams_control->GetCurrentCan(curr_ams_id);
+    std::string curr_ams_id, curr_can_id;
+    get_control_slot(curr_ams_id, curr_can_id);
     bool        is_vt_tray  = false;
     if (obj->GetExtderSystem()->GetCurrentAmsId() == std::to_string(VIRTUAL_TRAY_MAIN_ID)) is_vt_tray = true;
 
@@ -3636,6 +3636,7 @@ void StatusPanel::update_ams(MachineObject *obj)
         }
         m_ams_control->SetExtruder(ext->HasFilamentInExt(), MAIN_EXTRUDER_ID, ext->GetSlotNow().ams_id, ext->GetSlotNow().slot_id);
     }
+    if (obj->is_support_unit_toolhead) show_unit_toolhead();
 
     /*left*/
     if (obj->GetExtderSystem()->GetTotalExtderCount() > 1) {
@@ -3764,10 +3765,67 @@ void StatusPanel::update_ams_control_state(std::string ams_id, std::string slot_
                 }
             }
         }
+
+        // Orca: a unit that feeds its own toolhead unloads it, picked slot or not, when one of its lanes is in it.
+        if (obj->is_support_unit_toolhead) {
+            if (in_switch_filament)
+                unload_error_info = _L("Current extruder is busy changing filament.");
+            else if (unit_slot_in_tool(ams_id).empty())
+                unload_error_info = _L("No lane of this unit is loaded in a toolhead.");
+            else
+                unload_error_info.clear();
+        }
     }
 
     m_ams_control->EnableLoadFilamentBtn(load_error_info.empty(), ams_id, slot_id, load_error_info);
     m_ams_control->EnableUnLoadFilamentBtn(unload_error_info.empty(), ams_id, slot_id,unload_error_info);
+}
+
+// Orca: the unit and slot Load and Unload act on. On a printer whose units each feed their own toolhead
+// (is_support_unit_toolhead) that is the unit on screen, with a slot only when one of its own is picked.
+void StatusPanel::get_control_slot(std::string &ams_id, std::string &slot_id)
+{
+    ams_id = m_ams_control->GetCurentAms();
+    if (obj && obj->is_support_unit_toolhead) {
+        const std::string shown = m_ams_control->GetShownUnit();
+        if (shown != ams_id) {
+            ams_id = shown;
+            slot_id.clear();
+            return;
+        }
+    }
+    slot_id = m_ams_control->GetCurrentCan(ams_id);
+}
+
+// Orca: the slot of a unit's lane that is in a toolhead, the active toolhead's first, else a docked one's; "" for none.
+std::string StatusPanel::unit_slot_in_tool(const std::string &ams_id) const
+{
+    if (!obj || ams_id.empty())
+        return "";
+    const auto ext = obj->GetExtderSystem()->GetExtderById(MAIN_EXTRUDER_ID);
+    if (ext && ext->HasFilamentInExt() && ext->GetSlotNow().ams_id == ams_id)
+        return ext->GetSlotNow().slot_id;
+    if (const DevAms *ams = obj->GetFilaSystem()->GetAmsById(ams_id)) {
+        for (const auto &[slot, tray] : ams->GetTrays())
+            if (tray && tray->in_tool)
+                return slot;
+    }
+    return "";
+}
+
+// Orca: on a printer whose units each feed their own toolhead, the toolhead under the unit on screen is that unit's,
+// loaded when one of its lanes is in it, whichever toolhead is on the shuttle.
+void StatusPanel::show_unit_toolhead()
+{
+    const std::string shown = m_ams_control->GetShownUnit();
+    const auto        ext   = obj->GetExtderSystem()->GetExtderById(MAIN_EXTRUDER_ID);
+    if (shown.empty() || (ext && ext->HasFilamentInExt() && ext->GetSlotNow().ams_id == shown))
+        return; // the active toolhead's own unit, drawn as it is
+    const std::string slot = unit_slot_in_tool(shown);
+    if (slot.empty())
+        m_ams_control->SetAmsStep(shown, "", AMSPassRoadType::AMS_ROAD_TYPE_UNLOAD, AMSPassRoadSTEP::AMS_ROAD_STEP_NONE);
+    else
+        m_ams_control->SetAmsStep(shown, slot, AMSPassRoadType::AMS_ROAD_TYPE_LOAD, AMSPassRoadSTEP::AMS_ROAD_STEP_COMBO_LOAD_STEP2);
 }
 
 void StatusPanel::update_cali(MachineObject *obj)
@@ -4465,8 +4523,8 @@ void StatusPanel::update_load_with_temp()
 void StatusPanel::on_ams_load_curr()
 {
     if (obj) {
-        std::string                            curr_ams_id = m_ams_control->GetCurentAms();
-        std::string                            curr_can_id = m_ams_control->GetCurrentCan(curr_ams_id);
+        std::string curr_ams_id, curr_can_id;
+        get_control_slot(curr_ams_id, curr_can_id);
 
         std::optional<int> extruder_id = std::nullopt;
         if (obj->GetFilaSwitch() && obj->GetFilaSwitch()->IsInstalled()) {
@@ -4611,6 +4669,12 @@ void StatusPanel::on_ams_switch(SimpleEvent &event)
             }
             m_ams_control->SetExtruder(ext->HasFilamentInExt(), MAIN_EXTRUDER_ID, ext->GetSlotNow().ams_id, ext->GetSlotNow().slot_id);
         }
+        if (obj->is_support_unit_toolhead) {
+            show_unit_toolhead();
+            std::string ams_id, slot_id;
+            get_control_slot(ams_id, slot_id);
+            update_ams_control_state(ams_id, slot_id);
+        }
 
         /*left*/
         if (obj->GetExtderSystem()->GetTotalExtderCount() > 1) {
@@ -4632,10 +4696,14 @@ void StatusPanel::on_ams_switch(SimpleEvent &event)
 void StatusPanel::on_ams_unload(SimpleEvent &event)
 {
     if (obj) {
-        std::string curr_ams_id = m_ams_control->GetCurentAms();
-        std::string curr_can_id = m_ams_control->GetCurrentCan(curr_ams_id);
+        std::string curr_ams_id, curr_can_id;
+        get_control_slot(curr_ams_id, curr_can_id);
 
-        if (obj->is_enable_np) {
+        if (obj->is_support_unit_toolhead) {
+            // Orca: the unit on screen unloads its own toolhead; the printer switches to it first when it is docked.
+            if (!curr_ams_id.empty())
+                obj->command_ams_change_filament(false, curr_ams_id, "255");
+        } else if (obj->is_enable_np) {
             try {
                 for (auto ext : obj->GetExtderSystem()->GetExtruders()) {
                     if (ext.GetSlotNow().ams_id == curr_ams_id && ext.GetSlotNow().slot_id == curr_can_id) { obj->command_ams_change_filament(false, curr_ams_id, "255"); }

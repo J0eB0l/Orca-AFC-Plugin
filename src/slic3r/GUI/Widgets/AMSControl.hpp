@@ -150,6 +150,7 @@ protected:
 public:
     std::string GetCurentAms();
     std::string GetCurentShowAms(AMSPanelPos pos = AMSPanelPos::RIGHT_PANEL);
+    std::string GetShownUnit();
     std::string GetCurrentCan(std::string amsid);
     bool        IsAmsInRightPanel(std::string ams_id);
 	wxColour GetCanColour(std::string amsid, std::string canid);

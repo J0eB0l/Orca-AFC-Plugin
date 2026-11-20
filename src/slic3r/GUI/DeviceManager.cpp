@@ -3492,6 +3492,9 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                 if (jj.contains("support_tray_k") && jj["support_tray_k"].is_boolean()) {
                     is_support_tray_k = jj["support_tray_k"].get<bool>();
                 }
+                if (jj.contains("support_unit_toolhead") && jj["support_unit_toolhead"].is_boolean()) {
+                    is_support_unit_toolhead = jj["support_unit_toolhead"].get<bool>();
+                }
                 // Orca: a printer agent's AMS 2 Pro and AMS HT units take the drying controls.
                 if (jj.contains("support_remote_dry") && jj["support_remote_dry"].is_boolean()) {
                     is_support_remote_dry = jj["support_remote_dry"].get<bool>();
