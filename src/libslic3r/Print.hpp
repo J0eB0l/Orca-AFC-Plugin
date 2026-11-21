@@ -28,6 +28,7 @@
 #include "GCode/ThumbnailData.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"
+#include "AFCLayout.hpp"
 #include "BeltBrim.hpp"
 #include "BeltTransform.hpp"
 #include "ObjectID.hpp"
@@ -1191,6 +1192,16 @@ public:
     // flushing volume matrix of its nozzle (the last one past the matrix) times that nozzle's flush
     // multiplier, and a fifth of that on a printer that forms tips.
     static float                lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to, int toolhead);
+    // Orca: what a print spends beside its lane changes, which a filament switch trades them against: a flush
+    // (lane_change_flush) at the highest flow of the filament loaded, a tool change as the time estimate counts it.
+    static AFCLayout::Times     lane_change_times(const PrintConfig &config);
+    // Orca: a filament whose lane is behind a filament switch prints on the other toolhead the switch reaches
+    // (filament_switch_toolhead) when the print is shorter for it. Not on a plate printed by object, whose
+    // filaments keep the toolheads of the project.
+    bool                        routes_switch_lanes() const;
+    // Orca: the toolhead each filament slot's lane feeds in this print, once it is sliced: filament_toolhead, or
+    // the other toolhead of the lane's filament switch where the filament was sliced onto that one.
+    std::vector<int>            lane_toolheads() const;
     // Orca: has_wipe_tower() only says the prime tower is enabled for a plate that may change filaments.
     // This says the plate prints a tower whatever slicing finds; when false, whether it does depends on
     // the support that slicing generates.

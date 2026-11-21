@@ -58,6 +58,7 @@
 #include "IMEXHelpers.hpp"
 #include "IMEXZones.hpp"
 #include "Print.hpp"
+#include "AFCLayout.hpp"
 #include "BoundingBox.hpp"
 #include "Brim.hpp"
 #include "ClipperUtils.hpp"
@@ -602,6 +603,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver &new_c
             || opt_key == "wait_for_temp_on_wipe_tower"
             || opt_key == "purge_in_prime_tower"
             || opt_key == "filament_toolhead"
+            || opt_key == "filament_switch_inlet"
+            || opt_key == "filament_switch_toolhead"
             || opt_key == "z_offset"
             || opt_key == "support_multi_bed_types"
             ) {
@@ -5362,6 +5365,39 @@ float Print::lane_change_flush(const PrintConfig &config, unsigned int from, uns
     return float(matrix[index] * config.flush_multiplier.get_at(head)) * factor;
 }
 
+AFCLayout::Times Print::lane_change_times(const PrintConfig &config)
+{
+    const size_t     heads     = config.nozzle_diameter.size();
+    const size_t     filaments = config.filament_colour.size();
+    AFCLayout::Times times;
+    times.tool_change = config.machine_tool_change_time.value;
+    times.flush.assign(heads, std::vector<std::vector<double>>(filaments, std::vector<double>(filaments, 0.)));
+    for (size_t head = 0; head < heads; ++head)
+        for (size_t from = 0; from < filaments; ++from)
+            for (size_t to = 0; to < filaments; ++to)
+                if (const double flow = config.filament_max_volumetric_speed.get_at(to); from != to && flow > 0.)
+                    times.flush[head][from][to] = lane_change_flush(config, unsigned(from), unsigned(to), int(head)) / flow;
+    return times;
+}
+
+bool Print::routes_switch_lanes() const
+{
+    return m_config.nozzle_diameter.size() > 1 && m_config.multi_extruder_multi_material && !this->is_BBL_printer() &&
+           (m_config.print_sequence != PrintSequence::ByObject || m_objects.size() == 1);
+}
+
+std::vector<int> Print::lane_toolheads() const
+{
+    std::vector<int>        toolheads = m_config.filament_toolhead.values;
+    const std::vector<int> &other     = m_config.filament_switch_toolhead.values;
+    const std::vector<int> &sliced    = m_config.filament_map.values; // 1-based, as sliced for the filaments printed
+    if (this->routes_switch_lanes())
+        for (size_t i = 0; i < toolheads.size() && i < other.size() && i < sliced.size(); ++i)
+            if (toolheads[i] >= 0 && other[i] >= 0 && sliced[i] - 1 == other[i])
+                toolheads[i] = other[i];
+    return toolheads;
+}
+
 void Print::_make_wipe_tower()
 {
     m_wipe_tower_data.clear();
@@ -5663,7 +5699,8 @@ void Print::_make_wipe_tower()
             // on a toolhead flushes on the tower from the filament that toolhead held, and a switch to a toolhead
             // that already holds its filament only primes. The changes are followed in the order GCode makes them:
             // priming loads every extruder, else the print starts on the last one.
-            ToolheadLoads toolhead_loads(this->flushes_lane_changes_on_tower() ? m_config.filament_toolhead.values : std::vector<int>());
+            const std::vector<int> lane_toolheads = this->lane_toolheads();
+            ToolheadLoads toolhead_loads(this->flushes_lane_changes_on_tower() ? lane_toolheads : std::vector<int>());
             if (m_config.single_extruder_multi_material_priming)
                 for (unsigned int extruder_id : m_wipe_tower_data.tool_ordering.all_extruders())
                     toolhead_loads.change_to(extruder_id);
@@ -5684,8 +5721,8 @@ void Print::_make_wipe_tower()
                             // The filament flushed out: the lane this toolhead held, or the previous tool on a single nozzle.
                             const unsigned int flushed_id = lane_from >= 0 ? unsigned(lane_from) : current_extruder_id;
                             if (lane_from >= 0) {
-                                volume_to_wipe = std::max(volume_to_wipe, lane_change_flush(m_config, flushed_id, extruder_id,
-                                                                                            m_config.filament_toolhead.get_at(extruder_id)));
+                                volume_to_wipe = std::max(volume_to_wipe,
+                                                          lane_change_flush(m_config, flushed_id, extruder_id, lane_toolheads[extruder_id]));
                             } else {
                                 volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
                                 volume_to_wipe *= m_config.flush_multiplier.get_at(0);

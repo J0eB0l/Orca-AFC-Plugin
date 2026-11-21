@@ -624,8 +624,9 @@ public:
     // (-1 = as sliced), slices plate_idx again for them and calls resume(true) once that succeeds, else resume(false).
     // False when no new slice is needed.
     bool reslice_for_toolheads(int plate_idx, const std::vector<int> &toolheads, std::function<void(bool)> resume);
-    // Orca: Sync layout to AFC: each filament with a toolhead (>= 0) prints on it from now on
-    // (filament_toolhead), and the plate is sliced again when that changes anything.
+    // Orca: Sync layout to AFC: each filament with a toolhead (>= 0) prints on it from now on (filament_toolhead),
+    // a lane behind a filament switch too (filament_switch_toolhead), until the filaments are synced again. The plate
+    // is sliced again when that changes anything.
     void apply_filament_toolheads(const std::vector<int> &toolheads);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);

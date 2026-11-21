@@ -6361,8 +6361,15 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
             int  slot_id = std::stoi(tray.first);
             // Orca: a printer agent's tray syncs to the slot of the tool it reports, whatever unit shows it.
             const int index = tray.second->tool >= 0 ? tray.second->tool : ams_id * 4 + slot_id;
-            filament_ams_list.emplace(extruder + index,
-                                      build_tray_config(*tray.second, get_ams_name(ams_id, slot_id), std::to_string(ams_id), std::to_string(slot_id)));
+            DynamicPrintConfig tray_config = build_tray_config(*tray.second, get_ams_name(ams_id, slot_id), std::to_string(ams_id),
+                                                               std::to_string(slot_id));
+            // Orca: behind a filament switch, its inlet and the other toolhead the switch can send its lane to.
+            if (const MachineObject::AgentLane *lane = obj->agent_lane_at(ams_id, slot_id); lane != nullptr && lane->inlet() >= 0) {
+                tray_config.set_key_value("filament_switch_inlet", new ConfigOptionInts{lane->inlet()});
+                if (lane->other_toolhead() >= 0)
+                    tray_config.set_key_value("filament_switch_toolhead", new ConfigOptionInts{lane->other_toolhead()});
+            }
+            filament_ams_list.emplace(extruder + index, std::move(tray_config));
         }
     }
     return filament_ams_list;
@@ -21255,20 +21262,25 @@ bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolhe
     // The toolhead each filament was sliced on (filament_map is 1-based once sliced), and the lane toolheads the
     // prime tower planned its lane change flushes with.
     const std::vector<int> &sliced  = config.filament_map.values;
-    const std::vector<int> &planned = config.filament_toolhead.values;
-    std::vector<int>       &heads   = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    const std::vector<int>  planned = print->lane_toolheads();
+    DynamicPrintConfig     &project = wxGetApp().preset_bundle->project_config;
+    std::vector<int>       &heads   = project.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    std::vector<int>       &others  = project.option<ConfigOptionInts>("filament_switch_toolhead", true)->values;
     const bool              tower   = print->flushes_lane_changes_on_tower();
     bool                    changed = !plate->is_slice_result_valid();
     for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
         if (toolheads[i] >= 0 && (toolheads[i] != (i < sliced.size() ? sliced[i] - 1 : -1) ||
                                   (tower && toolheads[i] != (i < planned.size() ? planned[i] : -1))))
             changed = true;
-    if (changed)
-        for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
-            if (toolheads[i] >= 0)
-                heads[i] = toolheads[i];
     if (!changed)
         return false;
+    // The trays picked name the toolheads, so the new slice sends no lane to the other toolhead of its filament switch.
+    for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
+        if (toolheads[i] >= 0) {
+            heads[i] = toolheads[i];
+            if (i < others.size())
+                others[i] = -1;
+        }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": slicing plate " << plate_idx << " again for the toolheads of the trays picked";
     p->m_slice_all     = false;
@@ -21283,13 +21295,23 @@ bool Plater::reslice_for_toolheads(int plate_idx, const std::vector<int> &toolhe
 
 void Plater::apply_filament_toolheads(const std::vector<int> &toolheads)
 {
-    std::vector<int> &heads   = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
-    bool              changed = false;
-    for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i)
-        if (toolheads[i] >= 0 && heads[i] != toolheads[i]) {
+    DynamicPrintConfig &project = wxGetApp().preset_bundle->project_config;
+    std::vector<int>   &heads   = project.option<ConfigOptionInts>("filament_toolhead", true)->values;
+    std::vector<int>   &others  = project.option<ConfigOptionInts>("filament_switch_toolhead", true)->values;
+    bool                changed = false;
+    // The layout names each filament's toolhead, so the slice sends none to the other toolhead of its filament switch.
+    for (size_t i = 0; i < toolheads.size() && i < heads.size(); ++i) {
+        if (toolheads[i] < 0)
+            continue;
+        if (heads[i] != toolheads[i]) {
             heads[i] = toolheads[i];
             changed  = true;
         }
+        if (i < others.size() && others[i] >= 0) {
+            others[i] = -1;
+            changed   = true;
+        }
+    }
     if (!changed)
         return;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": slicing the plate again for the suggested spool layout";

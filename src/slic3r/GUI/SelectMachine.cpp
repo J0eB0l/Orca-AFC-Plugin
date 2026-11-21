@@ -3626,17 +3626,16 @@ void SelectMachineDialog::navigate_to_timelapse_page()
 }
 
 // Orca: the toolhead the tray picked for each filament feeds, as the printer reports it (-1 = not known or not picked).
-// A tray behind a filament switch feeds the toolhead its filament was sliced for when the switch reaches that one
-// (switch_toolheads), as the print file sends its lane there.
-static std::vector<int> picked_toolheads(const std::vector<FilamentInfo> &mapping, const DevFilaSystem *fila_system)
+// A tray behind a filament switch feeds the toolhead its filament was sliced for (sliced, Print::lane_toolheads) when
+// the switch reaches that one (switch_toolheads), as the print file sends its lane there.
+static std::vector<int> picked_toolheads(const std::vector<FilamentInfo> &mapping, const DevFilaSystem *fila_system, const std::vector<int> &sliced)
 {
     std::vector<int> toolheads(wxGetApp().preset_bundle->filament_presets.size(), -1);
-    const auto      *sliced = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead");
     for (const FilamentInfo &picked : mapping) {
         const DevAmsTray *tray = fila_system != nullptr ? fila_system->GetAmsTray(picked.ams_id, picked.slot_id) : nullptr;
         if (tray == nullptr || picked.id < 0 || size_t(picked.id) >= toolheads.size())
             continue;
-        const int  planned = sliced != nullptr && size_t(picked.id) < sliced->values.size() ? sliced->values[picked.id] : -1;
+        const int  planned = size_t(picked.id) < sliced.size() ? sliced[picked.id] : -1;
         const bool reached = std::find(tray->switch_toolheads.begin(), tray->switch_toolheads.end(), planned) != tray->switch_toolheads.end();
         toolheads[picked.id] = reached ? planned : tray->toolhead;
     }
@@ -3704,8 +3703,13 @@ void SelectMachineDialog::on_send_print()
         m_is_in_sending_mode = false;
         on_send_print();
     };
+    // reslice_for_toolheads() slices the plate on screen only, so that plate's print says where the lanes were sliced.
+    const Print *sliced = m_plater->get_partplate_list().get_curr_plate()->fff_print();
     if (m_print_type == PrintFromType::FROM_NORMAL &&
-        m_plater->reslice_for_toolheads(m_print_plate_idx, picked_toolheads(m_ams_mapping_result, obj_->GetFilaSystem().get()), resume)) {
+        m_plater->reslice_for_toolheads(m_print_plate_idx,
+                                        picked_toolheads(m_ams_mapping_result, obj_->GetFilaSystem().get(),
+                                                         sliced != nullptr ? sliced->lane_toolheads() : std::vector<int>()),
+                                        resume)) {
         m_waiting_reslice = true;
         m_status_bar->set_status_text(_L("Slicing again for the toolheads of the trays picked"));
         return;

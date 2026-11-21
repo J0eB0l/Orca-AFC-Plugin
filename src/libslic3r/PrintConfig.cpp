@@ -3262,6 +3262,21 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{-1});
 
+    // Behind a filament switch, as a printer agent reports the tray each filament slot was synced from:
+    // the switch inlet its lane is plumbed into, the same number for every lane of that inlet, which
+    // holds one filament at a time (-1 = none), and the other toolhead the switch can send the lane to
+    // (-1 = none, or the filament keeps the toolhead it was given). With Multi-material per toolhead such
+    // a filament prints on whichever of its two toolheads makes the print shorter
+    // (ToolOrdering::get_recommended_filament_maps). Kept with the project like filament_toolhead.
+    // Internal use only, no translation.
+    def = this->add("filament_switch_inlet", coInts);
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{-1});
+
+    def = this->add("filament_switch_toolhead", coInts);
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{-1});
+
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");
     def->tooltip = L("Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range.");

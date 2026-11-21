@@ -878,6 +878,16 @@ public:
         int              fila_switch {-1};
         int              switch_inlet {-1};
         std::vector<int> switch_toolheads;
+        // Its inlet numbered across the printer's switches, the same for every lane plumbed into it (-1 none),
+        // and the other toolhead its switch can send it to (-1 when it cannot).
+        int inlet() const { return fila_switch >= 0 && switch_inlet >= 0 ? fila_switch * 2 + switch_inlet : -1; }
+        int other_toolhead() const
+        {
+            for (int head : switch_toolheads)
+                if (toolhead >= 0 && head >= 0 && head != toolhead)
+                    return head;
+            return -1;
+        }
     };
     // Orca: a printer agent's units (afc_units) and the seconds a lane change takes on each, measured in
     // AFC.log or the agent's own figure for the kind of unit, for the suggested spool layout.

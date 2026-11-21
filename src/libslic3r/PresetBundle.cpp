@@ -118,6 +118,10 @@ static std::map<std::string, std::vector<std::string>> legacy_compatible_printer
     }
 }
 
+// Orca: what a filament slot knows of the tray it was synced from, one int per slot, -1 = not known:
+// the toolhead its lane feeds and, behind a filament switch, its inlet and the other toolhead it reaches.
+static const char *const s_lane_keys[] = {"filament_toolhead", "filament_switch_inlet", "filament_switch_toolhead"};
+
 // Project-level options imported from a loaded 3MF into project_config. s_project_options_published
 // below is the reduced subset that crosses over in "published" 3MF mode; keep both in sync.
 // s_project_options_published additionally carries wipe_tower_rotation_angle, which normal
@@ -155,6 +159,9 @@ static std::vector<std::string> s_project_options {
     "spool_pressure_advance",
     // The toolhead the tray each filament slot was synced from feeds (-1 = not known).
     "filament_toolhead",
+    // Behind a filament switch: that tray's switch inlet and the other toolhead the switch reaches (-1 = none).
+    "filament_switch_inlet",
+    "filament_switch_toolhead",
     // Filament Track Switch device state: whether the switch is installed and ready, and
     // whether dynamic per-nozzle filament mapping is active. Persisted with the project and
     // restored from a saved 3mf; reset to false on load and set true only by live device sync.
@@ -3973,7 +3980,8 @@ void PresetBundle::update_selections(AppConfig &config)
     std::vector<int> filament_volume_maps(filament_colors.size(), static_cast<int>(NozzleVolumeType::nvtStandard));
     project_config.option<ConfigOptionInts>("filament_volume_map")->values = filament_volume_maps;
     project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.assign(filament_colors.size(), -1.);
-    project_config.option<ConfigOptionInts>("filament_toolhead", true)->values.assign(filament_colors.size(), -1);
+    for (const char *key : s_lane_keys)
+        project_config.option<ConfigOptionInts>(key, true)->values.assign(filament_colors.size(), -1);
 
     std::vector<std::string> extruder_ams_count_str;
     if (config.has_printer_setting(initial_printer_profile_name, "extruder_ams_count")) {
@@ -4138,7 +4146,8 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     std::vector<int> filament_volume_maps(filament_colors.size(), static_cast<int>(NozzleVolumeType::nvtStandard));
     project_config.option<ConfigOptionInts>("filament_volume_map")->values = filament_volume_maps;
     project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.assign(filament_colors.size(), -1.);
-    project_config.option<ConfigOptionInts>("filament_toolhead", true)->values.assign(filament_colors.size(), -1);
+    for (const char *key : s_lane_keys)
+        project_config.option<ConfigOptionInts>(key, true)->values.assign(filament_colors.size(), -1);
 
     std::vector<std::string> extruder_ams_count_str;
     if (config.has_printer_setting(initial_printer_profile_name, "extruder_ams_count")) {
@@ -4365,7 +4374,8 @@ void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
     filament_nozzle_map->values.resize(n, 0);
     filament_volume_map->values.resize(n, static_cast<int>(NozzleVolumeType::nvtStandard));
     project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values.resize(n, -1.);
-    project_config.option<ConfigOptionInts>("filament_toolhead", true)->values.resize(n, -1);
+    for (const char *key : s_lane_keys)
+        project_config.option<ConfigOptionInts>(key, true)->values.resize(n, -1);
     ams_multi_color_filment.resize(n);
 
     resize_mixed_filament_metadata(project_config, old_slot_count, n);
@@ -4428,8 +4438,9 @@ void PresetBundle::update_num_filaments(unsigned int to_del_flament_id)
     }
     if (auto &spool_pa = project_config.option<ConfigOptionFloats>("spool_pressure_advance", true)->values; spool_pa.size() > to_del_flament_id)
         spool_pa.erase(spool_pa.begin() + to_del_flament_id);
-    if (auto &toolheads = project_config.option<ConfigOptionInts>("filament_toolhead", true)->values; toolheads.size() > to_del_flament_id)
-        toolheads.erase(toolheads.begin() + to_del_flament_id);
+    for (const char *key : s_lane_keys)
+        if (auto &values = project_config.option<ConfigOptionInts>(key, true)->values; values.size() > to_del_flament_id)
+            values.erase(values.begin() + to_del_flament_id);
 
     // lambda function to erase or resize the container
     auto erase_or_resize = [to_del_flament_id](auto& container) {
@@ -4533,7 +4544,8 @@ std::map<int, int> PresetBundle::move_mixed_filaments_to_tail()
                             "filament_mixed_sublayer_ratios", "filament_mixed_gradient_range", "filament_mixed_gradient_curve"})
         if (auto *opt = project_config.option<ConfigOptionStrings>(key))
             permute(opt->values);
-    for (const char *key : {"filament_map", "filament_nozzle_map", "filament_volume_map", "filament_toolhead"})
+    for (const char *key : {"filament_map", "filament_nozzle_map", "filament_volume_map", "filament_toolhead", "filament_switch_inlet",
+                            "filament_switch_toolhead"})
         if (auto *opt = project_config.option<ConfigOptionInts>(key))
             permute(opt->values);
     for (const char *key : {"filament_is_mixed", "filament_mixed_gradient", "filament_mixed_gradient_per_part"})
@@ -4674,7 +4686,11 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
     std::vector<std::string> ams_filament_presets;
     std::vector<std::string> ams_filament_colors;
     std::vector<std::string> ams_filament_color_types;
-    std::vector<int>         ams_filament_toolheads; // Orca: the toolhead each tray feeds, -1 = not known
+    // Orca: what a tray tells its filament slot of its lane, in the order of s_lane_keys and each -1 = not known:
+    // the toolhead it feeds and, behind a filament switch, its inlet and the other toolhead the switch reaches.
+    using TrayLane = std::array<int, std::size(s_lane_keys)>;
+    const TrayLane           no_lane{-1, -1, -1};
+    std::vector<TrayLane>    ams_filament_lanes;
     std::vector<AMSMapInfo>  ams_array_maps;
     ams_multi_color_filment.clear();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament_ams_list size: %1%") % filament_ams_list.size();
@@ -4687,7 +4703,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         std::string filament_color_type = "";
         std::string filament_preset = "";
         std::vector<std::string> mutli_filament_color;
-        int toolhead{-1};
+        TrayLane lane{-1, -1, -1};
     };
     auto is_double_extruder = get_printer_extruder_count() == 2;
     std::vector<AmsInfo> ams_infos;
@@ -4713,8 +4729,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto is_placeholder = ams.has("filament_slot_placeholder") && ams.opt_bool("filament_slot_placeholder", 0u);
         const auto *spool_pa = ams.option<ConfigOptionFloats>("spool_pressure_advance");
         const double tray_pa = spool_pa != nullptr && !spool_pa->values.empty() ? spool_pa->values.front() : -1.;
-        const auto *tray_head = ams.option<ConfigOptionInts>("filament_toolhead");
-        const int tray_toolhead = tray_head != nullptr && !tray_head->values.empty() ? tray_head->values.front() : -1;
+        TrayLane tray_lane = no_lane;
+        for (size_t key = 0; key < tray_lane.size(); ++key)
+            if (const auto *opt = ams.option<ConfigOptionInts>(s_lane_keys[key]); opt != nullptr && !opt->values.empty())
+                tray_lane[key] = opt->values.front();
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};
         ams_array_maps.push_back(temp);
@@ -4730,7 +4748,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 auto default_unknown_color = "#CECECE";
                 ams_filament_colors.push_back(default_unknown_color);
                 ams_filament_color_types.push_back("1");
-                ams_filament_toolheads.push_back(tray_toolhead);
+                ams_filament_lanes.push_back(tray_lane);
                 if (filament_multi_color.size() == 0) {
                     filament_multi_color.push_back(default_unknown_color);
                 }
@@ -4740,7 +4758,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 ams_filament_presets.push_back("");
                 ams_filament_colors.push_back("");
                 ams_filament_color_types.push_back("");
-                ams_filament_toolheads.push_back(tray_toolhead);
+                ams_filament_lanes.push_back(tray_lane);
                 ams_multi_color_filment.push_back({});
             }
             continue;
@@ -4749,7 +4767,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             ams_filament_presets.push_back(this->filament_presets[ams_filament_presets.size()]);
             ams_filament_colors.push_back(filament_color);
             ams_filament_color_types.push_back(filament_color_type);
-            ams_filament_toolheads.push_back(tray_toolhead);
+            ams_filament_lanes.push_back(tray_lane);
             ams_multi_color_filment.push_back(filament_multi_color);
             tray_spools.push_back({ams_filament_presets.back(), filament_color, tray_pa});
             continue;
@@ -4761,7 +4779,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             ams_filament_presets.push_back(named->name);
             ams_filament_colors.push_back(filament_color);
             ams_filament_color_types.push_back(filament_color_type);
-            ams_filament_toolheads.push_back(tray_toolhead);
+            ams_filament_lanes.push_back(tray_lane);
             ams_multi_color_filment.push_back(filament_multi_color);
             tray_spools.push_back({named->name, filament_color, tray_pa});
             continue;
@@ -4817,7 +4835,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     ams_filament_presets.push_back(this->filament_presets[ams_filament_presets.size()]);
                     ams_filament_colors.push_back(filament_color);
                     ams_filament_color_types.push_back(filament_color_type);
-                    ams_filament_toolheads.push_back(tray_toolhead);
+                    ams_filament_lanes.push_back(tray_lane);
                     ams_multi_color_filment.push_back(filament_multi_color);
                     tray_spools.push_back({ams_filament_presets.back(), filament_color, tray_pa});
                     unknowns.emplace_back(&ams, has_type ? L("The filament may not be compatible with the current machine settings. Generic filament presets will be used.") :
@@ -4845,7 +4863,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         ams_filament_presets.push_back(iter->name);
         ams_filament_colors.push_back(filament_color);
         ams_filament_color_types.push_back(filament_color_type);
-        ams_filament_toolheads.push_back(tray_toolhead);
+        ams_filament_lanes.push_back(tray_lane);
         ams_multi_color_filment.push_back(filament_multi_color);
         tray_spools.push_back({iter->name, filament_color, tray_pa});
     }
@@ -4912,11 +4930,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         }
     }
 
-    // Orca: the toolhead each slot's tray feeds, taken wherever a slot takes its tray's filament or color.
-    std::vector<int> toolheads = project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
-    toolheads.resize(this->filament_presets.size(), -1);
-    auto tray_toolhead = [&ams_filament_toolheads](int index) {
-        return index >= 0 && index < int(ams_filament_toolheads.size()) ? ams_filament_toolheads[index] : -1;
+    // Orca: each slot's lane, taken from its tray wherever a slot takes its tray's filament or color.
+    std::vector<TrayLane> lanes(this->filament_presets.size(), no_lane);
+    for (size_t key = 0; key < no_lane.size(); ++key) {
+        const std::vector<int> &values = project_config.option<ConfigOptionInts>(s_lane_keys[key], true)->values;
+        for (size_t i = 0; i < lanes.size() && i < values.size(); ++i)
+            lanes[i][key] = values[i];
+    }
+    auto tray_lane = [&ams_filament_lanes, &no_lane](int index) {
+        return index >= 0 && index < int(ams_filament_lanes.size()) ? ams_filament_lanes[index] : no_lane;
     };
 
     // A slot whose current preset is a compatible user preset for the filament the sync picked keeps
@@ -4943,7 +4965,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         };
 
         auto exist_colors = filament_color->values;
-        toolheads.resize(exist_colors.size(), -1);
+        lanes.resize(exist_colors.size(), no_lane);
         std::vector<std::vector<std::string>> exist_multi_color_filment(exist_colors.size());
         for (size_t i = 0; i < exist_colors.size(); i++) {
             exist_multi_color_filment[i] = {exist_colors[i]};
@@ -4968,7 +4990,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 int valid_index = get_map_index(ams_array_maps, maps[i]);
                 if (valid_index >= 0 && valid_index < int(ams_filament_colors.size()) && !ams_filament_colors[valid_index].empty()) {
                     exist_colors[i] = ams_filament_colors[valid_index];
-                    toolheads[i]    = tray_toolhead(valid_index);
+                    lanes[i]        = tray_lane(valid_index);
                     mapped_any = true;
                     if (valid_index < int(ams_multi_color_filment.size()) && !ams_multi_color_filment[valid_index].empty()) {
                         exist_multi_color_filment[i] = ams_multi_color_filment[valid_index];
@@ -4986,7 +5008,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     continue;
                 }
                 exist_colors[i] = ams_filament_colors[i];
-                toolheads[i]    = tray_toolhead(int(i));
+                lanes[i]        = tray_lane(int(i));
                 if (i < ams_multi_color_filment.size() && !ams_multi_color_filment[i].empty()) {
                     exist_multi_color_filment[i] = ams_multi_color_filment[i];
                 } else {
@@ -5035,7 +5057,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto exist_colors = filament_color->values;
         auto exist_color_types = filament_color_type->values;
         auto exist_filament_presets = this->filament_presets;
-        toolheads.resize(exist_colors.size(), -1);
+        lanes.resize(exist_colors.size(), no_lane);
         std::vector<std::vector<std::string>> exist_multi_color_filment;
         exist_multi_color_filment.resize(exist_colors.size());
         for (int i = 0; i < exist_colors.size(); i++) {
@@ -5049,7 +5071,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     exist_color_types[i]      = ams_filament_color_types[valid_index];
                     exist_filament_presets[i] = synced_preset_name(exist_filament_presets[i], ams_filament_presets[valid_index]);
                     exist_multi_color_filment[i] = ams_multi_color_filment[valid_index];
-                    toolheads[i]              = tray_toolhead(valid_index);
+                    lanes[i]                  = tray_lane(valid_index);
                 } else {
                     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "check error: array bound (mapping exist)";
                 }
@@ -5063,7 +5085,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 }
                 ams_infos[i].filament_preset = ams_filament_presets[i];
                 ams_infos[i].mutli_filament_color = ams_multi_color_filment[i];
-                ams_infos[i].toolhead = tray_toolhead(int(i));
+                ams_infos[i].lane = tray_lane(int(i));
                 if (!ams_infos[i].is_map) {
                     need_append_colors.emplace_back(ams_infos[i]);
                     ams_filament_colors[i]     = "";
@@ -5112,7 +5134,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 exist_colors.push_back(need_append_colors[i].filament_color);
                 exist_color_types.push_back(need_append_colors[i].filament_color_type);
                 exist_multi_color_filment.push_back(need_append_colors[i].mutli_filament_color);
-                toolheads.push_back(need_append_colors[i].toolhead);
+                lanes.push_back(need_append_colors[i].lane);
             }
         }
         filament_color->values = exist_colors;
@@ -5133,7 +5155,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
 
             size_t tray_count = ams_filament_presets.size();
             size_t total      = std::max(tray_count, exist_presets.size());
-            toolheads.resize(total, -1);
+            lanes.resize(total, no_lane);
 
             std::vector<std::string> result_colors;
             std::vector<std::string> result_color_types;
@@ -5152,7 +5174,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     result_presets.push_back(i < exist_presets.size()
                                                  ? synced_preset_name(exist_presets[i], ams_filament_presets[i])
                                                  : ams_filament_presets[i]);
-                    toolheads[i] = tray_toolhead(int(i));
+                    lanes[i] = tray_lane(int(i));
                     result_multi_colors.push_back(
                         i < ams_multi_color_filment.size() ? ams_multi_color_filment[i]
                                                            : std::vector<std::string>{ams_filament_colors[i]});
@@ -5191,7 +5213,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             for (size_t i = 0; i < std::min(ams_filament_presets.size(), this->filament_presets.size()); i++)
                 ams_filament_presets[i] = synced_preset_name(this->filament_presets[i], ams_filament_presets[i]);
             this->filament_presets = ams_filament_presets;
-            toolheads              = ams_filament_toolheads;
+            lanes                  = ams_filament_lanes;
             filament_map->values.resize(ams_filament_colors.size(), 1);
             filament_volume_map->values.resize(ams_filament_colors.size(), static_cast<int>(NozzleVolumeType::nvtStandard));
         }
@@ -5233,8 +5255,12 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         }
     }
 
-    toolheads.resize(this->filament_presets.size(), -1);
-    project_config.option<ConfigOptionInts>("filament_toolhead", true)->values = std::move(toolheads);
+    lanes.resize(this->filament_presets.size(), no_lane);
+    for (size_t key = 0; key < no_lane.size(); ++key) {
+        std::vector<int> &values = project_config.option<ConfigOptionInts>(s_lane_keys[key], true)->values;
+        values.resize(lanes.size());
+        std::transform(lanes.begin(), lanes.end(), values.begin(), [key](const TrayLane &lane) { return lane[key]; });
+    }
 
     // Each slot takes the pressure advance of the spool it was synced from, the tray with its
     // preset and color; a slot no tray matches keeps its own only while it keeps its preset.
@@ -6656,11 +6682,11 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
             spool_pa.assign(num_filaments, -1.);
         else
             spool_pa.resize(num_filaments, -1.);
-        if (auto &toolheads = this->project_config.option<ConfigOptionInts>("filament_toolhead", true)->values;
-            is_published || !config.has("filament_toolhead"))
-            toolheads.assign(num_filaments, -1);
-        else
-            toolheads.resize(num_filaments, -1);
+        for (const char *key : s_lane_keys)
+            if (auto &values = this->project_config.option<ConfigOptionInts>(key, true)->values; is_published || !config.has(key))
+                values.assign(num_filaments, -1);
+            else
+                values.resize(num_filaments, -1);
 
         break;
     }

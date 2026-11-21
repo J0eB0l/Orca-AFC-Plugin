@@ -60,6 +60,14 @@ struct Run
 Run run(const std::vector<std::vector<unsigned int>>& layer_filaments, const std::vector<int>& toolhead_of,
         const std::vector<int>& inlet_of, const Times& times);
 
+// toolhead_of with each lane behind a filament switch on whichever of its two toolheads makes the print
+// shorter, no spool moved: one filament at a time goes to the other toolhead its switch reaches (other_of,
+// -1 for a lane the switch cannot send elsewhere) or back, while that lowers run()'s seconds plus
+// lane_seconds for each of its lane changes. A tie keeps a filament where it is.
+std::vector<int> switch_in_place(const std::vector<std::vector<unsigned int>>& layer_filaments, const std::vector<int>& toolhead_of,
+                                 const std::vector<int>& other_of, const std::vector<int>& inlet_of, const Times& times,
+                                 double lane_seconds);
+
 // Each unit's lane change seconds in the order it is preferred: the units named in `preferred` first,
 // in that order, then the others quickest first. The seconds the units measured, sorted, go to them in
 // that order, so a preferred unit counts as quick without the times leaving the range they span.

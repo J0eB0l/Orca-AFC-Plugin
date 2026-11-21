@@ -271,3 +271,38 @@ TEST_CASE("improve leaves a lane its switch cannot move on its toolhead", "[AFCL
     lanes[1].other_toolhead = -1;
     CHECK(improve(lanes, {{0}, {1}, {0}, {1}, {0}}, {0, 0}, 0.01, 2, switch_times(100., 10.)) == std::vector<int>{0, 0});
 }
+
+TEST_CASE("switch_in_place gives two filaments of one unit a nozzle each when a flush takes longer than a tool change", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    const std::vector<int> split = switch_in_place(layers, {0, 0}, {1, 1}, {0, 0}, switch_times(100., 10.), 60.);
+    REQUIRE(split.size() == 2);
+    CHECK(split[0] != split[1]);
+}
+
+TEST_CASE("switch_in_place keeps a filament on its own toolhead when the print is no shorter on the other", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    CHECK(switch_in_place(layers, {0, 0}, {1, 1}, {0, 0}, switch_times(5., 100.), 60.) == std::vector<int>{0, 0});
+    CHECK(switch_in_place(layers, {0, 0}, {1, 1}, {0, 0}, switch_times(10., 10.), 60.) == std::vector<int>{0, 0});
+}
+
+TEST_CASE("switch_in_place leaves a filament its switch cannot send elsewhere", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    CHECK(switch_in_place(layers, {0, 0}, {-1, -1}, {0, 0}, switch_times(100., 10.), 60.) == std::vector<int>{0, 0});
+    // A filament the print does not use has no toolhead to leave.
+    CHECK(switch_in_place(layers, {0, 0, -1}, {-1, -1, 1}, {0, 0, 0}, switch_times(100., 10.), 60.) == std::vector<int>{0, 0, -1});
+}
+
+TEST_CASE("switch_in_place counts the lane changes a filament saves on a nozzle of its own", "[AFCLayout]")
+{
+    // Filament 0 is behind the switch, filament 1 is in a unit of toolhead 0 the switch does not serve. On one
+    // toolhead they change lanes four times; with filament 0 through the switch neither is ever unloaded.
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    const Times                                  times = switch_times(5., 20.);
+    // Four flushes of 5 s against four tool changes of 20 s: not worth it by those alone.
+    CHECK(switch_in_place(layers, {0, 0}, {1, -1}, {0, -1}, times, 0.) == std::vector<int>{0, 0});
+    // Each lane change saved is a minute.
+    CHECK(switch_in_place(layers, {0, 0}, {1, -1}, {0, -1}, times, 60.) == std::vector<int>{1, 0});
+}

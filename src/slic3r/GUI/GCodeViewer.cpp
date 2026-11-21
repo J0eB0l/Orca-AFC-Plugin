@@ -1770,6 +1770,8 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     m_toolhead_filaments.clear();
     m_toolhead_nozzles.clear();
     m_toolhead_lanes = false;
+    m_switch_filaments.clear();
+    m_switch_lanes = false;
     const auto* afc = print.full_print_config().option<ConfigOptionBool>("afc_enabled");
     if (!print.is_BBL_printer() && afc && afc->value && print.config().nozzle_diameter.values.size() > 1) {
         m_toolhead_nozzles = print.config().nozzle_diameter.values;
@@ -1780,6 +1782,22 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
             const int head = !per_toolhead ? int(extruder_id) : extruder_id < filament_maps.size() ? filament_maps[extruder_id] - 1 : -1;
             if (head >= 0 && size_t(head) < m_toolhead_filaments.size())
                 m_toolhead_filaments[head].push_back({type_opt[extruder_id], color_opt[extruder_id], extruder_id, (bool)(support_filament_opt[extruder_id])});
+        }
+        if (print.routes_switch_lanes()) {
+            // A lane goes to the other toolhead only when the nozzle there is of the same size (ToolOrdering).
+            const std::vector<int>& own    = print.config().filament_toolhead.values;
+            const std::vector<int>& other  = print.config().filament_switch_toolhead.values;
+            const std::vector<int>  sliced = print.lane_toolheads();
+            auto nozzle = [this](int head) { return size_t(head) < m_toolhead_nozzles.size() ? m_toolhead_nozzles[head] : 0.; };
+            for (auto extruder_id : m_viewer.get_used_extruders_ids()) {
+                if (extruder_id >= own.size() || extruder_id >= other.size() || extruder_id >= sliced.size() || other[extruder_id] < 0 ||
+                    std::abs(nozzle(own[extruder_id]) - nozzle(other[extruder_id])) > EPSILON)
+                    continue;
+                // One filament alone has nothing to gain from another toolhead.
+                m_switch_lanes = m_viewer.get_used_extruders_ids().size() > 1;
+                if (sliced[extruder_id] != own[extruder_id])
+                    m_switch_filaments.push_back(int(extruder_id) + 1);
+            }
         }
     }
 
@@ -5747,6 +5765,19 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
 
     ImGui::Dummy({window_padding, window_padding});
     imgui.text_wrapped(_u8L("Synced filaments print on the tool their AFC lane feeds."), ImGui::GetContentRegionAvail().x);
+    if (!m_switch_filaments.empty()) {
+        std::string filaments;
+        for (int filament : m_switch_filaments)
+            filaments += (filaments.empty() ? "" : ", ") + std::to_string(filament);
+        // TRN %1% is a filament number, or in the plural a list of them such as "9, 12"
+        imgui.text_wrapped(format_wxstr(_L_PLURAL("Filament %1% prints through the filament switch on its other tool, which makes this print shorter.",
+                                                  "Filaments %1% print through the filament switch on their other tool, which makes this print shorter.",
+                                                  unsigned(m_switch_filaments.size())),
+                                        filaments),
+                           ImGui::GetContentRegionAvail().x);
+    } else if (m_switch_lanes)
+        imgui.text_wrapped(_u8L("The filament switch keeps its lanes on their own tool: the other tool would not make this print shorter."),
+                           ImGui::GetContentRegionAvail().x);
     // The lanes that change tools least for this print, and Sync layout to AFC once the spools are moved.
     if (m_toolhead_lanes) {
         ImGui::Dummy({window_padding, window_padding});

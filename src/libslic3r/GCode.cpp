@@ -8332,6 +8332,9 @@ void GCode::append_full_config(const Print &print, std::string &str)
     // built from still carries the registered default. Copy the real values so the header line is
     // diagnostic (nothing parses it back).
     cfg.option<ConfigOptionInts>("filament_map_2", true)->values = print.config().filament_map_2.values;
+    // Orca: filament_toolhead as sliced: a lane behind a filament switch is on the toolhead its filament prints
+    // on (Print::lane_toolheads), which is where the printer side sends that lane for this file.
+    cfg.option<ConfigOptionInts>("filament_toolhead", true)->values = print.lane_toolheads();
     // Sorted list of config keys, which shall not be stored into the G-code. Initializer list.
     static const std::set<std::string_view> banned_keys( {
         // filament_extruder_compatibility is a device-side (blacklist) compatibility hint read from the
@@ -8350,6 +8353,10 @@ void GCode::append_full_config(const Print &print, std::string &str)
         // consumer. Banning it from the g-code config dump keeps the H2D/A2L/X2D/P2S leaves that carry it
         // byte-identical, while still registering it as a known, validated config key.
         "deretract_speed_extruder_change"sv,
+        // Orca: what the slice routes a filament switch's lanes by. The file says where each lane prints in
+        // filament_toolhead, so these stay out and the config block keeps the lines it had.
+        "filament_switch_inlet"sv,
+        "filament_switch_toolhead"sv,
         // farthest_point_timelapse is a newly-registered printer key (corexy-only timelapse refinement).
         // Excluding it from the config block keeps the config-dump byte-identical for the whole shipping
         // fleet — otherwise every printer's dump would gain a `= 0` line vs the previous baseline, and

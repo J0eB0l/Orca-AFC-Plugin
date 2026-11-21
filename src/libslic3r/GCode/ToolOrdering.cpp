@@ -1,4 +1,5 @@
 #include "libslic3r/Exception.hpp"
+#include "libslic3r/libslic3r.h"
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/Config.hpp"
 #include "ExtrusionEntity.hpp"
@@ -18,6 +19,7 @@
 #include "Utils.hpp"
 #include "format.hpp"
 #include "I18N.hpp"
+#include "../AFCLayout.hpp"
 #include "../BeltBrim.hpp"
 
 #include <boost/log/trivial.hpp>
@@ -1789,6 +1791,43 @@ static std::vector<int> apply_master_extruder_preference(const FilamentGroupCont
     return nozzle_ret;
 }
 
+// Orca: with Multi-material per toolhead, a filament whose lane is behind a filament switch prints on the other
+// toolhead the switch reaches (filament_switch_toolhead, from AFC) when the print is shorter for it: the flushes
+// that skips against the tool changes it adds, and the lane changes either way, an inlet holding one filament at
+// a time (AFCLayout::switch_in_place). toolhead_of is each filament's toolhead, 0-based. A filament that is not
+// on its lane's own toolhead stays. So does one whose parts the other toolhead cannot reach (`unreachable`, the
+// filaments per toolhead), or whose nozzle there is of another size, as its paths are made for the nozzle of its
+// own (nozzle_diameter_for_filament).
+static void route_switch_lanes(const Print& print, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                               const std::vector<std::set<int>>& unreachable, std::vector<int>& toolhead_of)
+{
+    if (!print.routes_switch_lanes())
+        return;
+    const PrintConfig&      config = print.config();
+    const std::vector<int>& own    = config.filament_toolhead.values;
+    const std::vector<int>& other  = config.filament_switch_toolhead.values;
+    const std::vector<int>& inlets = config.filament_switch_inlet.values;
+    const size_t            heads  = config.nozzle_diameter.values.size();
+    auto reaches = [&unreachable](int head, size_t filament) {
+        return size_t(head) >= unreachable.size() || unreachable[head].count(int(filament)) == 0;
+    };
+    std::vector<int> other_of(toolhead_of.size(), -1), inlet_of(toolhead_of.size(), -1);
+    bool             routed = false;
+    for (size_t f = 0; f < toolhead_of.size(); ++f) {
+        if (f < inlets.size())
+            inlet_of[f] = inlets[f];
+        const int to = f < other.size() ? other[f] : -1;
+        if (f < own.size() && own[f] >= 0 && own[f] == toolhead_of[f] && to >= 0 && size_t(to) < heads && to != own[f] &&
+            std::abs(config.nozzle_diameter.get_at(to) - config.nozzle_diameter.get_at(own[f])) < EPSILON && reaches(to, f)) {
+            other_of[f] = to;
+            routed      = true;
+        }
+    }
+    if (routed)
+        toolhead_of = AFCLayout::switch_in_place(layer_filaments, toolhead_of, other_of, inlet_of, Print::lane_change_times(config),
+                                                 config.machine_load_filament_time.value + config.machine_unload_filament_time.value);
+}
+
 // Nozzle-centric grouping. Dispatches by FilamentMapMode and returns a nozzle-aware
 // LayeredNozzleGroupResult. For single-extruder printers (X1/P1/A1/H2S) the grouping engine is not
 // invoked — the trivial all-master map is wrapped in a single-nozzle result, so their g-code is
@@ -1822,6 +1861,7 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
             for (size_t i = 0; i < manual_filament_map.size() && i < lane_toolheads.size(); ++i)
                 if (lane_toolheads[i] >= 0 && size_t(lane_toolheads[i]) < extruder_nums)
                     manual_filament_map[i] = lane_toolheads[i];
+            route_switch_lanes(*print, layer_filaments, geometric_unprintables, manual_filament_map);
         }
         auto result = LayeredNozzleGroupResult::create(manual_filament_map, nozzle_list, used_filaments);
         return result ? *result : LayeredNozzleGroupResult();
@@ -1862,6 +1902,8 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
             else if (i < extruder_nums)
                 ret[i] = (int)i;
         }
+        if (print_config.multi_extruder_multi_material.value)
+            route_switch_lanes(*print, layer_filaments, geometric_unprintables, ret);
         auto result_opt = LayeredNozzleGroupResult::create(ret, nozzle_list, used_filaments);
         return result_opt ? *result_opt : LayeredNozzleGroupResult();
     }

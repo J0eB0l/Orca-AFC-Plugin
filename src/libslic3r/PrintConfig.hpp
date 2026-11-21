@@ -1762,6 +1762,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInts,                filament_nozzle_map))
     ((ConfigOptionFloats,              spool_pressure_advance))
     ((ConfigOptionInts,                filament_toolhead))
+    ((ConfigOptionInts,                filament_switch_inlet))
+    ((ConfigOptionInts,                filament_switch_toolhead))
     ((ConfigOptionInts,                filament_map_2)) //used for multi nozzle, map filament to the index identified by extruder+nozzle_volume_type
     //((ConfigOptionInts,                filament_extruder_id))
     ((ConfigOptionStrings,             filament_extruder_variant))

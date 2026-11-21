@@ -813,6 +813,94 @@ TEST_CASE("A filament's lane toolhead overrides the project's manual filament ma
     CHECK(print.get_filament_maps() == std::vector<int>{ 1, 2 });
 }
 
+// Slices wipe_tower_toolchange_config's two filaments, which swap every layer, for two nozzles with Multi-material
+// per toolhead and Purge in prime tower. Both lanes feed toolhead 0 through one inlet of a filament switch, which can
+// send each to toolhead `other` too (0-based, one per filament, -1 = it cannot). A flush between the two is 280 mm3
+// (multifilament_config), so 28 s at the 10 mm3/s set here, and a tool change takes `tool_change` seconds.
+static void slice_behind_filament_switch(Print &print, const char *other, double tool_change, const char *map_mode = "Auto For Flush")
+{
+    DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_num_extruders(2);
+    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+                                    { "multi_extruder_multi_material", "1" },
+                                    { "purge_in_prime_tower", "1" },
+                                    { "prime_volume", "15" },
+                                    { "flush_multiplier", "1" },
+                                    { "nozzle_diameter", "0.4,0.4" },
+                                    { "printer_extruder_id", "1,2" },
+                                    { "printer_extruder_variant", "Direct Drive Standard,Direct Drive Standard" },
+                                    { "extruder_printable_height", "0,0" },
+                                    { "filament_map_mode", map_mode },
+                                    { "filament_map", "1,1" },
+                                    { "filament_max_volumetric_speed", "10,10" },
+                                    { "machine_tool_change_time", tool_change },
+                                    { "filament_toolhead", "0,0" },
+                                    { "filament_switch_inlet", "0,0" },
+                                    { "filament_switch_toolhead", other } });
+    size_flush_to_nozzles(config);
+    Model model;
+    init_print({ cube(10) }, print, model, config);
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    REQUIRE(print.wipe_tower_data().number_of_toolchanges > 0);
+}
+
+static double tower_filament(const Print &print)
+{
+    double used = 0.;
+    for (float length : print.wipe_tower_data().used_filament)
+        used += length;
+    return used;
+}
+
+TEST_CASE("A filament behind a filament switch prints on its other toolhead when a flush takes longer than a tool change", "[WipeTower]")
+{
+    const char *map_mode = GENERATE("Auto For Flush", "Manual");
+    Print       print;
+    slice_behind_filament_switch(print, "1,1", 10., map_mode);
+    // A 28 s flush at every change on one nozzle, or a 10 s tool change between two: a nozzle each.
+    const std::vector<int> sliced = print.get_filament_maps();
+    REQUIRE(sliced.size() == 2);
+    CHECK(sliced[0] != sliced[1]);
+    // The lanes are where the filaments were sliced, not where their unit feeds.
+    CHECK(print.lane_toolheads() == std::vector<int>{ sliced[0] - 1, sliced[1] - 1 });
+}
+
+TEST_CASE("A filament behind a filament switch keeps its toolhead when the print is no shorter on the other", "[WipeTower]")
+{
+    Print print;
+    SECTION("a tool change takes longer than the flush") {
+        slice_behind_filament_switch(print, "1,1", 40.);
+    }
+    SECTION("the switch cannot send its lane there") {
+        slice_behind_filament_switch(print, "-1,-1", 10.);
+    }
+    CHECK(print.get_filament_maps() == std::vector<int>{ 1, 1 });
+    CHECK(print.lane_toolheads() == std::vector<int>{ 0, 0 });
+}
+
+TEST_CASE("The prime tower only primes between two filaments a filament switch gives a nozzle each", "[WipeTower]")
+{
+    // On one nozzle every change flushes 280 mm3; a nozzle each, the lane that comes back is primed with 15 mm3.
+    Print one_nozzle, nozzle_each;
+    slice_behind_filament_switch(one_nozzle, "-1,-1", 10.);
+    slice_behind_filament_switch(nozzle_each, "1,1", 10.);
+    CHECK(tower_filament(one_nozzle) > 2. * tower_filament(nozzle_each));
+}
+
+TEST_CASE("The print file names the toolhead a filament switch lane was sliced on", "[WipeTower]")
+{
+    Print print;
+    slice_behind_filament_switch(print, "1,1", 10., "Manual");
+    const std::vector<int> lanes = print.lane_toolheads();
+    REQUIRE(lanes.size() == 2);
+    const std::string gcode = Slic3r::Test::gcode(print);
+    CHECK_THAT(gcode, Catch::Matchers::ContainsSubstring("; filament_toolhead = " + std::to_string(lanes[0]) + "," + std::to_string(lanes[1]) + "\n"));
+    // What the slice routed by stays out of the file.
+    CHECK_THAT(gcode, !Catch::Matchers::ContainsSubstring("filament_switch_"));
+}
+
 TEST_CASE("An AFC lane change does not unretract the toolchange retraction", "[WipeTower]")
 {
     // AFC loads the incoming lane to the nozzle tip, so the 5 mm the filament retracted when it last left is

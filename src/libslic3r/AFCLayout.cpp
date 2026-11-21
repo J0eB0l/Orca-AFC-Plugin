@@ -133,6 +133,33 @@ Run run(const std::vector<std::vector<unsigned int>>& layer_filaments, const std
     return out;
 }
 
+std::vector<int> switch_in_place(const std::vector<std::vector<unsigned int>>& layer_filaments, const std::vector<int>& toolhead_of,
+                                 const std::vector<int>& other_of, const std::vector<int>& inlet_of, const Times& times,
+                                 double lane_seconds)
+{
+    auto cost = [&](const std::vector<int>& heads) {
+        const Run walked = run(layer_filaments, heads, inlet_of, times);
+        return walked.seconds + walked.lane_changes * lane_seconds;
+    };
+    std::vector<int> best      = toolhead_of;
+    double           best_cost = cost(best);
+    for (bool better = true; better;) {
+        better = false;
+        for (size_t f = 0; f < best.size() && f < other_of.size(); ++f) {
+            if (toolhead_of[f] < 0 || other_of[f] < 0 || other_of[f] == toolhead_of[f])
+                continue;
+            std::vector<int> candidate = best;
+            candidate[f]               = best[f] == toolhead_of[f] ? other_of[f] : toolhead_of[f];
+            if (const double c = cost(candidate); c < best_cost - 1e-6) {
+                best      = std::move(candidate);
+                best_cost = c;
+                better    = true;
+            }
+        }
+    }
+    return best;
+}
+
 std::vector<double> rank_units(const std::vector<std::string>& units, const std::vector<double>& seconds,
                                const std::vector<std::string>& preferred)
 {

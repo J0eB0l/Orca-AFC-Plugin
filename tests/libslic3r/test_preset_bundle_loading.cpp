@@ -5849,6 +5849,42 @@ TEST_CASE("Syncing the AMS keeps a slot's user preset for the tray's filament", 
     }
 }
 
+TEST_CASE("Syncing the AMS takes each tray's toolhead and what its filament switch reaches", "[Preset][Bundle][AMS]")
+{
+    PresetBundle bundle;
+    Preset      &pla = add_inmemory_preset(bundle.filaments, "System PLA", "");
+    pla.is_system    = true;
+    pla.filament_id  = "GFA00";
+    bundle.set_num_filaments(2u, std::string("#111111"));
+    bundle.filament_presets = {"System PLA", "System PLA"};
+
+    auto add_tray = [&](int slot, const std::string &colour) -> DynamicPrintConfig & {
+        DynamicPrintConfig config;
+        config.set_key_value("filament_id", new ConfigOptionStrings{"GFA00"});
+        config.set_key_value("filament_colour", new ConfigOptionStrings{colour});
+        config.set_key_value("filament_colour_type", new ConfigOptionStrings{"1"});
+        config.set_key_value("filament_multi_colour", new ConfigOptionStrings{});
+        config.set_key_value("ams_id", new ConfigOptionStrings{"0"});
+        config.set_key_value("slot_id", new ConfigOptionStrings{std::to_string(slot)});
+        config.set_key_value("filament_type", new ConfigOptionStrings{"PLA"});
+        return bundle.filament_ams_list.emplace(slot, std::move(config)).first->second;
+    };
+    // Tray 0 feeds toolhead 4 through inlet 1 of a filament switch that reaches toolhead 5 too; tray 1 feeds toolhead 2.
+    DynamicPrintConfig &behind_switch = add_tray(0, "#FF0000");
+    behind_switch.set_key_value("filament_toolhead", new ConfigOptionInts{4});
+    behind_switch.set_key_value("filament_switch_inlet", new ConfigOptionInts{1});
+    behind_switch.set_key_value("filament_switch_toolhead", new ConfigOptionInts{5});
+    add_tray(1, "#00FF00").set_key_value("filament_toolhead", new ConfigOptionInts{2});
+
+    std::vector<std::pair<DynamicPrintConfig *, std::string>> unknowns;
+    MergeFilamentInfo                                         merge_info;
+    std::map<int, AMSMapInfo>                                 maps;
+    REQUIRE(bundle.sync_ams_list(unknowns, false, maps, true, merge_info) == 2);
+    CHECK(bundle.project_config.option<ConfigOptionInts>("filament_toolhead")->values == std::vector<int>{4, 2});
+    CHECK(bundle.project_config.option<ConfigOptionInts>("filament_switch_inlet")->values == std::vector<int>{1, -1});
+    CHECK(bundle.project_config.option<ConfigOptionInts>("filament_switch_toolhead")->values == std::vector<int>{5, -1});
+}
+
 TEST_CASE("Loading incomplete mixed metadata normalizes slots before adding a filament", "[Preset][Bundle][FilamentMixer]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();

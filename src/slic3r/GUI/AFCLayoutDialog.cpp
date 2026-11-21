@@ -152,11 +152,9 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         lane.loaded   = agent.loaded;
         auto seconds  = unit_seconds.find(agent.unit);
         lane.seconds  = seconds != unit_seconds.end() ? seconds->second : UNKNOWN_SECONDS;
-        if (agent.fila_switch >= 0 && agent.switch_inlet >= 0)
-            lane.inlet = agent.fila_switch * 2 + agent.switch_inlet;
-        for (int head : agent.switch_toolheads)
-            if (lane.toolhead >= 0 && head >= 0 && size_t(head) < heads && head != lane.toolhead)
-                lane.other_toolhead = head;
+        lane.inlet = agent.inlet();
+        if (const int other = agent.other_toolhead(); other >= 0 && size_t(other) < heads)
+            lane.other_toolhead = other;
         for (int tool : agent.tools)
             if (agent.loaded && tool >= 0 && size_t(tool) < filaments && !placed.count(tool) && same_filament(agent, config, tool, true)) {
                 lane.filament = tool;
@@ -186,16 +184,7 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
     // weighs the flushes that skips against the tool changes it adds: a flush at the filament's highest flow,
     // a tool change as the printer's time estimate counts it.
     out.routed = std::any_of(out.lanes.begin(), out.lanes.end(), [](const AFCLayout::Lane& lane) { return lane.inlet >= 0; });
-    AFCLayout::Times times;
-    if (out.routed) {
-        times.tool_change = config.machine_tool_change_time.value;
-        times.flush.assign(heads, std::vector<std::vector<double>>(filaments, std::vector<double>(filaments, 0.)));
-        for (size_t head = 0; head < heads; ++head)
-            for (size_t from = 0; from < filaments; ++from)
-                for (size_t to = 0; to < filaments; ++to)
-                    if (const double flow = config.filament_max_volumetric_speed.get_at(to); from != to && flow > 0.)
-                        times.flush[head][from][to] = Print::lane_change_flush(config, unsigned(from), unsigned(to), int(head)) / flow;
-    }
+    const AFCLayout::Times times = out.routed ? Print::lane_change_times(config) : AFCLayout::Times();
     // Lane changes now: each filament on the toolhead its spool's lane feeds, as AFC would print it, so a
     // move that splits two spools sharing a toolhead shows what it saves. A lane whose switch reaches the
     // toolhead the slice gave its filament prints there.

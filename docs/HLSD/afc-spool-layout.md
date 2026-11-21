@@ -99,6 +99,19 @@ toolhead (`picked_toolheads` in `SelectMachine.cpp`) instead of slicing again fo
 now. The print file then sends each lane to its toolhead (the agent's `AFC_BRIDGEBOX_SWITCH_ASSIGN`
 lines).
 
+The slice does the same with the spools where they are. A filament sync keeps each slot's inlet and the
+other toolhead its switch reaches with the project (`filament_switch_inlet`, `filament_switch_toolhead`,
+beside `filament_toolhead`), and `ToolOrdering::get_recommended_filament_maps` puts each such filament on
+whichever of its two toolheads makes the print shorter (`AFCLayout::switch_in_place`): `run`'s seconds,
+plus the printer's load and unload times for each lane change. A filament stays on its own toolhead when
+the other has a nozzle of another size, as its paths are made for the nozzle of its own, when the other
+toolhead cannot reach its parts, and on a plate printed by object. `Print::lane_toolheads` says where each lane
+was sliced. The prime tower plans its lane change flushes from it, the file's `filament_toolhead` line
+carries it to the agent, and the preview's Filament Grouping box names the filaments that print on the
+other toolhead. A layout synced from the dialog names the toolheads itself, and so do trays picked in the
+print dialog that need another slice. Those filaments then stay on the toolhead named
+(`filament_switch_toolhead` cleared) until the filaments are synced again.
+
 A printer without a filament switch is planned as before: its layout counts lane changes only.
 
 ## Sync layout to AFC
