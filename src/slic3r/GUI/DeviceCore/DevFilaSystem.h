@@ -89,6 +89,7 @@ public:
     int             toolhead = -1;                // Orca: the toolhead the tray feeds, as a printer agent reports it (-1 = not known)
     int             tool = -1;                    // Orca: the tool (T number) a printer agent's tray is, which filament sync orders by (-1 = not known)
     bool            in_tool = false;              // Orca: a printer agent's tray loaded in its own toolhead, which may not be the active one
+    std::vector<int> switch_toolheads;            // Orca: the two toolheads a printer agent's tray can load into through its filament switch, outlet A's first (empty = no choice)
     std::string     runout;                       // Orca: the lane a printer agent's tray runs out onto, "" for none
     int             remain_g = -1;                // Orca: grams left on a printer agent's spool, weighed or counted by the printer (-1 = not known)
     int             hold_count = 0;
@@ -219,6 +220,7 @@ public:
 public:
     std::string GetAmsId() const { return m_ams_id; }
     wxString    GetUnitName() const { return m_unit_name; } // Orca: the agent's own unit name, empty for Bambu printers
+    int         GetAgentSwitch() const { return m_agent_switch; } // Orca: the printer agent's filament switch the unit is plumbed into, its place in MachineObject::agent_fila_switches (-1 = none)
     wxString    GetDisplayName() const; // display
 
     void     SetAmsType(int type) { m_ams_type = (AmsType)type; }
@@ -282,6 +284,7 @@ private:
     std::string   m_display_name; // Orca: set by printer agents for their own units, replaces the type-based name
     int           m_ext_id;//extruder id
     wxString      m_unit_name; // Orca: a printer agent's own name for this unit, shown instead of the type and number
+    int           m_agent_switch = -1; // Orca: see GetAgentSwitch
     // Orca: pull-mode / multi-vendor agent model — keeps the legacy single m_ext_id for existing
     // consumers and carries the switch-aware binding alongside it. Without a Filament Track Switch
     // the set is {m_ext_id}; with one installed the device binds both extruders and records which

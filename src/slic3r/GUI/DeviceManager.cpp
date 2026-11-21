@@ -1530,6 +1530,13 @@ int MachineObject::command_clear_agent_message()
     return this->publish_json(j);
 }
 
+const MachineObject::AgentFilaSwitch* MachineObject::agent_switch_of(const std::string& ams_id) const
+{
+    const DevAms* ams = m_fila_system ? m_fila_system->GetAmsById(ams_id) : nullptr;
+    const int     at  = ams ? ams->GetAgentSwitch() : -1;
+    return at >= 0 && size_t(at) < agent_fila_switches.size() ? &agent_fila_switches[at] : nullptr;
+}
+
 // Orca: drops the errors and warnings the Assistant page lists from the printer agent's log (agent_log).
 int MachineObject::command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type, const std::string& flow)
 {
@@ -3517,6 +3524,40 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                     toolhead_nozzle_diameters.clear();
                     for (const json& size : jj["toolhead_nozzles"])
                         toolhead_nozzle_diameters.push_back(size.is_number() ? size.get<float>() : 0.f);
+                }
+                // Orca: a printer agent's filament switches come with every status of a printer that has any.
+                if (jj.contains("afc_switches") && jj["afc_switches"].is_array()) {
+                    const auto letter = [](const json& entry, const char* key) {
+                        const std::string value = entry.is_object() ? entry.value(key, std::string()) : std::string();
+                        return value == "A" ? 0 : value == "B" ? 1 : -1;
+                    };
+                    agent_fila_switches.clear();
+                    for (const json& item : jj["afc_switches"]) {
+                        if (!item.is_object())
+                            continue;
+                        AgentFilaSwitch fila_switch;
+                        fila_switch.name       = item.value("name", std::string());
+                        fila_switch.calibrated = item.value("calibrated", false);
+                        fila_switch.text       = item.value("text", std::string());
+                        for (const json& entry : item.value("inlets", json::array())) {
+                            const int at = letter(entry, "letter");
+                            if (at < 0)
+                                continue;
+                            fila_switch.inlets[at].outlet   = letter(entry, "outlet");
+                            fila_switch.inlets[at].filament = entry.value("filament", false);
+                            fila_switch.inlets[at].color    = entry.value("color", std::string());
+                        }
+                        for (const json& entry : item.value("outlets", json::array())) {
+                            const int at = letter(entry, "letter");
+                            if (at < 0)
+                                continue;
+                            fila_switch.outlets[at].extruder = entry.value("extruder", std::string());
+                            fila_switch.outlets[at].toolhead = entry.value("toolhead", -1);
+                        }
+                        agent_fila_switches.push_back(fila_switch);
+                    }
+                } else if (jj.contains("support_unit_toolhead")) {
+                    agent_fila_switches.clear();
                 }
                 if (jj.contains("toolhead_parts") && jj["toolhead_parts"].is_array()) {
                     agent_toolheads.clear();

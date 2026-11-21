@@ -127,6 +127,7 @@ void DevAmsTray::reset()
     toolhead = -1;
     tool = -1;
     in_tool = false;
+    switch_toolheads.clear();
     runout.clear();
 }
 
@@ -682,6 +683,9 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                     auto unit_name_it = it->find("unit_name");
                     curr_ams->m_unit_name = unit_name_it != it->end() && unit_name_it->is_string() ?
                                                 wxString::FromUTF8(unit_name_it->get<std::string>()) : wxString();
+                    // Orca: and say which of its filament switches the unit is plumbed into.
+                    auto switch_it = it->find("switch");
+                    curr_ams->m_agent_switch = switch_it != it->end() && switch_it->is_number_integer() ? switch_it->get<int>() : -1;
 
                     // Orca: a printer agent shows a single-lane unit as an AMS HT, with "dryer": false when it has no dryer.
                     auto dryer_it = it->find("dryer");
@@ -870,6 +874,13 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             curr_tray->tool = tool_it != tray_it->end() && tool_it->is_number_integer() ? tool_it->get<int>() : -1;
                             auto in_tool_it = tray_it->find("in_tool");
                             curr_tray->in_tool = in_tool_it != tray_it->end() && in_tool_it->is_boolean() && in_tool_it->get<bool>();
+                            // Orca: a tray that can go to either toolhead of the unit's filament switch names both.
+                            curr_tray->switch_toolheads.clear();
+                            if (auto heads_it = tray_it->find("switch_toolheads"); heads_it != tray_it->end() && heads_it->is_array()) {
+                                for (const auto& head : *heads_it)
+                                    if (head.is_number_integer())
+                                        curr_tray->switch_toolheads.push_back(head.get<int>());
+                            }
                             auto runout_it = tray_it->find("runout");
                             curr_tray->runout = runout_it != tray_it->end() && runout_it->is_string() ? runout_it->get<std::string>() : std::string();
                             auto remain_g_it = tray_it->find("remain_g");

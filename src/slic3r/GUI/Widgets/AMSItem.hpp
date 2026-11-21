@@ -457,6 +457,17 @@ public:
     std::string m_file_name;
     // bool            m_ams_loading{ false };
     void            doRender(wxDC &dc);
+    // Orca: a printer agent's switch is drawn live in place of the glyph: a line from each inlet (along the top,
+    // A on the left) to the outlet it is at (along the bottom), in the color of the filament it holds.
+    struct Route
+    {
+        int      outlet{-1}; // 0 = A, 1 = B, -1 = at neither
+        bool     filament{false};
+        wxColour colour;
+        bool     operator==(const Route &other) const { return outlet == other.outlet && filament == other.filament && colour == other.colour; }
+    };
+    void               set_routes(const std::vector<Route> &routes); // none draws the glyph
+    std::vector<Route> m_routes;
     SwitcherImage(wxWindow *parent, wxWindowID id, std::string file_name, const wxSize& size, const wxPoint &pos = wxDefaultPosition);
     ~SwitcherImage();
 };

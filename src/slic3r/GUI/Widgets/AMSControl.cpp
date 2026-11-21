@@ -1093,8 +1093,25 @@ void AMSControl::UpdateAms(const std::string   &series_name,
     // Orca: inert on any printer without a Filament Track Switch — install is false, so the banner is
     // never materialized, the glyph stays hidden, and every ShowRoad(true) below is a no-op.
     const auto [install, ready] = isFilaSwitchReady();
-    show_switcher_status(install && (!ready));
-    bool isShow = install && m_total_ext_count >= 2;
+    // Orca: a printer agent's filament switch shows with the units plumbed into it, drawn live, with what it is
+    // doing as its tooltip.
+    const MachineObject::AgentFilaSwitch *agent_switch = obj ? obj->agent_switch_of(GetShownUnit()) : nullptr;
+    std::vector<SwitcherImage::Route>     routes;
+    if (agent_switch) {
+        for (const MachineObject::AgentFilaSwitch::Inlet &inlet : agent_switch->inlets) {
+            const wxColour filament = inlet.color.empty() ? AMS_CONTROL_BRAND_COLOUR : DevAmsTray::decode_color(inlet.color);
+            routes.push_back({inlet.outlet, inlet.filament, inlet.filament ? filament : AMS_CONTROL_GRAY500});
+        }
+    }
+    m_switcher->set_routes(routes);
+    const wxString switch_text = agent_switch ? wxString::FromUTF8(agent_switch->text) : wxString();
+    if (m_switcher->GetToolTipText() != switch_text)
+        m_switcher->SetToolTip(switch_text);
+    if (agent_switch)
+        show_switcher_status(!agent_switch->calibrated, _L("The filament switch is not calibrated. Run AFC Calibration to use both of its toolheads."));
+    else
+        show_switcher_status(install && (!ready), _L("AMS has not been initialized. Please initialize it before use."));
+    bool isShow = (install && m_total_ext_count >= 2) || agent_switch != nullptr;
     if (m_switcher->IsShown() != isShow)
     {
         m_switcher->Show(isShow);
@@ -1750,7 +1767,7 @@ std::tuple<bool, bool> AMSControl::isFilaSwitchReady()
     return {false, false};
 }
 
-void AMSControl::show_switcher_status(bool show)
+void AMSControl::show_switcher_status(bool show, const wxString &text)
 {
     // Orca: never materialize the banner on printers that never request it, so the AMS control is
     // byte-identical without a Filament Track Switch (UpdateAms calls this with show=false every refresh).
@@ -1766,13 +1783,17 @@ void AMSControl::show_switcher_status(bool show)
         icon = new wxStaticBitmap(tipPanel, wxID_ANY,
             wxArtProvider::GetBitmap(wxART_INFORMATION, wxART_MESSAGE_BOX, wxSize(FromDIP(16), FromDIP(16))));
         tipSizer->Add(icon, 0, wxALL, FromDIP(8));
-        tipText = new wxStaticText(tipPanel, wxID_ANY, _L("AMS has not been initialized. Please initialize it before use."));
+        tipText = new wxStaticText(tipPanel, wxID_ANY, text);
         tipText->SetForegroundColour(wxColour(255, 255, 255));
         tipText->SetFont(wxFont(10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
         tipText->Wrap(-1);
         tipText->SetMinSize(wxSize(-1, -1));
         tipSizer->Add(tipText, 0, wxALL | wxALIGN_CENTER_VERTICAL | wxEXPAND, FromDIP(8));
         m_sizer_body->Add(tipPanel, 1, wxEXPAND, 0);
+    }
+    if (show && tipText->GetLabel() != text) { // Orca: the banner serves Bambu's switch and a printer agent's
+        tipText->SetLabel(text);
+        tipPanel->Layout();
     }
     if (tipPanel->IsShown() == show)
     {

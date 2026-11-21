@@ -87,6 +87,48 @@ TEST_CASE("An AMS unit is shown under the name its status gives it", "[DevFilaSy
     CHECK(ams->GetDisplayName().ToStdString() == "AMS-1");
 }
 
+TEST_CASE("A unit names its filament switch and a tray the toolheads it can load into", "[DevFilaSystem]")
+{
+    MachineObject obj(nullptr, nullptr, "test", "test_dev", "127.0.0.1");
+    obj.agent_fila_switches.resize(1);
+    obj.agent_fila_switches[0].name = "Switch_1";
+
+    const json on_switch = json::parse(R"({
+        "ams": {
+            "tray_exist_bits": "1",
+            "ams": [ { "id": "0", "info": "00000001", "switch": 0, "tray": [
+                { "id": "0", "tray_color": "FF0000FF", "toolhead": 4, "switch_toolheads": [4, 5] }
+            ] } ]
+        }
+    })");
+    DevFilaSystemParser::ParseV1_0(on_switch, &obj, obj.GetFilaSystem().get(), false);
+
+    DevAms* ams = obj.GetFilaSystem()->GetAmsById("0");
+    REQUIRE(ams != nullptr);
+    CHECK(ams->GetAgentSwitch() == 0);
+    DevAmsTray* tray = obj.GetFilaSystem()->GetAmsTray("0", "0");
+    REQUIRE(tray != nullptr);
+    CHECK(tray->switch_toolheads == std::vector<int>{4, 5});
+    REQUIRE(obj.agent_switch_of("0") != nullptr);
+    CHECK(obj.agent_switch_of("0")->name == "Switch_1");
+    CHECK(obj.agent_switch_of("1") == nullptr);
+
+    // A status that names neither takes the unit off the switch and leaves the tray no choice
+    const json off_switch = json::parse(R"({
+        "ams": {
+            "tray_exist_bits": "1",
+            "ams": [ { "id": "0", "info": "00000001", "tray": [
+                { "id": "0", "tray_color": "FF0000FF", "toolhead": 4 }
+            ] } ]
+        }
+    })");
+    DevFilaSystemParser::ParseV1_0(off_switch, &obj, obj.GetFilaSystem().get(), false);
+
+    CHECK(ams->GetAgentSwitch() == -1);
+    CHECK(tray->switch_toolheads.empty());
+    CHECK(obj.agent_switch_of("0") == nullptr);
+}
+
 TEST_CASE("Switch-bound AMS trays map to the left extruder", "[DevMapping]")
 {
     MachineObject obj(nullptr, nullptr, "test", "test_dev", "127.0.0.1");

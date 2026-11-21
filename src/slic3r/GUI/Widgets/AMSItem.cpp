@@ -26,6 +26,7 @@
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include <wx/dcclient.h>
 #include <wx/dc.h>
+#include <wx/pen.h>
 #include <wx/peninfobase.h>
 #include <cstdlib>
 #include "slic3r/GUI/DeviceCore/DevConfigUtil.h"
@@ -827,10 +828,32 @@ void SwitcherImage::render(wxDC &dc)
 #endif
 }
 
+void SwitcherImage::set_routes(const std::vector<Route> &routes)
+{
+    if (m_routes == routes)
+        return;
+    m_routes = routes;
+    Refresh();
+}
+
 void SwitcherImage::doRender(wxDC &dc)
 {
     auto size = GetSize();
-    if (m_show_state){
+    if (m_show_state && !m_routes.empty()) {
+        const int  pad  = FromDIP(2);
+        const auto x_of = [&size](int at) { return size.x * (at == 0 ? 1 : 3) / 4; };
+        for (size_t at = 0; at < m_routes.size() && at < 2; ++at) {
+            const Route  &route = m_routes[at];
+            const wxPoint from(x_of(int(at)), pad);
+            const wxPoint to = route.outlet < 0 ? wxPoint(from.x, size.y / 2) : wxPoint(x_of(route.outlet), size.y - pad);
+            if (route.filament) { // an edge, so a filament in the background's color still shows
+                dc.SetPen(wxPen(AMS_CONTROL_GRAY500, FromDIP(4)));
+                dc.DrawLine(from, to);
+            }
+            dc.SetPen(wxPen(route.colour, FromDIP(2)));
+            dc.DrawLine(from, to);
+        }
+    } else if (m_show_state) {
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(*wxWHITE);
         dc.DrawBitmap(m_switcher.bmp(), wxPoint((size.x - m_switcher.GetBmpSize().x) / 2, 0));

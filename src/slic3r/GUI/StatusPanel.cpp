@@ -3813,6 +3813,34 @@ std::string StatusPanel::unit_slot_in_tool(const std::string &ams_id) const
     return "";
 }
 
+// Orca: a printer agent's tray that can load into either toolhead of its filament switch (switch_toolheads) asks
+// which one, and that toolhead goes out with the load. False when the user backs out.
+bool StatusPanel::choose_switch_toolhead(const std::string &ams_id, const std::string &slot_id, std::optional<int> &extruder_id)
+{
+    const DevAmsTray *tray = obj->GetFilaSystem()->GetAmsTray(ams_id, slot_id);
+    if (!tray || tray->switch_toolheads.size() != 2)
+        return true;
+    // Each toolhead by the name the switch's outlet gives it, else the printer's own name for it, else its number.
+    const MachineObject::AgentFilaSwitch *fila_switch = obj->agent_switch_of(ams_id);
+    const auto name_of = [this, tray, fila_switch](int at) {
+        const int head = tray->switch_toolheads[at];
+        if (fila_switch && !fila_switch->outlets[at].extruder.empty())
+            return from_u8(fila_switch->outlets[at].extruder);
+        if (head >= 0 && size_t(head) < obj->agent_toolheads.size() && !obj->agent_toolheads[head].name.empty())
+            return from_u8(obj->agent_toolheads[head].name);
+        return wxString::Format("%d", head);
+    };
+    MessageDialog dialog(this, _L("This lane goes through a filament switch. Which toolhead should it load into?"), wxEmptyString,
+                         wxICON_QUESTION | wxYES | wxNO | wxCANCEL);
+    for (int at = 0; at < 2; ++at) // the toolhead the tray feeds now is the one in focus
+        dialog.SetButtonLabel(at == 0 ? wxID_YES : wxID_NO, name_of(at), tray->switch_toolheads[at] == tray->toolhead);
+    const int answer = dialog.ShowModal();
+    if (answer != wxID_YES && answer != wxID_NO)
+        return false;
+    extruder_id = tray->switch_toolheads[answer == wxID_YES ? 0 : 1];
+    return true;
+}
+
 // Orca: on a printer whose units each feed their own toolhead, the toolhead under the unit on screen is that unit's,
 // loaded when one of its lanes is in it, whichever toolhead is on the shuttle.
 void StatusPanel::show_unit_toolhead()
@@ -4563,6 +4591,9 @@ void StatusPanel::on_ams_load_curr()
             }
             extruder_id = dialog.GetExtruderID();
         }
+        // Orca: a printer agent's tray on a filament switch asks which of its two toolheads to load into.
+        if (!extruder_id.has_value() && !choose_switch_toolhead(curr_ams_id, curr_can_id, extruder_id))
+            return;
 
         update_load_with_temp();
         //virtual tray

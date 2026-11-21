@@ -821,6 +821,7 @@ protected:
     void update_ams_control_state(std::string ams_id, std::string slot_id);
     void get_control_slot(std::string &ams_id, std::string &slot_id);
     std::string unit_slot_in_tool(const std::string &ams_id) const;
+    bool choose_switch_toolhead(const std::string &ams_id, const std::string &slot_id, std::optional<int> &extruder_id);
     void show_unit_toolhead();
     void update_cali(MachineObject* obj);
     void update_calib_bitmap();

@@ -178,9 +178,9 @@ public:
     void ShowFilamentTip(bool hasams = true);
 
     // Orca: Filament Track Switch awareness. isFilaSwitchReady() resolves the selected machine and
-    // returns {installed, ready}; show_switcher_status() toggles the "AMS not initialized" banner.
+    // returns {installed, ready}; show_switcher_status() toggles the warning banner, which says text.
     std::tuple<bool, bool> isFilaSwitchReady();
-    void show_switcher_status(bool show);
+    void show_switcher_status(bool show, const wxString &text);
 
     void UpdatePassRoad(std::string ams_id, AMSPassRoadType type, AMSPassRoadSTEP step);
     void CreateAms();

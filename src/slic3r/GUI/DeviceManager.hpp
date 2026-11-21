@@ -1,6 +1,7 @@
 #ifndef slic3r_DeviceManager_hpp_
 #define slic3r_DeviceManager_hpp_
 
+#include <array>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -664,6 +665,31 @@ public:
         std::string flow;
     };
     std::vector<AgentToolhead> agent_toolheads;
+    // Orca: a printer agent's filament switches (afc_switches). A switch has two inlets its units are plumbed
+    // into, each at one of two outlets, and each outlet feeds one toolhead. A unit names its switch by its place
+    // in this list (DevAms::GetAgentSwitch).
+    struct AgentFilaSwitch
+    {
+        struct Inlet
+        {
+            int         outlet {-1};      // 0 = A, 1 = B, -1 while it is at neither
+            bool        filament {false}; // its sensor reads filament
+            std::string color;            // of the lane loaded through it, "" for none
+        };
+        struct Outlet
+        {
+            std::string extruder;      // the filament system's name of the toolhead it feeds, "" for none
+            int         toolhead {-1}; // that toolhead's extruder number
+        };
+        std::string           name;
+        bool                  calibrated {false}; // its tube lengths are set, so its lanes can go to either toolhead
+        std::string           text;               // what it is doing, in the filament system's words
+        std::array<Inlet, 2>  inlets;             // A, B
+        std::array<Outlet, 2> outlets;            // A, B
+    };
+    std::vector<AgentFilaSwitch> agent_fila_switches;
+    // Orca: the filament switch the unit is plumbed into, nullptr for none
+    const AgentFilaSwitch* agent_switch_of(const std::string& ams_id) const;
     // Orca: the printer console's open prompt (agent_prompt), which the Calibration window shows for a printer
     // agent that runs its own calibration there: agent_calibration_gcode starts it ("" for Bambu's window).
     // id changes whenever a prompt opens or closes; each button sends its G-code.
