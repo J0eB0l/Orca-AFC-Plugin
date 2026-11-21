@@ -1,6 +1,8 @@
 #include "AFCLayout.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -39,6 +41,93 @@ Changes count_changes(const std::vector<std::vector<unsigned int>>& layer_filame
                     end = filament;
             }
             last[head] = end >= 0 ? end : start;
+        }
+    }
+    return out;
+}
+
+double Times::flush_seconds(int toolhead, int from, int to) const
+{
+    if (toolhead < 0 || from < 0 || to < 0 || size_t(toolhead) >= flush.size() || size_t(from) >= flush[toolhead].size() ||
+        size_t(to) >= flush[toolhead][from].size())
+        return 0.;
+    return flush[toolhead][from][to];
+}
+
+Run run(const std::vector<std::vector<unsigned int>>& layer_filaments, const std::vector<int>& toolhead_of,
+        const std::vector<int>& inlet_of, const Times& times)
+{
+    Run out;
+    out.loads.assign(toolhead_of.size(), 0);
+    std::map<int, int> loaded; // per toolhead once it loaded, the filament in it, -1 when its inlet took it out
+    std::map<int, int> nozzle; // per toolhead, the filament it last printed
+    std::map<int, int> holder; // per inlet, the filament loaded through it
+    int                active = -1;
+    auto inlet = [&inlet_of](int filament) { return size_t(filament) < inlet_of.size() ? inlet_of[filament] : -1; };
+    auto print = [&](int head, int filament) {
+        if (active >= 0 && active != head) {
+            ++out.tool_changes;
+            out.seconds += times.tool_change;
+        }
+        active          = head;
+        const auto held = loaded.find(head);
+        if (held != loaded.end() && held->second == filament)
+            return;
+        // A load counts the filaments it takes out: the one in its toolhead and the one its inlet holds.
+        int unloads = 0;
+        if (held != loaded.end() && held->second >= 0) {
+            ++unloads;
+            holder.erase(inlet(held->second));
+        }
+        if (const int in = inlet(filament); in >= 0) {
+            if (const auto other = holder.find(in); other != holder.end()) {
+                loaded[toolhead_of[other->second]] = -1;
+                ++unloads;
+            }
+            holder[in] = filament;
+        }
+        out.loads[filament] += unloads;
+        out.lane_changes += unloads;
+        loaded[head] = filament;
+        if (const auto last = nozzle.find(head); last != nozzle.end() && last->second != filament) {
+            ++out.flushes;
+            out.seconds += times.flush_seconds(head, last->second, filament);
+        }
+        nozzle[head] = filament;
+    };
+    for (size_t layer = 0; layer < layer_filaments.size(); ++layer) {
+        std::map<int, std::set<int>> on_head;
+        for (unsigned int filament : layer_filaments[layer])
+            if (filament < toolhead_of.size() && toolhead_of[filament] >= 0)
+                on_head[toolhead_of[filament]].insert(int(filament));
+        std::set<int> next, next_heads;
+        if (layer + 1 < layer_filaments.size())
+            for (unsigned int filament : layer_filaments[layer + 1]) {
+                next.insert(int(filament));
+                if (filament < toolhead_of.size() && toolhead_of[filament] >= 0)
+                    next_heads.insert(toolhead_of[filament]);
+            }
+        // The toolhead the layer starts on first, the ones the next layer uses last.
+        std::vector<int> heads;
+        for (const auto& [head, filaments] : on_head)
+            heads.push_back(head);
+        auto rank = [&](int head) { return head == active ? 0 : next_heads.count(head) ? 2 : 1; };
+        std::stable_sort(heads.begin(), heads.end(), [&rank](int a, int b) { return rank(a) < rank(b); });
+        for (int head : heads) {
+            const std::set<int>& filaments = on_head[head];
+            const auto           held      = loaded.find(head);
+            const int            start     = held != loaded.end() && filaments.count(held->second) ? held->second : -1;
+            int                  end       = -1;
+            for (int filament : filaments)
+                if (filament != start && (end < 0 || next.count(filament)))
+                    end = filament;
+            if (start >= 0)
+                print(head, start);
+            for (int filament : filaments)
+                if (filament != start && filament != end)
+                    print(head, filament);
+            if (end >= 0)
+                print(head, end);
         }
     }
     return out;
@@ -171,6 +260,64 @@ std::pair<std::vector<std::pair<int, int>>, double> fill_toolhead(const std::vec
     return {lane_of, total};
 }
 
+// The lanes with each one behind a filament switch on the toolhead its spool prints on.
+std::vector<Lane> serve(std::vector<Lane> lanes, const std::vector<int>& toolhead_of)
+{
+    const std::vector<int> current = current_lanes(lanes, toolhead_of.size());
+    for (size_t f = 0; f < current.size(); ++f)
+        if (current[f] >= 0 && toolhead_of[f] >= 0 && lanes[current[f]].other_toolhead == toolhead_of[f])
+            std::swap(lanes[current[f]].toolhead, lanes[current[f]].other_toolhead);
+    return lanes;
+}
+
+// The switch inlet of each filament's lane (lane_of), -1 none.
+std::vector<int> inlets_of(const std::vector<Lane>& lanes, const std::vector<int>& lane_of)
+{
+    std::vector<int> inlets(lane_of.size(), -1);
+    for (size_t f = 0; f < lane_of.size(); ++f)
+        if (lane_of[f] >= 0)
+            inlets[f] = lanes[lane_of[f]].inlet;
+    return inlets;
+}
+
+// toolhead_of with one printed filament on another toolhead, or two on different toolheads swapped, while
+// that lowers `cost`.
+std::vector<int> improve_by(const std::vector<int>& toolhead_of, int heads, const std::function<double(const std::vector<int>&)>& cost)
+{
+    std::vector<int> best      = toolhead_of;
+    double           best_cost = cost(best);
+    std::vector<int> printed_filaments;
+    for (size_t f = 0; f < best.size(); ++f)
+        if (best[f] >= 0)
+            printed_filaments.push_back(int(f));
+    for (bool better = true; better;) {
+        better = false;
+        auto try_it = [&](std::vector<int>& candidate) {
+            const double c = cost(candidate);
+            if (c < best_cost - 1e-6) {
+                best      = candidate;
+                best_cost = c;
+                better    = true;
+            }
+        };
+        for (int f : printed_filaments)
+            for (int head = 0; head < heads; ++head)
+                if (head != best[f]) {
+                    std::vector<int> candidate = best;
+                    candidate[f]               = head;
+                    try_it(candidate);
+                }
+        for (size_t a = 0; a < printed_filaments.size(); ++a)
+            for (size_t b = a + 1; b < printed_filaments.size(); ++b)
+                if (best[printed_filaments[a]] != best[printed_filaments[b]]) {
+                    std::vector<int> candidate = best;
+                    std::swap(candidate[printed_filaments[a]], candidate[printed_filaments[b]]);
+                    try_it(candidate);
+                }
+    }
+    return best;
+}
+
 } // namespace
 
 std::vector<int> fit_toolheads(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, const std::vector<int>& loads,
@@ -239,41 +386,32 @@ Plan place(const std::vector<Lane>& lanes, const std::vector<int>& toolhead_of, 
 std::vector<int> improve(const std::vector<Lane>& lanes, const std::vector<std::vector<unsigned int>>& layer_filaments,
                          const std::vector<int>& toolhead_of, double move_seconds, int heads)
 {
-    auto cost = [&](const std::vector<int>& heads_of) {
+    return improve_by(toolhead_of, heads, [&](const std::vector<int>& heads_of) {
         return place(lanes, heads_of, count_changes(layer_filaments, heads_of).loads, move_seconds).cost;
-    };
-    std::vector<int> best      = toolhead_of;
-    double           best_cost = cost(best);
-    std::vector<int> printed_filaments;
-    for (size_t f = 0; f < best.size(); ++f)
-        if (best[f] >= 0)
-            printed_filaments.push_back(int(f));
-    for (bool better = true; better;) {
-        better = false;
-        auto try_it = [&](std::vector<int>& candidate) {
-            const double c = cost(candidate);
-            if (c < best_cost - 1e-6) {
-                best      = candidate;
-                best_cost = c;
-                better    = true;
-            }
-        };
-        for (int f : printed_filaments)
-            for (int head = 0; head < heads; ++head)
-                if (head != best[f]) {
-                    std::vector<int> candidate = best;
-                    candidate[f]               = head;
-                    try_it(candidate);
-                }
-        for (size_t a = 0; a < printed_filaments.size(); ++a)
-            for (size_t b = a + 1; b < printed_filaments.size(); ++b)
-                if (best[printed_filaments[a]] != best[printed_filaments[b]]) {
-                    std::vector<int> candidate = best;
-                    std::swap(candidate[printed_filaments[a]], candidate[printed_filaments[b]]);
-                    try_it(candidate);
-                }
-    }
-    return best;
+    });
+}
+
+Routed route(const std::vector<Lane>& lanes, const std::vector<std::vector<unsigned int>>& layer_filaments,
+             const std::vector<int>& toolhead_of, double move_seconds, const Times& times)
+{
+    const std::vector<Lane> served = serve(lanes, toolhead_of);
+    const Run before = run(layer_filaments, toolhead_of, inlets_of(served, current_lanes(served, toolhead_of.size())), times);
+    Routed    out;
+    out.plan = place(served, toolhead_of, before.loads, move_seconds);
+    out.run  = run(layer_filaments, toolhead_of, inlets_of(served, out.plan.lane_of), times);
+    out.plan.cost += out.run.seconds;
+    for (size_t f = 0; f < out.plan.lane_of.size(); ++f)
+        if (out.plan.lane_of[f] >= 0)
+            out.plan.cost += (out.run.loads[f] - before.loads[f]) * served[out.plan.lane_of[f]].seconds;
+    return out;
+}
+
+std::vector<int> improve(const std::vector<Lane>& lanes, const std::vector<std::vector<unsigned int>>& layer_filaments,
+                         const std::vector<int>& toolhead_of, double move_seconds, int heads, const Times& times)
+{
+    return improve_by(toolhead_of, heads, [&](const std::vector<int>& heads_of) {
+        return route(lanes, layer_filaments, heads_of, move_seconds, times).plan.cost;
+    });
 }
 
 } // namespace Slic3r::AFCLayout

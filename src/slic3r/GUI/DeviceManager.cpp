@@ -3667,6 +3667,12 @@ int MachineObject::parse_json(std::string tunnel, std::string payload, bool key_
                         lane.nozzle_temp = item.value("nozzle_temp", 0);
                         lane.bed_temp    = item.value("bed_temp", 0);
                         lane.online      = item.value("online", true);
+                        lane.fila_switch = item.value("switch", -1);
+                        const std::string inlet = item.value("switch_inlet", std::string());
+                        lane.switch_inlet       = inlet == "A" ? 0 : inlet == "B" ? 1 : -1;
+                        for (const json& head : item.value("switch_toolheads", json::array()))
+                            if (head.is_number_integer())
+                                lane.switch_toolheads.push_back(head.get<int>());
                         agent_lanes.push_back(std::move(lane));
                     }
                 }

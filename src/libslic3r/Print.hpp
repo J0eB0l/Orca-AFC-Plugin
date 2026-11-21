@@ -1187,6 +1187,10 @@ public:
     bool                        has_wipe_tower() const;
     // Orca: the Type 2 tower flushes a toolhead's lane changes, so its G-code depends on filament_toolhead.
     bool                        flushes_lane_changes_on_tower() const;
+    // Orca: the flush volume (mm3) of a lane change from filament `from` to `to` on a toolhead, from the
+    // flushing volume matrix of its nozzle (the last one past the matrix) times that nozzle's flush
+    // multiplier, and a fifth of that on a printer that forms tips.
+    static float                lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to, int toolhead);
     // Orca: has_wipe_tower() only says the prime tower is enabled for a plate that may change filaments.
     // This says the plate prints a tower whatever slicing finds; when false, whether it does depends on
     // the support that slicing generates.

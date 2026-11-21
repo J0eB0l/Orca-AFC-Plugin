@@ -5349,13 +5349,10 @@ static bool forms_filament_tips(const PrintConfig &config)
     return boost::starts_with(config.printer_model.value, "Snapmaker U1");
 }
 
-// Orca: the flush volume (mm3) of a lane change from filament `from` to `to`, from the flushing volume
-// matrix of the nozzle `to` feeds (the last one past the matrix) times that nozzle's flush multiplier,
-// and a fifth of that on a printer that forms tips.
-static float lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to)
+float Print::lane_change_flush(const PrintConfig &config, unsigned int from, unsigned int to, int toolhead)
 {
     const size_t nozzles = std::max<size_t>(config.nozzle_diameter.size(), 1);
-    const size_t head    = std::min<size_t>(size_t(std::max(config.filament_toolhead.get_at(to), 0)), nozzles - 1);
+    const size_t head    = std::min<size_t>(size_t(std::max(toolhead, 0)), nozzles - 1);
     const size_t n       = config.filament_colour.size();
     const std::vector<double> matrix = get_flush_volumes_matrix(config.flush_volumes_matrix.values, head, nozzles);
     const size_t index   = size_t(from) * n + to;
@@ -5687,7 +5684,8 @@ void Print::_make_wipe_tower()
                             // The filament flushed out: the lane this toolhead held, or the previous tool on a single nozzle.
                             const unsigned int flushed_id = lane_from >= 0 ? unsigned(lane_from) : current_extruder_id;
                             if (lane_from >= 0) {
-                                volume_to_wipe = std::max(volume_to_wipe, lane_change_flush(m_config, flushed_id, extruder_id));
+                                volume_to_wipe = std::max(volume_to_wipe, lane_change_flush(m_config, flushed_id, extruder_id,
+                                                                                            m_config.filament_toolhead.get_at(extruder_id)));
                             } else {
                                 volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
                                 volume_to_wipe *= m_config.flush_multiplier.get_at(0);

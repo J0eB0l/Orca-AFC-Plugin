@@ -67,6 +67,40 @@ feeds, means the project's slots were not synced from these lanes, so "now" and 
 counted from slots that no longer match the spools. The dialog names those filaments and asks for a
 filament sync first.
 
+## Filament switch
+
+A filament switch has two inlets, each with units plumbed into it, and two outlets, each feeding a
+toolhead. It sends a lane to either toolhead, so two filaments of one unit can print through a nozzle
+each. An inlet holds one lane at a time, though: loading the second filament takes the first out of its
+toolhead, and it loads again when it next prints. The lane changes stay, but each nozzle only prints its
+own filament, so the flush between the two is skipped, at the cost of a tool change.
+
+The printer agent reports each lane's switch and inlet, and the two toolheads the switch reaches while
+it can move the lane (`afc_lanes`: `switch`, `switch_inlet`, `switch_toolheads`). When any lane is behind
+a switch, the dialog plans with `AFCLayout::route` in place of `place`, and `improve` searches by its
+cost:
+
+- `AFCLayout::run` walks the layers like `count_changes` and also follows each inlet and nozzle. A load
+  counts the filaments it takes out, the one in its toolhead and the one another toolhead holds through
+  the same inlet. A toolhead flushes only when its nozzle last printed another filament. A layer starts
+  on the toolhead the print is on and ends on one the next layer uses.
+- The cost adds the seconds of those flushes and tool changes to the lane changes (`AFCLayout::Times`):
+  a flush is the lane change's flushing volume (`Print::lane_change_flush`) at the incoming filament's
+  maximum volumetric speed, a tool change is the printer's tool change time
+  (`machine_tool_change_time`), the figures the print's time estimate uses.
+- A lane whose spool is grouped onto the other toolhead its switch reaches feeds that toolhead, so the
+  spool stays where it is. A spool that moves prints on the toolhead its new lane feeds now.
+
+So a filament goes through the switch to the other toolhead only when the print is shorter for it, and a
+tie leaves it on the toolhead its lane feeds. The dialog shows the flushes between filaments beside the
+lane changes and lists each filament that prints through the switch on the other toolhead. A lane whose
+switch reaches the toolhead its filament was sliced for counts as synced, and the print dialog keeps that
+toolhead (`picked_toolheads` in `SelectMachine.cpp`) instead of slicing again for the one the lane feeds
+now. The print file then sends each lane to its toolhead (the agent's `AFC_BRIDGEBOX_SWITCH_ASSIGN`
+lines).
+
+A printer without a filament switch is planned as before: its layout counts lane changes only.
+
 ## Sync layout to AFC
 
 The spools moved, Sync layout to AFC sends `afc_layout` with every lane a spool went to: the T number

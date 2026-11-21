@@ -29,6 +29,10 @@ struct Suggestion
     std::vector<int>                      current;     // per filament, the toolhead it prints on now (-1 not printed)
     std::vector<int>                      suggested;   // ... and with the layout
     AFCLayout::Changes                    now, after;
+    // A lane is behind a filament switch: the layout counts flushes and tool changes too (AFCLayout::route).
+    bool                                  routed{false};
+    int                                   flushes_now{0}, flushes_after{0};
+    std::vector<int>                      switched;    // printed filaments a switch sends to the other toolhead than their lane feeds now
     AFCLayout::Plan                       plan;
     std::vector<int>                      unsynced;    // printed filaments no lane holds, or sliced off their lane's toolhead
     std::vector<std::string>              offline;     // units not connected whose lanes hold spools the print uses

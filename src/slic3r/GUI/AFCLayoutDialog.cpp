@@ -152,6 +152,11 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         lane.loaded   = agent.loaded;
         auto seconds  = unit_seconds.find(agent.unit);
         lane.seconds  = seconds != unit_seconds.end() ? seconds->second : UNKNOWN_SECONDS;
+        if (agent.fila_switch >= 0 && agent.switch_inlet >= 0)
+            lane.inlet = agent.fila_switch * 2 + agent.switch_inlet;
+        for (int head : agent.switch_toolheads)
+            if (lane.toolhead >= 0 && head >= 0 && size_t(head) < heads && head != lane.toolhead)
+                lane.other_toolhead = head;
         for (int tool : agent.tools)
             if (agent.loaded && tool >= 0 && size_t(tool) < filaments && !placed.count(tool) && same_filament(agent, config, tool, true)) {
                 lane.filament = tool;
@@ -177,17 +182,42 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
     for (const AFCLayout::Lane& lane : out.lanes)
         if (lane.toolhead >= 0)
             ++lanes_per_head[lane.toolhead];
+    // With a lane behind a filament switch a filament can print through either of two nozzles, so the layout
+    // weighs the flushes that skips against the tool changes it adds: a flush at the filament's highest flow,
+    // a tool change as the printer's time estimate counts it.
+    out.routed = std::any_of(out.lanes.begin(), out.lanes.end(), [](const AFCLayout::Lane& lane) { return lane.inlet >= 0; });
+    AFCLayout::Times times;
+    if (out.routed) {
+        times.tool_change = config.machine_tool_change_time.value;
+        times.flush.assign(heads, std::vector<std::vector<double>>(filaments, std::vector<double>(filaments, 0.)));
+        for (size_t head = 0; head < heads; ++head)
+            for (size_t from = 0; from < filaments; ++from)
+                for (size_t to = 0; to < filaments; ++to)
+                    if (const double flow = config.filament_max_volumetric_speed.get_at(to); from != to && flow > 0.)
+                        times.flush[head][from][to] = Print::lane_change_flush(config, unsigned(from), unsigned(to), int(head)) / flow;
+    }
     // Lane changes now: each filament on the toolhead its spool's lane feeds, as AFC would print it, so a
-    // move that splits two spools sharing a toolhead shows what it saves.
+    // move that splits two spools sharing a toolhead shows what it saves. A lane whose switch reaches the
+    // toolhead the slice gave its filament prints there.
     std::vector<int> held = out.current;
-    for (const AFCLayout::Lane& lane : out.lanes)
-        if (lane.filament >= 0 && size_t(lane.filament) < held.size() && held[lane.filament] >= 0 && lane.toolhead >= 0)
+    std::vector<int> inlet_of(filaments, -1);
+    for (const AFCLayout::Lane& lane : out.lanes) {
+        if (lane.filament < 0 || size_t(lane.filament) >= held.size())
+            continue;
+        inlet_of[lane.filament] = lane.inlet;
+        if (held[lane.filament] >= 0 && lane.toolhead >= 0 && lane.other_toolhead != held[lane.filament])
             held[lane.filament] = lane.toolhead;
-    out.now = AFCLayout::count_changes(layer_filaments, held);
-    // A printed filament that a loaded lane mapped to its T number does not hold, or sliced onto another
-    // toolhead than its lane feeds, means the project's slots were not synced from these lanes, so "now" and
-    // the moves are counted from stale slots. A filament whose T number has no loaded lane is left out: a
-    // sync cannot fill it, and the moves already ask for its spool.
+    }
+    if (out.routed) {
+        const AFCLayout::Run run = AFCLayout::run(layer_filaments, held, inlet_of, times);
+        out.now                  = {run.loads, run.lane_changes};
+        out.flushes_now          = run.flushes;
+    } else
+        out.now = AFCLayout::count_changes(layer_filaments, held);
+    // A printed filament that a loaded lane mapped to its T number does not hold, or sliced onto a toolhead
+    // its lane does not feed, means the project's slots were not synced from these lanes, so "now" and the
+    // moves are counted from stale slots. A filament whose T number has no loaded lane is left out: a sync
+    // cannot fill it, and the moves already ask for its spool.
     out.unsynced.clear();
     for (size_t f = 0; f < out.current.size(); ++f) {
         if (out.current[f] < 0)
@@ -196,13 +226,15 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
         const bool syncable = std::any_of(out.agent_lanes.begin(), out.agent_lanes.end(), [f](const MachineObject::AgentLane& l) {
             return l.loaded && std::find(l.tools.begin(), l.tools.end(), int(f)) != l.tools.end();
         });
-        if (lane == out.lanes.end() ? syncable : lane->toolhead >= 0 && lane->toolhead != out.current[f])
+        if (lane == out.lanes.end() ? syncable : lane->toolhead >= 0 && held[f] != out.current[f])
             out.unsynced.push_back(int(f));
     }
 
     // The slice's grouping, the spools' own and the engine's, each improved on the spools' side; the
     // cheapest plan of lane changes wins, moves only breaking ties, and a tie keeps the slice's.
     auto plan_cost = [&](const std::vector<int>& toolhead_of) {
+        if (out.routed)
+            return AFCLayout::route(out.lanes, layer_filaments, toolhead_of, MOVE_SECONDS, times).plan.cost;
         return AFCLayout::place(out.lanes, toolhead_of, AFCLayout::count_changes(layer_filaments, toolhead_of).loads, MOVE_SECONDS).cost;
     };
     std::vector<std::vector<int>> starts{out.current, held};
@@ -212,12 +244,25 @@ bool suggest(const Print& print, const MachineObject& obj, const std::vector<std
                                                   MOVE_SECONDS, int(heads)));
     double best = 0.;
     for (size_t i = 0; i < starts.size(); ++i) {
-        std::vector<int> candidate = AFCLayout::improve(out.lanes, layer_filaments, starts[i], MOVE_SECONDS, int(heads));
+        std::vector<int> candidate = out.routed ?
+                                         AFCLayout::improve(out.lanes, layer_filaments, starts[i], MOVE_SECONDS, int(heads), times) :
+                                         AFCLayout::improve(out.lanes, layer_filaments, starts[i], MOVE_SECONDS, int(heads));
         const double     cost      = plan_cost(candidate);
         if (i == 0 || cost < best - 1e-6) {
             out.suggested = std::move(candidate);
             best          = cost;
         }
+    }
+    out.switched.clear();
+    if (out.routed) {
+        AFCLayout::Routed routed = AFCLayout::route(out.lanes, layer_filaments, out.suggested, MOVE_SECONDS, times);
+        out.after                = {routed.run.loads, routed.run.lane_changes};
+        out.flushes_after        = routed.run.flushes;
+        out.plan                 = std::move(routed.plan);
+        for (size_t f = 0; f < out.plan.lane_of.size(); ++f)
+            if (const int lane = out.plan.lane_of[f]; lane >= 0 && out.lanes[lane].other_toolhead == out.suggested[f])
+                out.switched.push_back(int(f));
+        return true;
     }
     out.after = AFCLayout::count_changes(layer_filaments, out.suggested);
     out.plan = AFCLayout::place(out.lanes, out.suggested, out.after.loads, MOVE_SECONDS);
@@ -274,6 +319,19 @@ Label* add_label(wxWindow* parent, const wxFont& font, const wxString& text, con
 wxString lane_name(const MachineObject::AgentLane& lane)
 {
     return from_u8(lane.name + " \xC2\xB7 " + lane.unit);
+}
+
+// The toolhead a filament switch sends a lane to, by the name the switch's outlet gives it, else the
+// printer's own name for it, else its number.
+wxString toolhead_name(const MachineObject& obj, const MachineObject::AgentLane& lane, int head)
+{
+    if (lane.fila_switch >= 0 && size_t(lane.fila_switch) < obj.agent_fila_switches.size())
+        for (const MachineObject::AgentFilaSwitch::Outlet& outlet : obj.agent_fila_switches[lane.fila_switch].outlets)
+            if (outlet.toolhead == head && !outlet.extruder.empty())
+                return from_u8(outlet.extruder);
+    if (head >= 0 && size_t(head) < obj.agent_toolheads.size() && !obj.agent_toolheads[head].name.empty())
+        return from_u8(obj.agent_toolheads[head].name);
+    return wxString::Format("%d", head);
 }
 
 MachineObject* selected_machine()
@@ -339,6 +397,14 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
                                            m_suggestion.after.lane_changes),
                               TEXT_COLOUR);
     sizer->Add(summary, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
+    if (m_suggestion.flushes_now > 0 || m_suggestion.flushes_after > 0)
+        // TRN %1%: the flushes from one filament to another the print makes with its spools where they are,
+        // %2%: with the suggested layout.
+        sizer->Add(add_label(this, Label::Head_14,
+                             format_wxstr(_L("Flushes between filaments: %1% now, %2% with this layout."), m_suggestion.flushes_now,
+                                          m_suggestion.flushes_after),
+                             TEXT_COLOUR),
+                   0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
     if (!m_suggestion.offline.empty()) {
         wxString units;
         for (const std::string& unit : m_suggestion.offline)
@@ -375,6 +441,9 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
                             moves ? _L("Move the spools as listed and let AFC see them, then click Sync layout to AFC. Each lane "
                                        "takes the spool its old lane had, unless it reads the spool's tag, and the plate is "
                                        "sliced again with each filament on its new tool.") :
+                            regroup && !m_suggestion.switched.empty() ?
+                                      _L("No spool has to move. Click Apply to slice the plate again with each filament on its "
+                                         "tool. The filament switch sends the lanes listed to their toolhead when the print starts.") :
                             regroup ? _L("The spools are already in the best lanes for this print. Click Apply to slice it again "
                                          "with each filament on the tool its lane feeds.") :
                                     _L("The spools are already in the best lanes for this print."),
@@ -405,6 +474,19 @@ AFCLayoutDialog::AFCLayoutDialog(wxWindow* parent, const Print& print, const Mac
             text = format_wxstr(_L("Move filament %1% (%2%) from %3% to %4%."), move.filament + 1, type, lane_name(lanes[move.from]),
                                 lane_name(lanes[move.to]));
         rows->Add(add_label(this, Label::Body_14, text, TEXT_COLOUR), 0, wxALIGN_CENTER_VERTICAL);
+    }
+    for (int filament : m_suggestion.switched) {
+        const MachineObject::AgentLane& lane   = m_suggestion.agent_lanes[m_suggestion.plan.lane_of[filament]];
+        const wxBitmap*                 swatch = get_extruder_color_icon(config.filament_colour.get_at(filament), "", icon, icon);
+        rows->Add(new wxStaticBitmap(this, wxID_ANY, swatch ? *swatch : wxNullBitmap), 0, wxALIGN_CENTER_VERTICAL);
+        // TRN %1%: a filament's number, %2%: its material, %3%: an AFC lane and its unit, %4%: a toolhead's
+        // name, such as "extruder5".
+        rows->Add(add_label(this, Label::Body_14,
+                            format_wxstr(_L("Filament %1% (%2%) in %3% prints on %4% through the filament switch."), filament + 1,
+                                         from_u8(config.filament_type.get_at(filament)), lane_name(lane),
+                                         toolhead_name(obj, lane, m_suggestion.suggested[filament])),
+                            TEXT_COLOUR),
+                  0, wxALIGN_CENTER_VERTICAL);
     }
     sizer->Add(rows, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(20));
 

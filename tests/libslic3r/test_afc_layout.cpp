@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <string>
 #include <vector>
@@ -128,4 +129,145 @@ TEST_CASE("improve undoes a swap of filaments that changes nothing", "[AFCLayout
     const Plan plan = place(lanes, heads, count_changes(layers, heads).loads, 0.01);
     CHECK(plan.moves.empty());
     CHECK(plan.cost == place(lanes, {0, 0, 1, 1}, count_changes(layers, {0, 0, 1, 1}).loads, 0.01).cost);
+}
+
+TEST_CASE("run counts the loads of count_changes when no lane is behind a switch", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0, 2}, {0, 1, 2}, {1, 2}, {0}};
+    const std::vector<int>                       heads{0, 0, 1};
+    Times                                        times;
+    times.tool_change = 10.;
+    times.flush.assign(2, std::vector<std::vector<double>>(3, std::vector<double>(3, 0.)));
+    times.flush[0][0][1] = 30.;
+    times.flush[0][1][0] = 40.;
+    const Run walked = run(layers, heads, {}, times);
+    CHECK(walked.loads == count_changes(layers, heads).loads);
+    CHECK(walked.lane_changes == 2);
+    // Toolhead 0 prints 0, then 1, then 0 again: two flushes. Each layer starts on the toolhead the one
+    // before ended on, so the four layers change toolheads four times.
+    CHECK(walked.flushes == 2);
+    CHECK(walked.tool_changes == 4);
+    CHECK_THAT(walked.seconds, Catch::Matchers::WithinAbs(4 * 10. + 30. + 40., 1e-9));
+}
+
+TEST_CASE("run ends a layer on a toolhead the next layer uses", "[AFCLayout]")
+{
+    // Layer 0 prints on toolheads 0 and 1, layer 1 only on toolhead 0: ending layer 0 there saves a change.
+    const Run walked = run({{0, 1}, {0}}, {0, 1}, {}, Times());
+    CHECK(walked.tool_changes == 1);
+    CHECK(walked.lane_changes == 0);
+}
+
+TEST_CASE("run takes a filament out of its toolhead when another loads through its inlet", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}};
+    Times                                        times;
+    times.flush.assign(2, std::vector<std::vector<double>>(2, std::vector<double>(2, 50.)));
+    // Both lanes behind one inlet, a toolhead each: every change takes the other filament out, and each
+    // nozzle only ever prints its own, so nothing is flushed.
+    const Run split = run(layers, {0, 1}, {0, 0}, times);
+    CHECK(split.loads == std::vector<int>{1, 2});
+    CHECK(split.lane_changes == 3);
+    CHECK(split.tool_changes == 3);
+    CHECK(split.flushes == 0);
+    // On one toolhead the same changes flush each time.
+    const Run shared = run(layers, {0, 0}, {0, 0}, times);
+    CHECK(shared.lane_changes == 3);
+    CHECK(shared.tool_changes == 0);
+    CHECK(shared.flushes == 3);
+    CHECK_THAT(shared.seconds, Catch::Matchers::WithinAbs(150., 1e-9));
+    // Behind an inlet each, both stay loaded.
+    CHECK(run(layers, {0, 1}, {0, 1}, times).lane_changes == 0);
+}
+
+TEST_CASE("run counts both filaments a load takes out", "[AFCLayout]")
+{
+    // Filaments 0 and 2 share an inlet, 1 has its own; 1 and 2 print on toolhead 1.
+    const Run walked = run({{0}, {1}, {2}, {0}}, {0, 1, 1}, {0, 1, 0}, Times());
+    // Loading 2 takes 1 out of its toolhead and 0 out through the inlet; 0 then goes back into an empty
+    // toolhead and takes 2 out.
+    CHECK(walked.loads == std::vector<int>{1, 0, 2});
+    CHECK(walked.lane_changes == 3);
+}
+
+TEST_CASE("Times has no flush where its table has none", "[AFCLayout]")
+{
+    Times times;
+    times.flush.assign(1, std::vector<std::vector<double>>(2, std::vector<double>(2, 7.)));
+    CHECK_THAT(times.flush_seconds(0, 1, 0), Catch::Matchers::WithinAbs(7., 1e-9));
+    CHECK_THAT(times.flush_seconds(1, 1, 0), Catch::Matchers::WithinAbs(0., 1e-9));
+    CHECK_THAT(times.flush_seconds(0, 2, 0), Catch::Matchers::WithinAbs(0., 1e-9));
+    CHECK_THAT(times.flush_seconds(0, 0, 2), Catch::Matchers::WithinAbs(0., 1e-9));
+    CHECK_THAT(times.flush_seconds(-1, 0, 0), Catch::Matchers::WithinAbs(0., 1e-9));
+}
+
+namespace {
+
+// Two spools in one unit behind a filament switch, which sends its lanes to toolhead 0 or 1.
+std::vector<Lane> switch_lanes()
+{
+    Lane first{"lane0", "A", 0, 0, true, 60.};
+    first.inlet          = 0;
+    first.other_toolhead = 1;
+    Lane second          = first;
+    second.name          = "lane1";
+    second.filament      = 1;
+    return {first, second};
+}
+
+Times switch_times(double flush, double tool_change)
+{
+    Times times;
+    times.tool_change = tool_change;
+    times.flush.assign(2, std::vector<std::vector<double>>(2, std::vector<double>(2, flush)));
+    return times;
+}
+
+} // namespace
+
+TEST_CASE("route prints a spool through the switch without moving it", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    const Routed routed = route(switch_lanes(), layers, {0, 1}, 0.01, switch_times(100., 10.));
+    CHECK(routed.plan.lane_of == std::vector<int>{0, 1});
+    CHECK(routed.plan.moves.empty());
+    CHECK(routed.run.lane_changes == 4);
+    CHECK(routed.run.flushes == 0);
+    // Four lane changes of a minute and four tool changes.
+    CHECK_THAT(routed.plan.cost, Catch::Matchers::WithinAbs(4 * 60. + 4 * 10., 1e-6));
+    // On one toolhead the same lane changes flush.
+    CHECK_THAT(route(switch_lanes(), layers, {0, 0}, 0.01, switch_times(100., 10.)).plan.cost,
+               Catch::Matchers::WithinAbs(4 * 60. + 4 * 100., 1e-6));
+}
+
+TEST_CASE("route moves a spool to a toolhead its switch does not reach", "[AFCLayout]")
+{
+    std::vector<Lane> lanes = switch_lanes();
+    lanes.push_back({"lane2", "B", 2, -1, false, 60.});
+    const Routed routed = route(lanes, {{0}, {1}, {0}}, {0, 2}, 0.01, switch_times(100., 10.));
+    CHECK(routed.plan.lane_of == std::vector<int>{0, 2});
+    REQUIRE(routed.plan.moves.size() == 1);
+    CHECK(routed.plan.moves[0].to == 2);
+    // Off the switch nothing takes the other filament out.
+    CHECK(routed.run.lane_changes == 0);
+}
+
+TEST_CASE("improve sends a filament through the switch only when the print is shorter for it", "[AFCLayout]")
+{
+    const std::vector<std::vector<unsigned int>> layers{{0}, {1}, {0}, {1}, {0}};
+    // A flush takes longer than a tool change: a nozzle each.
+    const std::vector<int> split = improve(switch_lanes(), layers, {0, 0}, 0.01, 2, switch_times(100., 10.));
+    CHECK(split[0] != split[1]);
+    // A tool change takes longer than a flush, or as long: both stay on the toolhead their unit feeds.
+    CHECK(improve(switch_lanes(), layers, {0, 0}, 0.01, 2, switch_times(5., 100.)) == std::vector<int>{0, 0});
+    CHECK(improve(switch_lanes(), layers, {0, 0}, 0.01, 2, switch_times(10., 10.)) == std::vector<int>{0, 0});
+}
+
+TEST_CASE("improve leaves a lane its switch cannot move on its toolhead", "[AFCLayout]")
+{
+    // The switch is not calibrated: neither lane has another toolhead, and toolhead 1 has no lane.
+    std::vector<Lane> lanes = switch_lanes();
+    lanes[0].other_toolhead = -1;
+    lanes[1].other_toolhead = -1;
+    CHECK(improve(lanes, {{0}, {1}, {0}, {1}, {0}}, {0, 0}, 0.01, 2, switch_times(100., 10.)) == std::vector<int>{0, 0});
 }

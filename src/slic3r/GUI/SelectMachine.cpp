@@ -3626,13 +3626,19 @@ void SelectMachineDialog::navigate_to_timelapse_page()
 }
 
 // Orca: the toolhead the tray picked for each filament feeds, as the printer reports it (-1 = not known or not picked).
+// A tray behind a filament switch feeds the toolhead its filament was sliced for when the switch reaches that one
+// (switch_toolheads), as the print file sends its lane there.
 static std::vector<int> picked_toolheads(const std::vector<FilamentInfo> &mapping, const DevFilaSystem *fila_system)
 {
     std::vector<int> toolheads(wxGetApp().preset_bundle->filament_presets.size(), -1);
+    const auto      *sliced = wxGetApp().preset_bundle->project_config.option<ConfigOptionInts>("filament_toolhead");
     for (const FilamentInfo &picked : mapping) {
         const DevAmsTray *tray = fila_system != nullptr ? fila_system->GetAmsTray(picked.ams_id, picked.slot_id) : nullptr;
-        if (tray != nullptr && picked.id >= 0 && size_t(picked.id) < toolheads.size())
-            toolheads[picked.id] = tray->toolhead;
+        if (tray == nullptr || picked.id < 0 || size_t(picked.id) >= toolheads.size())
+            continue;
+        const int  planned = sliced != nullptr && size_t(picked.id) < sliced->values.size() ? sliced->values[picked.id] : -1;
+        const bool reached = std::find(tray->switch_toolheads.begin(), tray->switch_toolheads.end(), planned) != tray->switch_toolheads.end();
+        toolheads[picked.id] = reached ? planned : tray->toolhead;
     }
     return toolheads;
 }

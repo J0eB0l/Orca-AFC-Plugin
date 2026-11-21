@@ -869,6 +869,12 @@ public:
         int              bed_temp {0};
         // False while its unit's link to the printer is down (a BridgeBox or ACE unit unplugged).
         bool             online {true};
+        // Behind a filament switch: the switch's place in agent_fila_switches (-1 none), its inlet there
+        // (0 = A, 1 = B) and the two toolheads the switch can load it into, outlet A's first (empty while
+        // it cannot move the lane).
+        int              fila_switch {-1};
+        int              switch_inlet {-1};
+        std::vector<int> switch_toolheads;
     };
     // Orca: a printer agent's units (afc_units) and the seconds a lane change takes on each, measured in
     // AFC.log or the agent's own figure for the kind of unit, for the suggested spool layout.
