@@ -25,6 +25,10 @@ rewrites the file for what AFC does with it:
   toolheads the trays reported at filament sync (`filament_toolhead`); such a
   change gets no PURGE_LENGTH when it is still the same lane change after the
   print dialog's mapping. Every other lane change still goes to the poop. A
+  filament switch inlet holds one lane at a time, so a lane another one took
+  out of its toolhead loads again when it next prints: back in a toolhead
+  that last printed it, off the tower, it gets the file's prime volume as its
+  PURGE_LENGTH, so AFC purges its least and not its default length. A
   Snapmaker U1 forms a tip on the filament it unloads instead of cutting it, so
   its lane changes purge a fifth of that volume (the table is made for a
   printer that cuts); the AFC build's prime tower flushes a fifth there too.
@@ -185,6 +189,7 @@ class FileSettings:
     chamber_on: list = field(default_factory=list)  # activate_chamber_temp_control per filament
     chamber_temps: list = field(default_factory=list)  # chamber_temperature per filament, °C
     afc: bool | None = None  # the printer's AFC box (afc_enabled); None when the file does not say
+    prime_volume: float = 0.0  # prime_volume, mm³: what a toolhead primes that holds its filament's color
 
     @classmethod
     def from_config(cls, config: dict) -> "FileSettings":
@@ -215,6 +220,7 @@ class FileSettings:
             chamber_on=_bools(config.get("activate_chamber_temp_control", "")),
             chamber_temps=_ints(config.get("chamber_temperature", "")),
             afc=_on(config, "afc_enabled") if "afc_enabled" in config else None,
+            prime_volume=max((_floats(config.get("prime_volume", "")) or [0.0])[0], 0.0),
         )
 
     @property
@@ -351,9 +357,12 @@ def top_cover_gcode(settings: FileSettings, used: list) -> list:
 class Plan:
     """Per file filament (its T number in the file): the T number to print,
     the toolhead it feeds and the spool's flow K. A filament missing from
-    `tools` keeps its number; one missing from `toolheads` gets no purge."""
+    `tools` keeps its number; one missing from `toolheads` gets no purge.
+    `inlets` names the filament switch inlet of a filament whose lane is
+    behind one (Snapshot.switch_inlet())."""
     tools: dict = field(default_factory=dict)
     toolheads: dict = field(default_factory=dict)
+    inlets: dict = field(default_factory=dict)
     flow_k: dict = field(default_factory=dict)
     top_cover: bool = False  # the printer reports a U1 top cover on
 
@@ -449,7 +458,9 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     record = TOOLS_NOTE + ",".join(str(t) for t in tools) if any(t != f for f, t in enumerate(tools)) else ""
 
     lines = text.splitlines(keepends=True)
-    loaded = {}           # toolhead -> filament it holds
+    loaded = {}           # toolhead -> filament it holds, or held last
+    through = {}          # filament switch inlet -> the filament loaded through it
+    taken_out = set()     # filaments their inlet took out of their toolhead for another one
     sliced = {}           # the same, by the toolheads the file was sliced with
     active = -1           # filament printing now
     in_config = False
@@ -498,12 +509,25 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                     head = plan.toolheads[filament]
                     before = loaded.get(head, -1)
                     loaded[head] = filament
+                    # An inlet holds one lane: the one it held leaves its toolhead, and so its inlet.
+                    inlet = plan.inlets.get(filament)
+                    held = through.get(inlet, filament)
+                    if held != filament and plan.toolheads.get(held) != head:
+                        taken_out.add(held)
+                    if before != filament and through.get(plan.inlets.get(before)) == before:
+                        del through[plan.inlets[before]]
+                    if inlet is not None:
+                        through[inlet] = filament
+                    back = filament in taken_out
+                    taken_out.discard(filament)
                     # The tower flushed this lane change as sliced, and the mapping kept it.
                     flushed = in_tower_change and before == sliced_before
+                    area = settings.area(filament)
                     if before >= 0 and before != filament and not flushed:
-                        area = settings.area(filament)
                         volume = settings.flush_volume(head, before, filament)
                         purge = volume / area if area > 0 else 0.0
+                    elif back and before == filament and not in_tower_change:
+                        purge = settings.prime_volume / area if area > 0 else 0.0
                     # What the file had there is replaced, so the line carries only this purge.
                     rest = _PURGE.sub("", rest)
                 newline = "\n" if line.endswith("\n") else ""
@@ -584,13 +608,19 @@ def switch_extruders(tools: dict, snapshot: Snapshot, settings: FileSettings) ->
 def plan_switches(plan: Plan, text: str, snapshot: Snapshot, settings: FileSettings) -> None:
     """Put each filament a file prints whose lane is behind a filament switch
     on the toolhead the file's switch lines send that lane to
-    (switch_extruders()), so its purges are worked out for that toolhead."""
+    (switch_extruders()), so its purges are worked out for that toolhead, and
+    name its inlet, which it shares with the other lanes plumbed into it."""
     tools = {}
     for filament in sorted(filament for filaments in tool_filaments(text).values() for filament in filaments):
         tools.setdefault(plan.tools.get(filament, filament), []).append(filament)
     for tool, extruder in switch_extruders(tools, snapshot, settings).items():
         for filament in tools[tool]:
             plan.toolheads[filament] = extruder_index_from_name(extruder)
+    for tool, filaments in tools.items():
+        lane = snapshot.lane_for_tool(tool)
+        inlet = snapshot.switch_inlet(lane.unit) if lane is not None else None
+        for filament in filaments if inlet else ():
+            plan.inlets[filament] = inlet
 
 
 def switch_lines(text: str, snapshot: Snapshot, settings: FileSettings) -> list:

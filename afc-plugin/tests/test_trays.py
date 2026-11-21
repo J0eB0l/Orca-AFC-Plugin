@@ -346,6 +346,20 @@ class SwitchTest(unittest.TestCase):
         snap.switches[0].outlets = [SwitchOutlet("A", "extruder5"), SwitchOutlet("B", "extruder4")]
         self.assertEqual(self.trays_by_tool(snap)[9]["switch_toolheads"], [5, 4])  # outlet A's toolhead first
 
+    def test_lanes_say_their_switch_and_the_toolheads_it_reaches(self):
+        def lanes(snap):
+            return {lane["name"]: [lane.get("switch"), lane.get("switch_inlet"), lane.get("switch_toolheads")]
+                    for lane in trays.lanes_json(snap, trays.Layout([]))}
+
+        snap = switch_snapshot()
+        self.assertEqual(lanes(snap), {"lane4": [0, "A", [4, 5]], "lane5": [0, "A", [4, 5]], "lane8": [0, "B", [4, 5]],
+                                       "lane9": [0, "B", [4, 5]], "lane12": [0, "B", [4, 5]],
+                                       "ace0": [None, None, None], "ace1": [None, None, None]})
+        # A switch that cannot move its lanes still holds one of an inlet's lanes at a time.
+        snap.switches[0].calibrated = False
+        self.assertEqual(lanes(snap)["lane4"], [0, "A", None])
+        self.assertEqual(lanes(snap)["lane12"], [0, "B", None])
+
     def test_no_toolheads_from_a_switch_that_cannot_move_the_lane(self):
         def changed(**values):
             snap = switch_snapshot()

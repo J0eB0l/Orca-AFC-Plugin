@@ -89,6 +89,15 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(g.read_config_block("G28\nT0\n"), {})
         self.assertFalse(g.FileSettings.from_config({}).klipper)
 
+    def test_prime_volume(self):
+        def read(extra):
+            return g.FileSettings.from_config(g.read_config_block(config_block(extra=extra))).prime_volume
+
+        self.assertEqual(read("; prime_volume = 45\n"), 45)
+        self.assertEqual(read(""), 0)
+        self.assertEqual(read("; prime_volume = -3\n"), 0)
+        self.assertEqual(read("; prime_volume = x\n"), 0)
+
 
 class PurgeTest(unittest.TestCase):
     def run_file(self, body, plan, **config):
@@ -144,6 +153,58 @@ class PurgeTest(unittest.TestCase):
     def test_lane_change_off_the_tower_still_purges(self):
         out = self.run_file("T0\nT1\n", g.Plan(toolheads={0: 0, 1: 0}), extra=TOWER)
         self.assertAlmostEqual(purge(out, 1), round(100 / area(1.75), 1))
+
+    PRIME = "; prime_volume = 45\n"
+    INLET = (0, "A")
+
+    def test_a_lane_its_inlet_took_out_primes_when_it_comes_back(self):
+        # Both lanes behind one switch inlet, a toolhead each: each load takes the other lane out.
+        plan = g.Plan(toolheads={0: 4, 1: 5}, inlets={0: self.INLET, 1: self.INLET})
+        out = self.run_file("T0\nT1\nT0\nT1\n", plan, extra=self.PRIME)
+        self.assertIsNone(purge(out, 0))  # the first lane each toolhead loads
+        self.assertIsNone(purge(out, 1))
+        self.assertAlmostEqual(purge(out, 2), round(45 / area(1.75), 1))
+        self.assertAlmostEqual(purge(out, 3), round(45 / area(1.75), 1))
+        # A file that names no prime volume leaves the length to AFC.
+        self.assertNotIn("PURGE_LENGTH", self.run_file("T0\nT1\nT0\nT1\n", plan))
+
+    def test_lanes_behind_an_inlet_each_stay_loaded(self):
+        plan = g.Plan(toolheads={0: 4, 1: 5}, inlets={0: (0, "A"), 1: (0, "B")})
+        self.assertNotIn("PURGE_LENGTH", self.run_file("T0\nT1\nT0\nT1\n", plan, extra=self.PRIME))
+        # As do lanes on no switch.
+        self.assertNotIn("PURGE_LENGTH", self.run_file("T0\nT1\nT0\nT1\n", g.Plan(toolheads={0: 4, 1: 5}), extra=self.PRIME))
+
+    def test_lanes_of_one_inlet_on_one_toolhead_flush(self):
+        plan = g.Plan(toolheads={0: 4, 1: 4}, inlets={0: self.INLET, 1: self.INLET})
+        out = self.run_file("T0\nT1\nT0\n", plan, extra=self.PRIME)
+        self.assertAlmostEqual(purge(out, 1), round(100 / area(1.75), 1))
+        self.assertAlmostEqual(purge(out, 2), round(110 / area(1.75), 1))
+
+    def test_a_lane_taken_out_flushes_what_its_toolhead_printed_since(self):
+        # Filament 2, on no switch, prints on filament 0's toolhead while 0 is out.
+        plan = g.Plan(toolheads={0: 4, 1: 5, 2: 4}, inlets={0: self.INLET, 1: self.INLET})
+        out = self.run_file("T0\nT1\nT2\nT0\nT1\nT0\n", plan, extra=self.PRIME)
+        self.assertAlmostEqual(purge(out, 2), round(200 / area(2.85), 1))  # 0 -> 2
+        self.assertAlmostEqual(purge(out, 3), round(120 / area(1.75), 1))  # 2 -> 0, which takes 1 out
+        self.assertAlmostEqual(purge(out, 4), round(45 / area(1.75), 1))   # 1 back in its own nozzle
+        self.assertAlmostEqual(purge(out, 5), round(45 / area(1.75), 1))
+
+    def test_a_lane_replaced_in_its_toolhead_frees_its_inlet(self):
+        # Filament 2 replaces 0 in toolhead 4, so 1 loads through the inlet without taking anything out.
+        plan = g.Plan(toolheads={0: 4, 1: 5, 2: 4}, inlets={0: self.INLET, 1: self.INLET})
+        out = self.run_file("T1\nT0\nT2\nT1\nT2\n", plan, extra=self.PRIME)
+        self.assertIsNone(purge(out, 1))                                   # toolhead 4's first lane; 1 is out
+        self.assertAlmostEqual(purge(out, 2), round(200 / area(2.85), 1))  # 0 -> 2
+        self.assertAlmostEqual(purge(out, 3), round(45 / area(1.75), 1))   # 1 back
+        self.assertIsNone(purge(out, 4))                                   # 2 was never taken out
+
+    def test_the_tower_primes_a_lane_that_comes_back(self):
+        plan = g.Plan(toolheads={0: 0, 2: 1}, inlets={0: self.INLET, 2: self.INLET})
+        out = self.run_file("T0\n" + tower_change(2) + tower_change(0) + tower_change(2), plan, extra=TOWER + self.PRIME)
+        self.assertNotIn("PURGE_LENGTH", out)
+        # Off the tower AFC primes it.
+        out = self.run_file("T0\n" + tower_change(2) + "T0\n", plan, extra=TOWER + self.PRIME)
+        self.assertAlmostEqual(purge(out, 6), round(45 / area(1.75), 1))
 
     def test_tower_flushes_with_single_extruder_mm(self):
         out = self.run_file("T0\nT1\n", g.Plan(toolheads={0: 0, 1: 0}), semm="1")
@@ -315,14 +376,14 @@ class HeaderTest(unittest.TestCase):
 def switch_snapshot():
     """T0, T1 and T7 on lanes behind a filament switch that feeds extruder4 and
     extruder5, T2 on a lane of toolhead 0."""
-    def lane(name, tool, extruder):
-        return Lane(name=name, maps=["T%d" % tool], extruder=extruder, extruder_index=int(extruder[8:] or 0))
-    switch = Switch("Switch_1", True, True, [SwitchInlet("A", "A"), SwitchInlet("B", "B")],
+    def lane(name, tool, extruder, unit):
+        return Lane(name=name, maps=["T%d" % tool], extruder=extruder, extruder_index=int(extruder[8:] or 0), unit=unit)
+    switch = Switch("Switch_1", True, True, [SwitchInlet("A", "A", units=["AMS_1"]), SwitchInlet("B", "B", units=["Turtle_1"])],
                     [SwitchOutlet("A", "extruder4"), SwitchOutlet("B", "extruder5")],
                     {"lane4": "extruder4", "lane8": "extruder5", "lane9": "extruder5"})
     return Snapshot(present=True, switches=[switch], lanes=[
-        lane("lane4", 0, "extruder4"), lane("lane8", 1, "extruder5"), lane("lane1", 2, "extruder"),
-        lane("lane9", 7, "extruder5")])
+        lane("lane4", 0, "extruder4", "AMS_1"), lane("lane8", 1, "extruder5", "Turtle_1"), lane("lane1", 2, "extruder", "Ace_1"),
+        lane("lane9", 7, "extruder5", "Turtle_1")])
 
 
 def assign(tool, extruder):
@@ -352,6 +413,22 @@ class SwitchLinesTest(unittest.TestCase):
     def test_purges_are_planned_for_the_toolhead_a_line_sends_its_lane_to(self):
         self.assertEqual(self.planned("5,4,0"), {0: 5, 1: 4, 2: 0})
         self.assertEqual(self.planned("5,5,0"), {0: 5, 1: 5, 2: 0})
+
+    def test_each_filament_behind_a_switch_names_its_inlet(self):
+        for toolheads in ("5,4,0", ""):  # whether or not a line moves its lane
+            text = self.sliced(toolheads)
+            settings = g.FileSettings.from_config(g.read_config_block(text))
+            plan = g.plan_for(switch_snapshot(), 3, None, settings)
+            self.assertEqual(plan.inlets, {})
+            g.plan_switches(plan, text, switch_snapshot(), settings)
+            with self.subTest(toolheads=toolheads):
+                self.assertEqual(plan.inlets, {0: (0, "A"), 1: (0, "B")})  # filament 2's lane is on no switch
+        # A filament the print dialog sent to another T number takes that lane's inlet.
+        text = self.sliced("5,4,0")
+        settings = g.FileSettings.from_config(g.read_config_block(text))
+        plan = g.plan_for(switch_snapshot(), 3, {2: 7}, settings)
+        g.plan_switches(plan, text, switch_snapshot(), settings)
+        self.assertEqual(plan.inlets, {0: (0, "A"), 1: (0, "B"), 2: (0, "B")})
 
     def test_purges_stay_where_a_lane_is_when_no_line_moves_it(self):
         self.assertEqual(self.planned(""), {0: 4, 1: 5, 2: 0})       # sliced for no toolhead the file names

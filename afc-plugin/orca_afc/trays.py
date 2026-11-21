@@ -409,12 +409,15 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
     lanes with the same filament (runout.same_filament()) and where the
     Device tab shows it, and its T numbers, Spoolman spool (0 none) and
     temperatures (0 unknown), and whether its unit is connected (a BridgeBox
-    or ACE unit whose link is down has no spools to offer)."""
+    or ACE unit whose link is down has no spools to offer). A lane behind a
+    filament switch also says its switch and inlet (unit_switch()) and, while
+    the switch can move it, the two toolheads it reaches (switch_toolheads())."""
     out = []
     for lane in snapshot.lanes:
         unit = snapshot.find_unit(lane.unit)
         ams_id, slot_id = shown.place(lane)
         same = [other.name for other in snapshot.lanes if other is not lane and runout.same_filament(lane, other)]
+        heads = switch_toolheads(snapshot, lane)
         out.append({"name": lane.name, "unit": lane.unit, "color": _color(lane.color), "type": lane.material,
                     "family": material_key(lane.material),
                     "remain_g": int(round(lane.weight)) if lane.has_filament and lane.weight > 0 else -1,
@@ -424,7 +427,8 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
                     # For the suggested spool layout, which writes a moved spool's lane back to AFC.
                     "tools": [tool_number(m) for m in lane.maps if tool_number(m) >= 0],
                     "spool_id": lane.spool_id, "nozzle_temp": lane.nozzle_temp, "bed_temp": lane.bed_temp,
-                    "online": unit.online if unit else True})
+                    "online": unit.online if unit else True,
+                    **unit_switch(snapshot, lane.unit), **({"switch_toolheads": heads} if heads else {})})
     return out
 
 
@@ -443,11 +447,8 @@ def unit_switch(snapshot: Snapshot, unit: str) -> dict:
     """{"switch", "switch_inlet"} of an AFC unit plumbed into a filament
     switch: the switch's place in switches_json() and its inlet's letter.
     Empty for a unit on none."""
-    for index, switch in enumerate(snapshot.switches if unit else ()):
-        for inlet in switch.inlets:
-            if unit in inlet.units:
-                return {"switch": index, "switch_inlet": inlet.letter}
-    return {}
+    inlet = snapshot.switch_inlet(unit)
+    return {"switch": inlet[0], "switch_inlet": inlet[1]} if inlet else {}
 
 
 def switch_text(switch: Switch) -> str:

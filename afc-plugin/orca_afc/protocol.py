@@ -189,6 +189,16 @@ class Snapshot:
         """The filament switch a lane goes through, or None."""
         return next((switch for switch in self.switches if lane in switch.lanes), None)
 
+    def switch_inlet(self, unit: str) -> tuple | None:
+        """(the switch's place in `switches`, the inlet's letter) of the filament
+        switch inlet a unit is plumbed into, or None. An inlet holds one lane
+        at a time, whichever toolhead it is in."""
+        for index, switch in enumerate(self.switches if unit else ()):
+            for inlet in switch.inlets:
+                if unit in inlet.units:
+                    return index, inlet.letter
+        return None
+
     def max_tool(self) -> int:
         """Highest T(n) mapped to any lane, -1 when none."""
         return max((tool_number(m) for lane in self.lanes for m in lane.maps), default=-1)

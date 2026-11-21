@@ -199,7 +199,13 @@ Then:
   runs before CHANGE_TOOL. A print file carries the toolhead of each lane
   behind a switch: one `AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T<n> EXTRUDER=<extruder> UNLOAD=1`
   line per T number before its first command, for the toolhead that filament
-  was sliced for.
+  was sliced for. An inlet holds one lane at a time, so a lane another one
+  took out of its toolhead loads again when it next prints: back in a toolhead
+  that last printed it, its `T` line gets the file's prime volume as
+  `PURGE_LENGTH`, so AFC purges its least. The suggested spool layout of the
+  AFC build reads each lane's switch, inlet and reachable toolheads, and
+  prints two filaments of one unit through a nozzle each when the flushes
+  that skips take longer than the tool changes it adds.
 - The Device tab's fan popup shows every Klipper fan by its name in the AFC
   build: the part fan (`[fan]`, as Parts) and each `[fan_generic]`, which the
   popup sets (M106 and SET_FAN_SPEED), and the `[heater_fan]`,
