@@ -4,7 +4,7 @@ import unittest
 
 import fake_orca  # noqa: F401
 from orca_afc import controls, trays
-from orca_afc.protocol import AFCError, Lane, Snapshot, Unit
+from orca_afc.protocol import AFCError, Lane, Snapshot, Switch, SwitchInlet, SwitchOutlet, Unit
 
 
 def lane(name, tool, unit="Turtle_1", unit_type="Box_Turtle", **values):
@@ -200,6 +200,64 @@ class TrayTest(unittest.TestCase):
         empty = Snapshot(present=True, lanes=[lane("lane1", 0)])
         with self.assertRaises(AFCError):
             controls.change_filament_gcode(empty, {"ams_id": 0, "slot_id": 255}, trays.layout(empty))
+
+    def on_a_switch(self):
+        """Both units on a filament switch: the Box Turtle's extruder behind
+        outlet A, the Bambu AMS's extruder1 behind outlet B."""
+        for l in self.snap.lanes:
+            l.extruder = "extruder" if l.unit == "Turtle_1" else "extruder1"
+        self.snap.switches = [Switch("Switch_1", True, True,
+                                     [SwitchInlet("A", "A", units=["Turtle_1"]), SwitchInlet("B", "B", units=["Bambu_AMS_1"])],
+                                     [SwitchOutlet("A", "extruder"), SwitchOutlet("B", "extruder1")],
+                                     {l.name: l.extruder for l in self.snap.lanes})]
+        return self.snap.switches[0]
+
+    def load(self, **request):
+        return controls.change_filament_gcode(self.snap, dict({"ams_id": 1, "slot_id": 0, "target": 4}, **request),
+                                              self.shown)
+
+    def test_load_into_the_other_toolhead_of_a_switch(self):
+        switch = self.on_a_switch()
+        self.assertEqual(self.load(extruder_id=0),
+                         "AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane5 EXTRUDER=extruder UNLOAD=1\nCHANGE_TOOL LANE=lane5")
+        self.assertEqual(controls.change_filament_gcode(self.snap, {"ams_id": 0, "slot_id": 0, "extruder_id": 1},
+                                                        self.shown),
+                         "AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane1 EXTRUDER=extruder1 UNLOAD=1\nCHANGE_TOOL LANE=lane1")
+        # The switch says where the lane is now; AFC answers for a switch that cannot move it.
+        switch.lanes["lane5"], switch.answering, switch.calibrated = "extruder", False, False
+        self.assertEqual(self.load(extruder_id=0), "CHANGE_TOOL LANE=lane5")
+        self.assertEqual(self.load(extruder_id=1),
+                         "AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane5 EXTRUDER=extruder1 UNLOAD=1\nCHANGE_TOOL LANE=lane5")
+        switch.lanes["lane5"] = ""  # not known there: the extruder AFC has for the lane
+        self.assertEqual(self.load(extruder_id=1), "CHANGE_TOOL LANE=lane5")
+
+    def test_load_as_before_without_a_toolhead_of_the_switch(self):
+        self.on_a_switch()
+        self.assertEqual(self.load(), "CHANGE_TOOL LANE=lane5")  # no extruder_id
+        for extruder_id in (1,        # the extruder the lane is on
+                            2, 255,   # no outlet of the switch
+                            -1, True, False, "0", 0.0, None, [0]):
+            with self.subTest(extruder_id=extruder_id):
+                self.assertEqual(self.load(extruder_id=extruder_id), "CHANGE_TOOL LANE=lane5")
+
+    def test_load_as_before_with_no_switch_for_the_lane(self):
+        self.assertEqual(self.load(extruder_id=0), "CHANGE_TOOL LANE=lane5")  # no switch
+        switch = self.on_a_switch()
+        del switch.lanes["lane5"]
+        self.assertEqual(self.load(extruder_id=0), "CHANGE_TOOL LANE=lane5")  # the lane is not on it
+        switch.lanes["lane5"] = "extruder1"
+        switch.outlets[0].extruder = ""
+        self.assertEqual(self.load(extruder_id=0), "CHANGE_TOOL LANE=lane5")  # outlet A feeds no extruder
+        switch.outlets[0].extruder = "extruder;M112"
+        self.assertEqual(self.load(extruder_id=0), "CHANGE_TOOL LANE=lane5")
+
+    def test_unload_and_an_empty_tray_with_a_toolhead_picked(self):
+        self.on_a_switch()
+        unload = {"ams_id": 1, "slot_id": 255, "target": 255, "extruder_id": 0}
+        self.assertEqual(controls.change_filament_gcode(self.snap, unload, self.shown), "TOOL_UNLOAD LANE=lane6")
+        self.snap.lanes[2].prep = False
+        with self.assertRaises(AFCError):
+            self.load(extruder_id=0)
 
     def test_load_and_unload_by_afc_unit(self):
         self.snap.units = [Unit("Turtle_1", "Box_Turtle", ["lane1", "lane2"]), Unit("Bambu_AMS_1", "BambuAMS", ["lane5", "lane6"])]

@@ -546,6 +546,10 @@ def push_status(objects: dict, snapshot, filament_ids: dict, extras=None, readin
         # Always sent, so a runout lane taken off leaves OrcaSlicer's groups too.
         out["filam_bak"] = groups
         out["afc_lanes"] = trays.lanes_json(snapshot, shown)
+        if snapshot.switches:
+            # The printer's filament switches, which the AFC build of OrcaSlicer draws between the units
+            # of their inlets and the toolheads of their outlets. A printer without one sends no key.
+            out["afc_switches"] = trays.switches_json(snapshot)
         # Each unit's lane change time, by which the AFC build of OrcaSlicer's suggested spool layout
         # ranks the units after the printer's Preferred units, and which it applies with afc_layout.
         out["afc_units"] = units.unit_times(snapshot, lane_times or {})
@@ -720,11 +724,14 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
     """The file as the printer gets it: the print dialog's trays for its
     filaments (laid out by AFC unit when `by_unit`; picked by the printer for a
     Multi-device send, trays.auto_mapping()), AFC's purges and spool
-    flow K, on a U1 its print switches, and with the Timelapse switch on and
-    moonraker-timelapse running (`timelapse`) the frames it takes. A printer
-    without AFC gets the file as it was sliced, apart from those switches."""
+    flow K, on a U1 its print switches, with the Timelapse switch on and
+    moonraker-timelapse running (`timelapse`) the frames it takes, and for
+    each lane behind a filament switch the toolhead its filament was sliced
+    for. A printer without AFC gets the file as it was sliced, apart from
+    those switches."""
     settings = gcode.FileSettings.from_config(gcode.read_config_block(text))
-    if settings.klipper and snapshot is not None and snapshot.present:
+    afc = settings.klipper and snapshot is not None and snapshot.present
+    if afc:
         if job.auto_lanes:
             mapping = trays.auto_mapping(snapshot, gcode.filaments_used(text), settings.types, settings.colors,
                                          settings.sliced_toolheads)
@@ -732,6 +739,8 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
             shown = trays.layout(snapshot, by_unit, wide)
             mapping = trays.mapping_from_print(job.ams_mapping, job.ams_mapping2, settings.filaments, shown)
         plan = gcode.plan_for(snapshot, settings.filaments, mapping, settings)
+        if snapshot.switches:
+            gcode.plan_switches(plan, text, snapshot, settings)
         if is_pa_calibration(job.project):
             plan.flow_k.clear()  # a Flow Dynamics test prints its own K on every line
         text = gcode.transform(text, plan, settings).text
@@ -744,6 +753,9 @@ def prepare(text: str, job: PrintJob, snapshot, by_unit: bool = False, timelapse
             text = gcode.insert_after_header(text, line)
     elif timelapse and job.time_lapse:
         text = gcode.add_timelapse_frames(text)
+    if afc and snapshot.switches:
+        # A lane behind a filament switch goes to the toolhead its filament was sliced for.
+        text = gcode.add_switch_lines(text, snapshot, settings)
     return text
 
 

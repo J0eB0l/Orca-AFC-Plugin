@@ -189,6 +189,17 @@ Then:
   objects named with main, chamber, cavity, case, cabinet, enclosure, light or
   lamp (`[led main_led]`, `[output_pin caselight]`, the Snapmaker U1's
   `[led cavity_led]`), full white on or off.
+- A filament switch (`[AFC_BridgeBox_switch <name>]`: units plumbed into its
+  two inlets, an AFC extruder behind each of its two outlets) is read with
+  AFC's lanes. The AFC build of OrcaSlicer shows it on the Device tab with the
+  units of each inlet, the outlet an inlet exits at, the lane loaded through it
+  and the toolhead behind each outlet. **Load** loads a lane behind the switch
+  into the toolhead chosen for it: when the lane is on the switch's other
+  extruder, `AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=<lane> EXTRUDER=<extruder> UNLOAD=1`
+  runs before CHANGE_TOOL. A print file carries the toolhead of each lane
+  behind a switch: one `AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T<n> EXTRUDER=<extruder> UNLOAD=1`
+  line per T number before its first command, for the toolhead that filament
+  was sliced for.
 - The Device tab's fan popup shows every Klipper fan by its name in the AFC
   build: the part fan (`[fan]`, as Parts) and each `[fan_generic]`, which the
   popup sets (M106 and SET_FAN_SPEED), and the `[heater_fan]`,

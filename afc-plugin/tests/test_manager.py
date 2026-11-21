@@ -7,9 +7,9 @@ from unittest import mock
 import fake_orca  # noqa: F401
 from fake_moonraker import FakeMoonraker, closed_port_url
 from orca_afc.manager import FLOW_K_MAX_AGE, AFCManager
-from orca_afc.moonraker import Moonraker, base_url
+from orca_afc.moonraker import Moonraker, MoonrakerError, base_url
 from orca_afc.protocol import AFCError
-from test_protocol import lane_status, webhook_fixture
+from test_protocol import lane_status, switch_status, webhook_fixture
 
 SPOOL_12 = {"id": 12, "extra": {"flow_k": "0.032"}}
 
@@ -78,6 +78,94 @@ class ReadTest(Case):
         self.assertEqual([lane["name"] for lane in afc["lanes"]], ["lane1", "lane2"])
         self.assertEqual(afc["lanes"][0]["material"], "ASA")
         self.assertIn("/printer/objects/list", self.fake.paths())
+
+    def test_filament_switch(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        switch, = self.manager.read(self.client).switches
+        self.assertEqual((switch.name, switch.answering, switch.calibrated), ("Switch_1", True, True))
+        self.assertEqual([(i.letter, i.outlet, i.lane, i.units) for i in switch.inlets],
+                         [("A", "A", "", ["Turtle_1"]), ("B", "B", "lane5", ["Bambu_AMS_1"])])
+        self.assertEqual(([o.extruder for o in switch.outlets], switch.lanes["lane2"]),
+                         (["extruder", "extruder1"], "extruder"))
+        # Read again each time: the switch stops answering, then is gone.
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = {"answering": False, "calibrated": True}
+        switch, = self.manager.read(self.client).switches
+        self.assertEqual((switch.answering, switch.toolheads()), (False, [-1, -1]))
+        del self.fake.objects["AFC_BridgeBox_switch Switch_1"]
+        self.assertEqual(self.manager.read(self.client).switches, [])
+
+    def test_no_filament_switch(self):
+        self.fake.requests.clear()
+        self.assertEqual(self.manager.read(self.client).switches, [])
+        queried = [name for _, path, body in self.fake.requests if path == "/printer/objects/query"
+                   for name in body["objects"]]
+        self.assertIn("AFC", queried)
+        self.assertFalse([name for name in queried if name.startswith("AFC_BridgeBox_switch")])
+
+    def test_filament_switch_with_the_objects_fallback(self):
+        self.fake.webhook = None
+        self.fake.objects = {
+            "AFC": {"units": ["Box_Turtle Turtle_1"], "lanes": ["lane1"], "spoolman": None, "extruders": ["extruder"]},
+            "AFC_stepper lane1": lane_status("lane1", "Turtle_1", 1, ["T0"], "extruder", "#123456", "ASA", True),
+            "AFC_BridgeBox_switch Switch_1": switch_status(),
+        }
+        snap = self.manager.read(self.client)
+        self.assertEqual(snap.switch_of("lane1").name, "Switch_1")
+
+    def test_read_snapshot_finds_the_switches_in_the_list_the_lanes_came_from(self):
+        from orca_afc.manager import read_snapshot
+        self.fake.webhook = None
+        self.fake.objects = {
+            "AFC": {"units": ["Box_Turtle Turtle_1"], "lanes": ["lane1"], "spoolman": None, "extruders": ["extruder"]},
+            "AFC_stepper lane1": lane_status("lane1", "Turtle_1", 1, ["T0"], "extruder", "#123456", "ASA", True),
+            "AFC_BridgeBox_switch Switch_1": switch_status(),
+        }
+        self.assertEqual(read_snapshot(self.client).switch_of("lane1").name, "Switch_1")
+        self.assertEqual(self.fake.paths().count("/printer/objects/list"), 1)
+
+    def test_the_objects_list_is_read_for_switches_once_a_minute(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        for _ in range(3):
+            self.assertEqual(len(self.manager.read(self.client).switches), 1)
+        self.assertEqual(self.fake.paths().count("/printer/objects/list"), 1)
+        self.now += 59.0
+        self.manager.read(self.client)
+        self.assertEqual(self.fake.paths().count("/printer/objects/list"), 1)
+        self.now += 1.0
+        self.manager.read(self.client)
+        self.assertEqual(self.fake.paths().count("/printer/objects/list"), 2)
+
+    def test_a_switch_added_to_the_printer_shows_within_a_minute(self):
+        self.assertEqual(self.manager.read(self.client).switches, [])
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.assertEqual(self.manager.read(self.client).switches, [])
+        self.now += 60.0
+        self.assertEqual(len(self.manager.read(self.client).switches), 1)
+
+    def test_another_printer_has_its_own_switches(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.assertEqual(len(self.manager.read(self.client).switches), 1)
+        other = FakeMoonraker()
+        self.addCleanup(other.close)
+        other.webhook = webhook_fixture()
+        other.objects = {"AFC": {"multiple_tool_mapping": True}, "print_stats": {"state": "standby"}}
+        self.assertEqual(self.manager.read(Moonraker(other.url, timeout=2)).switches, [])
+        self.assertEqual(len(self.manager.read(self.client).switches), 1)
+
+    def test_a_list_that_does_not_answer_is_asked_again(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        client = Moonraker(self.fake.url, timeout=2)
+        answers = iter([MoonrakerError("no list")])
+        real = client.objects_list
+
+        def objects_list():
+            error = next(answers, None)
+            if error is not None:
+                raise error
+            return real()
+        client.objects_list = objects_list
+        self.assertEqual(self.manager.read(client).switches, [])
+        self.assertEqual(len(self.manager.read(client).switches), 1)
 
     def test_no_afc(self):
         self.fake.webhook = None

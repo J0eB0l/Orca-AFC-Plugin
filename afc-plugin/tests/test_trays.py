@@ -5,7 +5,7 @@ import unittest
 
 import fake_orca  # noqa: F401
 from orca_afc import trays
-from orca_afc.protocol import Dryer, Lane, Snapshot, Unit
+from orca_afc.protocol import Dryer, Lane, Snapshot, Switch, SwitchInlet, SwitchOutlet, Unit
 
 
 def loaded(name, tool, **values):
@@ -217,6 +217,157 @@ class UnitLayoutTest(unittest.TestCase):
         shown = trays.layout(snap, by_unit=True)
         self.assertFalse(shown.by_unit)
         self.assertEqual((shown.tool(3, 0), shown.tray(12)), (12, 12))
+
+
+def switch_snapshot():
+    """A Bambu AMS on inlet A of a filament switch, a Box Turtle and a Bambu
+    AMS HT on inlet B, extruder4 and extruder5 behind its outlets, and an ACE
+    on no switch."""
+    lanes = [loaded("lane4", 4, unit="AMS_1", extruder="extruder4", extruder_index=4),
+             Lane(name="lane5", maps=["T5"], unit="AMS_1", extruder="extruder4", extruder_index=4),
+             loaded("lane8", 8, unit="Turtle_1", extruder="extruder5", extruder_index=5),
+             loaded("lane9", 9, unit="Turtle_1", extruder="extruder5", extruder_index=5, color="#FF8800",
+                    tool_loaded=True),
+             loaded("lane12", 12, unit="Bambu_AMS_1", extruder="extruder5", extruder_index=5),
+             loaded("ace0", 0, unit="Ace_1"), loaded("ace1", 1, unit="Ace_1")]
+    units = [Unit("AMS_1", "BambuAMS", ["lane4", "lane5"]), Unit("Turtle_1", "Box_Turtle", ["lane8", "lane9"]),
+             Unit("Bambu_AMS_1", "BambuAMS", ["lane12"]), Unit("Ace_1", "ACE", ["ace0", "ace1"])]
+    switch = Switch("Switch_1", True, True,
+                    [SwitchInlet("A", "A", False, "", ["AMS_1"]),
+                     SwitchInlet("B", "B", True, "lane9", ["Turtle_1", "Bambu_AMS_1"])],
+                    [SwitchOutlet("A", "extruder4"), SwitchOutlet("B", "extruder5")],
+                    {"lane4": "extruder4", "lane5": "extruder4", "lane8": "extruder5", "lane9": "extruder5",
+                     "lane12": "extruder5"})
+    return Snapshot(present=True, current_lane="lane9", lanes=lanes, units=units, switches=[switch])
+
+
+class SwitchTest(unittest.TestCase):
+    def trays_by_tool(self, snap, by_unit=True):
+        return {t["tool"]: t for u in trays.ams_json(snap, {}, by_unit=by_unit)["ams"] for t in u["tray"]}
+
+    def test_switches(self):
+        self.assertEqual(json.loads(json.dumps(trays.switches_json(switch_snapshot()))), [{
+            "name": "Switch_1", "answering": True, "calibrated": True,
+            "inlets": [{"letter": "A", "outlet": "A", "filament": False, "lane": "", "color": "", "units": ["AMS_1"]},
+                       {"letter": "B", "outlet": "B", "filament": True, "lane": "lane9", "color": "FF8800FF",
+                        "units": ["Turtle_1", "Bambu_AMS_1"]}],
+            "outlets": [{"letter": "A", "extruder": "extruder4", "toolhead": 4},
+                        {"letter": "B", "extruder": "extruder5", "toolhead": 5}],
+            "text": "Switch_1\n"
+                    "Inlet A (AMS_1): outlet A, extruder4, empty\n"
+                    "Inlet B (Turtle_1, Bambu_AMS_1): outlet B, extruder5, lane9 loaded"}])
+        self.assertEqual(trays.switches_json(Snapshot(present=True)), [])
+
+    def test_a_switch_that_does_not_answer(self):
+        snap = switch_snapshot()
+        switch = snap.switches[0]
+        switch.answering = False
+        for inlet in switch.inlets:
+            inlet.outlet, inlet.filament = "", False
+        entry, = trays.switches_json(snap)
+        self.assertFalse(entry["answering"])
+        self.assertEqual([(i["outlet"], i["filament"], i["lane"], i["color"]) for i in entry["inlets"]],
+                         [("", False, "", ""), ("", False, "lane9", "FF8800FF")])
+        self.assertEqual(entry["text"], "Switch_1\n"
+                                        "Inlet A (AMS_1): moving, empty\n"
+                                        "Inlet B (Turtle_1, Bambu_AMS_1): moving, lane9 loaded\n"
+                                        "The switch is not answering")
+        switch.calibrated = False
+        self.assertEqual(trays.switch_text(switch).splitlines()[-2:],
+                         ["The switch is not answering", "Tube lengths not set: run AFC Calibration"])
+
+    def test_an_outlet_not_in_use(self):
+        snap = switch_snapshot()
+        switch = snap.switches[0]
+        switch.outlets[1].extruder = ""
+        switch.inlets[0].filament, switch.inlets[1].lane, switch.inlets[1].units = True, "", []
+        entry, = trays.switches_json(snap)
+        self.assertEqual(entry["outlets"], [{"letter": "A", "extruder": "extruder4", "toolhead": 4},
+                                            {"letter": "B", "extruder": "", "toolhead": -1}])
+        self.assertEqual(entry["inlets"][1], {"letter": "B", "outlet": "B", "filament": True, "lane": "",
+                                              "color": "", "units": []})
+        self.assertEqual(entry["text"], "Switch_1\n"
+                                        "Inlet A (AMS_1): outlet A, extruder4, holds filament\n"
+                                        "Inlet B (no unit): outlet B, no extruder, holds filament")
+
+    def test_text_of_a_switch_not_calibrated(self):
+        switch = switch_snapshot().switches[0]
+        switch.calibrated = False
+        switch.inlets[0].outlet, switch.inlets[1].outlet = "B", "A"  # crossed
+        self.assertEqual(trays.switch_text(switch), "Switch_1\n"
+                                                    "Inlet A (AMS_1): outlet B, extruder5, empty\n"
+                                                    "Inlet B (Turtle_1, Bambu_AMS_1): outlet A, extruder4, lane9 loaded\n"
+                                                    "Tube lengths not set: run AFC Calibration")
+
+    def test_color_of_the_lane_loaded_through_an_inlet(self):
+        snap = switch_snapshot()
+        inlet = snap.switches[0].inlets[1]
+        for lane, color in (("lane9", "FF8800FF"), ("lane8", ""), ("lane77", ""), ("", "")):
+            inlet.lane = lane  # lane8 has no color; lane77 is no lane of AFC's
+            with self.subTest(lane=lane):
+                self.assertEqual(trays.switches_json(snap)[0]["inlets"][1]["color"], color)
+        self.assertEqual(self.trays_by_tool(snap)[8]["tray_color"], "00000000")
+
+    def test_units_say_their_switch_inlet(self):
+        snap = switch_snapshot()
+        ams = trays.ams_json(snap, {}, by_unit=True)["ams"]
+        self.assertEqual([(u["unit_name"], u.get("switch"), u.get("switch_inlet")) for u in ams],
+                         [("AMS_1", 0, "A"), ("Turtle_1", 0, "B"), ("Ace_1", None, None), ("Bambu_AMS_1", 0, "B")])
+        self.assertGreaterEqual(int(ams[3]["id"]), trays.HT_ID)  # the unit of one lane, an AMS HT
+        self.assertNotIn("switch", ams[2])
+        self.assertNotIn("switch_inlet", ams[2])
+        # By T number a unit on screen is no AFC unit.
+        for unit in trays.ams_json(snap, {})["ams"]:
+            self.assertNotIn("switch", unit)
+            self.assertNotIn("switch_inlet", unit)
+
+    def test_each_part_of_a_split_unit_and_a_second_switch(self):
+        snap = switch_snapshot()
+        names = ["lane%d" % n for n in (13, 14, 15)]
+        snap.lanes += [loaded(name, 13 + i, unit="Turtle_1") for i, name in enumerate(names)]
+        snap.find_unit("Turtle_1").lanes += names
+        snap.switches.append(Switch("Switch_2", True, True, [SwitchInlet("A", "A"), SwitchInlet("B", "B", units=["Ace_1"])],
+                                    [SwitchOutlet("A", "extruder"), SwitchOutlet("B", "extruder1")]))
+        ams = trays.ams_json(snap, {}, by_unit=True)["ams"]
+        self.assertEqual([(u["unit_name"], u.get("switch"), u.get("switch_inlet")) for u in ams],
+                         [("AMS_1", 0, "A"), ("Turtle_1-1", 0, "B"), ("Turtle_1-2", 0, "B"), ("Ace_1", 1, "B"),
+                          ("Bambu_AMS_1", 0, "B")])
+        self.assertEqual([entry["name"] for entry in trays.switches_json(snap)], ["Switch_1", "Switch_2"])
+
+    def test_trays_say_the_toolheads_of_their_switch(self):
+        snap = switch_snapshot()
+        for by_unit in (True, False):
+            by_tool = self.trays_by_tool(snap, by_unit)
+            with self.subTest(by_unit=by_unit):
+                self.assertEqual({tool: tray.get("switch_toolheads") for tool, tray in by_tool.items()
+                                  if "switch_toolheads" in tray},
+                                 {4: [4, 5], 5: [4, 5], 8: [4, 5], 9: [4, 5], 12: [4, 5]})  # lane5's empty tray too
+                self.assertNotIn("switch_toolheads", by_tool[0])  # the ACE is on no switch
+        snap.switches[0].outlets = [SwitchOutlet("A", "extruder5"), SwitchOutlet("B", "extruder4")]
+        self.assertEqual(self.trays_by_tool(snap)[9]["switch_toolheads"], [5, 4])  # outlet A's toolhead first
+
+    def test_no_toolheads_from_a_switch_that_cannot_move_the_lane(self):
+        def changed(**values):
+            snap = switch_snapshot()
+            for key, value in values.items():
+                setattr(snap.switches[0], key, value)
+            return snap
+
+        for name, snap in (("not answering", changed(answering=False)), ("not calibrated", changed(calibrated=False)),
+                           ("an outlet not in use", changed(outlets=[SwitchOutlet("A", "extruder4"), SwitchOutlet("B")])),
+                           ("an outlet's extruder is no toolhead",
+                            changed(outlets=[SwitchOutlet("A", "extruder4"), SwitchOutlet("B", "spare")])),
+                           ("lanes on no switch", changed(lanes={})), ("no outlets", changed(outlets=[]))):
+            with self.subTest(name):
+                self.assertFalse([t for t in self.trays_by_tool(snap).values() if "switch_toolheads" in t])
+        plain = switch_snapshot()
+        plain.switches = []
+        with_switch, without = trays.ams_json(switch_snapshot(), {}, by_unit=True), trays.ams_json(plain, {}, by_unit=True)
+        for unit in with_switch["ams"]:
+            unit.pop("switch", None), unit.pop("switch_inlet", None)
+            for tray in unit["tray"]:
+                tray.pop("switch_toolheads", None)
+        self.assertEqual(with_switch, without)  # nothing else changes with a switch
 
 
 class RefillGroupTest(unittest.TestCase):

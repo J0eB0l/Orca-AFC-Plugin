@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import runout
-from .protocol import Dryer, Lane, Snapshot, material_key, tool_number
+from .protocol import Dryer, Lane, Snapshot, Switch, material_key, tool_number
 
 # OrcaSlicer reads the tray presence bits with stol(), which a bit past 30
 # overflows on Windows (32-bit long), and the bit test itself shifts an int.
@@ -202,13 +202,18 @@ def remaining(lane: Lane) -> int:
     return max(0, min(100, int(round(lane.weight / initial * 100))))
 
 
-def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None = None, tool: int = -1) -> dict:
+def tray_json(slot: int, lane: Lane | None, filament_id: str, extra: dict | None = None, tool: int = -1,
+              switch=()) -> dict:
     """A tray of the "ams" object, T(tool). `extra` adds the spool and preset
-    fields the agent works out for a loaded tray (see spool_json())."""
+    fields the agent works out for a loaded tray (see spool_json()), `switch`
+    is the lane's switch_toolheads()."""
     tray = {"id": str(slot), "tag_uid": "0000000000000000"}
     if tool >= 0:
         # The AFC build of OrcaSlicer syncs the tray to that T number's slot.
         tray["tool"] = tool
+    if switch:
+        # ... and lets Load pick which of the two toolheads the lane's filament switch feeds it to.
+        tray["switch_toolheads"] = list(switch)
     if lane is None or not lane.has_filament:
         tray.update(tray_info_idx="", tray_type="", tray_color="00000000", tray_slot_placeholder="1")
         return tray
@@ -313,7 +318,8 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
                 tray_bits |= 1 << bit
             if tool in reading:
                 reading_bits |= 1 << bit
-            slots.append(tray_json(slot, lane, filament_ids.get(tool, ""), extras.get(tool), tool))
+            slots.append(tray_json(slot, lane, filament_ids.get(tool, ""), extras.get(tool), tool,
+                                   switch_toolheads(snapshot, lane)))
         kind = AMS_HT if box.single else AMS_2_PRO if dryer is not None else AMS
         # OrcaSlicer draws an AMS Lite's four trays in a square, and none at all for fewer.
         if kind == AMS and unit is not None and unit.model == LITE and len(box.tools) == 4:
@@ -339,6 +345,8 @@ def ams_json(snapshot: Snapshot, filament_ids: dict, extras: dict | None = None,
             entry["dryer"] = False
         else:
             entry["humidity"] = "0"  # an AMS shows a humidity level 1-5 (5 when not sent)
+        # The filament switch inlet the AFC unit is plumbed into, on each of the units that show it.
+        entry.update(unit_switch(snapshot, box.unit))
         units.append(entry)
     now = "%d" % shown.tray(current_tray(snapshot))
     # calibrate_remain_flag: OrcaSlicer draws how full each spool is only while the printer says it tracks it.
@@ -417,6 +425,66 @@ def lanes_json(snapshot: Snapshot, shown: Layout) -> list:
                     "tools": [tool_number(m) for m in lane.maps if tool_number(m) >= 0],
                     "spool_id": lane.spool_id, "nozzle_temp": lane.nozzle_temp, "bed_temp": lane.bed_temp,
                     "online": unit.online if unit else True})
+    return out
+
+
+def switch_toolheads(snapshot: Snapshot, lane: Lane | None) -> list:
+    """The two toolheads the filament switch of a lane can feed it to, outlet
+    A's first. Empty for a lane on no switch, and while its switch cannot
+    move it: not answering, not calibrated, or an outlet not in use."""
+    switch = snapshot.switch_of(lane.name) if lane is not None else None
+    if switch is None or not switch.answering or not switch.calibrated:
+        return []
+    heads = switch.toolheads()
+    return heads if len(heads) == 2 and min(heads) >= 0 else []
+
+
+def unit_switch(snapshot: Snapshot, unit: str) -> dict:
+    """{"switch", "switch_inlet"} of an AFC unit plumbed into a filament
+    switch: the switch's place in switches_json() and its inlet's letter.
+    Empty for a unit on none."""
+    for index, switch in enumerate(snapshot.switches if unit else ()):
+        for inlet in switch.inlets:
+            if unit in inlet.units:
+                return {"switch": index, "switch_inlet": inlet.letter}
+    return {}
+
+
+def switch_text(switch: Switch) -> str:
+    """A filament switch in words, a line for each inlet: its units, where it
+    exits now and what it holds, then what keeps the switch from working."""
+    extruders = {outlet.letter: outlet.extruder for outlet in switch.outlets}
+    lines = [switch.name]
+    for inlet in switch.inlets:
+        where = "outlet %s, %s" % (inlet.outlet, extruders.get(inlet.outlet) or "no extruder") if inlet.outlet else "moving"
+        holds = inlet.lane + " loaded" if inlet.lane else "holds filament" if inlet.filament else "empty"
+        lines.append("Inlet %s (%s): %s, %s" % (inlet.letter, ", ".join(inlet.units) or "no unit", where, holds))
+    if not switch.answering:
+        lines.append("The switch is not answering")
+    if not switch.calibrated:
+        lines.append("Tube lengths not set: run AFC Calibration")
+    return "\n".join(lines)
+
+
+def switches_json(snapshot: Snapshot) -> list:
+    """Every filament switch, for the AFC build of OrcaSlicer, which draws it
+    between its units and its toolheads: whether it answers and is
+    calibrated, each inlet's units, the outlet it exits at now ("" when not
+    known), whether it holds filament, and its lane loaded in a toolhead with
+    that lane's color ("" for no lane or no color), each outlet's extruder
+    ("" for none) and toolhead (-1 for none), and switch_text() for its tooltip."""
+    out = []
+    for switch in snapshot.switches:
+        inlets = []
+        for inlet in switch.inlets:
+            lane = snapshot.find_lane(inlet.lane) if inlet.lane else None
+            inlets.append({"letter": inlet.letter, "outlet": inlet.outlet, "filament": inlet.filament,
+                           "lane": inlet.lane, "color": _color(lane.color) if lane is not None else "",
+                           "units": list(inlet.units)})
+        outlets = [{"letter": outlet.letter, "extruder": outlet.extruder, "toolhead": toolhead}
+                   for outlet, toolhead in zip(switch.outlets, switch.toolheads())]
+        out.append({"name": switch.name, "answering": switch.answering, "calibrated": switch.calibrated,
+                    "inlets": inlets, "outlets": outlets, "text": switch_text(switch)})
     return out
 
 

@@ -53,8 +53,10 @@ rewrites the file for what AFC does with it:
 
 Only Klipper files are changed. Apart from that rewrite, the agent adds
 moonraker-timelapse's frames to a file when the print dialog's Timelapse switch
-is on (add_timelapse_frames()). Nothing here talks to the network or to
-OrcaSlicer, so all of it is unit-tested.
+is on (add_timelapse_frames()), and on a printer with a filament switch the
+lines that put each lane behind it on the toolhead its filament was sliced for
+(add_switch_lines()). Nothing here talks to the network or to OrcaSlicer, so
+all of it is unit-tested.
 """
 
 from __future__ import annotations
@@ -63,7 +65,7 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from .protocol import Snapshot
+from .protocol import Snapshot, extruder_index_from_name, is_safe_lane_name, switch_assign_gcode
 
 CONFIG_START = "; CONFIG_BLOCK_START"
 CONFIG_END = "; CONFIG_BLOCK_END"
@@ -90,6 +92,8 @@ _PURIFIER_LINE = re.compile(r"^[ \t]*SET_PURIFIER_MODE(?=[ \t;\r\n]|$)", re.I | 
 _FILAMENT_USED = re.compile(r"^; filament used \[mm\] = (.*)$", re.M)
 _FILAMENT_GRAMS = re.compile(r"^; filament used \[g\] = (.*)$", re.M)
 _ANY_T_LINE = re.compile(r"^[ \t]*T(\d{1,3})(?=[ \t;\r\n]|$)", re.M)
+# A line add_switch_lines() wrote, as protocol.switch_assign_gcode() words it for a T number.
+_SWITCH_LINE = re.compile(r"^AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T\d+ EXTRUDER=[A-Za-z0-9_\-]+ UNLOAD=1[ \t]*(\r?\n|\Z)", re.M)
 _CHAMBER_LINE = re.compile(r"^[ \t]*M1([49])1(?=[ \t;\r\n]|$)", re.I)
 # The cavity fan OrcaSlicer runs around M191 when the printer has an auxiliary fan.
 _AUX_FAN_ON = re.compile(r"^[ \t]*M106 P2 S255[ \t]*\r?\n$")
@@ -267,13 +271,25 @@ def printed_tools(text: str) -> dict:
     return {filament: int(tool) for filament, tool in enumerate(tools) if tool.isdigit()}
 
 
+def tool_filaments(text: str) -> dict:
+    """T number -> the filaments a file prints with it: its filaments at their
+    (renumbered) tools, else the tools it changes to with the filaments a
+    renumbering put there."""
+    tools = printed_tools(text)
+    out = {}
+    if _FILAMENT_USED.search(text):
+        for filament in filaments_used(text):
+            out.setdefault(tools.get(filament, filament), []).append(filament)
+    else:
+        for tool in filaments_used(text):
+            out[tool] = [filament for filament, number in tools.items() if number == tool] or [tool]
+    return out
+
+
 def tools_printed(text: str) -> list:
     """The T numbers a file prints with: its filaments' (renumbered) tools,
     else the tools it changes to."""
-    if not _FILAMENT_USED.search(text):
-        return filaments_used(text)
-    tools = printed_tools(text)
-    return sorted({tools.get(filament, filament) for filament in filaments_used(text)})
+    return sorted(tool_filaments(text))
 
 
 def tool_usage(text: str) -> dict:
@@ -543,6 +559,56 @@ def add_timelapse_frames(text: str) -> str:
     if _TAKES_FRAMES.search(text):
         return text
     return _LAYER_CHANGE.sub(lambda m: TIMELAPSE_FRAME + m.group(1) + m.group(0), text)
+
+
+def switch_extruders(tools: dict, snapshot: Snapshot, settings: FileSettings) -> dict:
+    """T number -> the AFC extruder its lane behind a filament switch goes to
+    for a file, in the order of the T numbers: the toolhead its filaments were
+    sliced for (filament_toolhead). `tools` is the file's T number -> the
+    filaments it prints with it. Leaves out a T number sliced for no toolhead
+    the file names, one whose filaments were sliced for different toolheads
+    and a toolhead the switch does not feed."""
+    out = {}
+    for tool, filaments in sorted(tools.items()):
+        lane = snapshot.lane_for_tool(tool)
+        switch = snapshot.switch_of(lane.name) if lane is not None else None
+        if switch is None:
+            continue
+        heads = {settings.sliced_toolhead(filament) for filament in filaments}
+        extruder = switch.extruder_for(heads.pop()) if len(heads) == 1 else ""
+        if is_safe_lane_name(extruder):
+            out[tool] = extruder
+    return out
+
+
+def plan_switches(plan: Plan, text: str, snapshot: Snapshot, settings: FileSettings) -> None:
+    """Put each filament a file prints whose lane is behind a filament switch
+    on the toolhead the file's switch lines send that lane to
+    (switch_extruders()), so its purges are worked out for that toolhead."""
+    tools = {}
+    for filament in sorted(filament for filaments in tool_filaments(text).values() for filament in filaments):
+        tools.setdefault(plan.tools.get(filament, filament), []).append(filament)
+    for tool, extruder in switch_extruders(tools, snapshot, settings).items():
+        for filament in tools[tool]:
+            plan.toolheads[filament] = extruder_index_from_name(extruder)
+
+
+def switch_lines(text: str, snapshot: Snapshot, settings: FileSettings) -> list:
+    """An AFC_BRIDGEBOX_SWITCH_ASSIGN line for each T number a file prints
+    whose lane is behind a filament switch, in the order of the T numbers: it
+    puts the lane on the toolhead its filament was sliced for
+    (switch_extruders()), unloading it first where it is loaded on the other."""
+    return [switch_assign_gcode(extruder, tool=tool)
+            for tool, extruder in switch_extruders(tool_filaments(text), snapshot, settings).items()]
+
+
+def add_switch_lines(text: str, snapshot: Snapshot, settings: FileSettings) -> str:
+    """The file with its switch_lines() before its first command, in place of
+    those an earlier print left there. A file that prints no lane behind a
+    filament switch comes back as it was."""
+    text = _SWITCH_LINE.sub("", text)
+    lines = switch_lines(text, snapshot, settings)
+    return insert_after_header(text, ("\r\n" if "\r\n" in text else "\n").join(lines)) if lines else text
 
 
 def insert_after_header(text: str, line: str) -> str:

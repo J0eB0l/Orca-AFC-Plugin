@@ -5,7 +5,7 @@ import unittest
 
 import fake_orca  # noqa: F401  (puts afc-plugin/ on sys.path)
 from orca_afc import gcode as g
-from orca_afc.protocol import Lane, Snapshot
+from orca_afc.protocol import Lane, Snapshot, Switch, SwitchInlet, SwitchOutlet
 
 # Three filaments; the flush table holds one 3x3 block (one nozzle) or two (two nozzles).
 FLUSH_ONE = [0, 100, 200,
@@ -310,6 +310,141 @@ class HeaderTest(unittest.TestCase):
     def test_windows_newlines_and_comment_only_files(self):
         self.assertEqual(g.insert_after_header("; a\r\nG28\r\n", "M1"), "; a\r\nM1\r\nG28\r\n")
         self.assertEqual(g.insert_after_header("; only", "M1"), "; only\nM1\n")
+
+
+def switch_snapshot():
+    """T0, T1 and T7 on lanes behind a filament switch that feeds extruder4 and
+    extruder5, T2 on a lane of toolhead 0."""
+    def lane(name, tool, extruder):
+        return Lane(name=name, maps=["T%d" % tool], extruder=extruder, extruder_index=int(extruder[8:] or 0))
+    switch = Switch("Switch_1", True, True, [SwitchInlet("A", "A"), SwitchInlet("B", "B")],
+                    [SwitchOutlet("A", "extruder4"), SwitchOutlet("B", "extruder5")],
+                    {"lane4": "extruder4", "lane8": "extruder5", "lane9": "extruder5"})
+    return Snapshot(present=True, switches=[switch], lanes=[
+        lane("lane4", 0, "extruder4"), lane("lane8", 1, "extruder5"), lane("lane1", 2, "extruder"),
+        lane("lane9", 7, "extruder5")])
+
+
+def assign(tool, extruder):
+    return "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T%d EXTRUDER=%s UNLOAD=1\n" % (tool, extruder)
+
+
+class SwitchLinesTest(unittest.TestCase):
+    HEAD = "; HEADER_BLOCK_START\n; x\n; HEADER_BLOCK_END\n"
+    BODY = "PRINT_START TOOL=1\nT1\nG1 X1 E1\nT0\nG1 X2 E1\nT2\nG1 X3 E1\n"
+
+    def sliced(self, toolheads, head=HEAD, body=BODY):
+        """The file with its filaments sliced for those toolheads."""
+        return head + body + config_block(extra="; filament_toolhead = %s\n" % toolheads if toolheads else "")
+
+    def added(self, text, snap=None):
+        return g.add_switch_lines(text, snap or switch_snapshot(), g.FileSettings.from_config(g.read_config_block(text)))
+
+    def planned(self, toolheads):
+        """The toolhead each filament's purges are worked out for."""
+        text = self.sliced(toolheads)
+        settings = g.FileSettings.from_config(g.read_config_block(text))
+        plan = g.plan_for(switch_snapshot(), 3, None, settings)
+        self.assertEqual(plan.toolheads, {0: 4, 1: 5, 2: 0})  # where the lanes are now
+        g.plan_switches(plan, text, switch_snapshot(), settings)
+        return plan.toolheads
+
+    def test_purges_are_planned_for_the_toolhead_a_line_sends_its_lane_to(self):
+        self.assertEqual(self.planned("5,4,0"), {0: 5, 1: 4, 2: 0})
+        self.assertEqual(self.planned("5,5,0"), {0: 5, 1: 5, 2: 0})
+
+    def test_purges_stay_where_a_lane_is_when_no_line_moves_it(self):
+        self.assertEqual(self.planned(""), {0: 4, 1: 5, 2: 0})       # sliced for no toolhead the file names
+        self.assertEqual(self.planned("0,4,5"), {0: 4, 1: 4, 2: 0})  # toolhead 0 is no outlet; T2 is on no switch
+
+    def test_a_line_for_each_t_number_behind_a_switch(self):
+        # In the order of the T numbers, before the first command; T2's lane is on no switch.
+        self.assertEqual(self.added(self.sliced("5,4,0")),
+                         self.HEAD + assign(0, "extruder5") + assign(1, "extruder4") + self.sliced("5,4,0", head=""))
+        # Also for the extruder a lane is on now: it may not be when the file prints.
+        self.assertEqual(self.added(self.sliced("4,5,0")),
+                         self.HEAD + assign(0, "extruder4") + assign(1, "extruder5") + self.sliced("4,5,0", head=""))
+
+    def test_a_switch_that_is_not_calibrated_or_not_answering(self):
+        snap = switch_snapshot()
+        snap.switches[0].calibrated = snap.switches[0].answering = False
+        self.assertEqual(self.added(self.sliced("5,4,0"), snap).splitlines()[3:5],
+                         [assign(0, "extruder5").strip(), assign(1, "extruder4").strip()])
+
+    def test_no_line_for_a_toolhead_that_is_not_known(self):
+        for toolheads in ("", "-1,-1,0", "x,,0"):
+            text = self.sliced(toolheads)
+            with self.subTest(toolheads=toolheads):
+                self.assertEqual(self.added(text), text)
+        # Only filament 0's is known.
+        self.assertEqual(self.added(self.sliced("5")), self.HEAD + assign(0, "extruder5") + self.sliced("5", head=""))
+
+    def test_no_line_for_a_toolhead_the_switch_does_not_feed(self):
+        text = self.sliced("0,1,0")
+        self.assertEqual(self.added(text), text)
+        text = self.sliced("0,4,5")  # T2 sliced for an outlet's toolhead, its lane on no switch
+        self.assertEqual(self.added(text), self.HEAD + assign(1, "extruder4") + self.sliced("0,4,5", head=""))
+
+    def test_no_line_for_an_outlet_not_in_use(self):
+        snap = switch_snapshot()
+        snap.switches[0].outlets[0].extruder = ""
+        text = self.sliced("5,4,0")
+        self.assertEqual(self.added(text, snap), self.HEAD + assign(0, "extruder5") + self.sliced("5,4,0", head=""))
+        snap.switches[0].outlets[1].extruder = "extruder5;M112"
+        self.assertEqual(self.added(text, snap), text)
+
+    def test_a_file_without_a_lane_behind_a_switch_is_unchanged(self):
+        for body in ("PRINT_START\nT2\nG1 X1 E1\n", "PRINT_START\nG1 X1 E1\n", "T2\nT5\n",
+                     "T0\nT1\nT2\n; filament used [mm] = 0.00, 0.00, 3.20\n"):
+            text = self.sliced("5,4,5", body=body)
+            with self.subTest(body=body):
+                self.assertEqual(self.added(text), text)
+        text = self.sliced("5,4,0")
+        plain = switch_snapshot()
+        plain.switches[0].lanes = {}
+        self.assertEqual(self.added(text, plain), text)
+
+    def test_the_t_numbers_of_a_renumbered_file(self):
+        # Filament 0 goes to T7 and filament 2 to T0: each line names the T number the file prints.
+        text = self.sliced("5,4,4", body=self.BODY + "; filament used [mm] = 10.00, 0.00, 3.20\n")
+        text = g.transform(text, g.Plan(tools={0: 7, 2: 0})).text
+        self.assertEqual(g.tool_filaments(text), {7: [0], 0: [2]})
+        out = self.added(text)
+        self.assertEqual(out, self.HEAD + assign(0, "extruder4") + assign(7, "extruder5") + text[len(self.HEAD):])
+        self.assertEqual([line for line in out.splitlines() if line[:1] == "T"], ["T1", "T7", "T0"])
+
+    def test_filaments_of_one_t_number(self):
+        record = "; AFC filament tools = 7,7,2\n"
+        text = self.HEAD + "T7\nG1 X1 E1\n" + record + config_block(extra="; filament_toolhead = 5,5,0\n")
+        self.assertEqual(g.tool_filaments(text), {7: [0, 1]})
+        self.assertEqual(self.added(text), self.HEAD + assign(7, "extruder5") + text[len(self.HEAD):])
+        # Sliced for both toolheads of the switch, the lane can be on only one.
+        text = text.replace("filament_toolhead = 5,5,0", "filament_toolhead = 5,4,0")
+        self.assertEqual(self.added(text), text)
+        text += "; filament used [mm] = 0.00, 12.00, 0.00\n"  # only filament 1 is printed
+        self.assertEqual(self.added(text), self.HEAD + assign(7, "extruder4") + text[len(self.HEAD):])
+
+    def test_a_file_printed_before_gets_this_prints_lines(self):
+        first = self.added(self.sliced("5,4,0"))
+        self.assertEqual(self.added(first), first)
+        # Now T0's lane is on no switch and T1's switch feeds other toolheads.
+        snap = switch_snapshot()
+        del snap.switches[0].lanes["lane4"]
+        self.assertEqual(self.added(first, snap), self.HEAD + assign(1, "extruder4") + self.sliced("5,4,0", head=""))
+        snap.switches[0].outlets = [SwitchOutlet("A", "extruder2"), SwitchOutlet("B", "extruder3")]
+        self.assertEqual(self.added(first, snap), self.sliced("5,4,0"))
+        # A line of the same command written another way is the file's own.
+        own = self.sliced("5,4,0", body="AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane4 EXTRUDER=extruder5 UNLOAD=1\n"
+                                        "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T0 EXTRUDER=extruder5\n" + self.BODY)
+        self.assertEqual(self.added(own, snap), own)
+        self.assertEqual(self.added(own), self.HEAD + assign(0, "extruder5") + assign(1, "extruder4") + own[len(self.HEAD):])
+
+    def test_keeps_windows_line_ends(self):
+        text = self.sliced("5,4,0").replace("\n", "\r\n")
+        out = self.added(text)
+        self.assertEqual(out, (self.HEAD + assign(0, "extruder5") + assign(1, "extruder4")).replace("\n", "\r\n")
+                         + text[len(self.HEAD.replace("\n", "\r\n")):])
+        self.assertEqual(self.added(out), out)
 
 
 # A U1 with "Support air filtration" on; filaments 0-2 soften at 45, 70 and 110 °C.

@@ -55,6 +55,19 @@ def dryer_units():
     return afc
 
 
+def switch_status():
+    """An AFC_BridgeBox_switch object: webhook_fixture()'s units on its inlets,
+    its extruders behind its outlets."""
+    return {"chain": "Chain_1", "answering": True, "calibrated": True,
+            "inlets": {"A": {"outlet": "A", "target": "A", "filament": False, "units": ["Turtle_1"], "lane": None},
+                       "B": {"outlet": "B", "target": "B", "filament": True, "units": ["Bambu_AMS_1"],
+                             "lane": "lane5"}},
+            "outlets": {"A": "extruder", "B": "extruder1"},
+            "lengths": {"A": 850.0, "B": 1010.0},
+            "lanes": {"lane1": "extruder", "lane2": "extruder", "lane5": "extruder1", "lane6": "extruder1"},
+            "unconfirmed": []}
+
+
 class WebhookTest(unittest.TestCase):
     def test_units_and_lanes(self):
         s = parsed()
@@ -468,6 +481,97 @@ class DryerTest(unittest.TestCase):
                               ("Ace2_1", {"action": "boost"})):
             with self.subTest(unit=unit, request=request), self.assertRaises(AFCError):
                 p.build_dry_gcode(s, unit, request)
+
+
+class SwitchTest(unittest.TestCase):
+    NAME = "AFC_BridgeBox_switch Switch_1"
+
+    def read(self, status):
+        s = parsed()
+        p.merge_switch_status({"status": {self.NAME: status}}, s)
+        return s
+
+    def test_objects_to_query(self):
+        objects = ["AFC", "AFC_BridgeBox Bridge_1", self.NAME, "AFC_BridgeBox_switch Switch_2",
+                   "AFC_BridgeBox_switch ", "AFC_BridgeBox_switch", None, 7]
+        fields = ["answering", "calibrated", "inlets", "outlets", "lanes"]
+        self.assertEqual(p.switch_objects_query({"objects": objects}),
+                         {self.NAME: fields, "AFC_BridgeBox_switch Switch_2": fields})
+        for answer in ({"objects": ["AFC", "AFC_BoxTurtle Turtle_1"]}, {"objects": None}, {}, None, "objects"):
+            with self.subTest(answer=answer):
+                self.assertEqual(p.switch_objects_query(answer), {})
+
+    def test_read(self):
+        s = self.read(switch_status())
+        switch, = s.switches
+        self.assertEqual((switch.name, switch.answering, switch.calibrated), ("Switch_1", True, True))
+        self.assertEqual(switch.inlets, [p.SwitchInlet("A", "A", False, "", ["Turtle_1"]),
+                                         p.SwitchInlet("B", "B", True, "lane5", ["Bambu_AMS_1"])])
+        self.assertEqual(switch.outlets, [p.SwitchOutlet("A", "extruder"), p.SwitchOutlet("B", "extruder1")])
+        self.assertEqual(switch.lanes, {"lane1": "extruder", "lane2": "extruder", "lane5": "extruder1",
+                                        "lane6": "extruder1"})
+        self.assertEqual(switch.toolheads(), [0, 1])
+        self.assertEqual([switch.extruder_for(head) for head in (0, 1, 2, -1)], ["extruder", "extruder1", "", ""])
+        self.assertIs(s.switch_of("lane6"), switch)
+        self.assertIsNone(s.switch_of("lane9"))
+
+    def test_not_answering(self):
+        status = switch_status()
+        status.update(answering=False, calibrated=False)
+        for inlet in status["inlets"].values():
+            inlet.update(outlet=None, filament=None)
+        switch, = self.read(status).switches
+        self.assertEqual((switch.answering, switch.calibrated), (False, False))
+        self.assertEqual([(i.outlet, i.filament, i.lane, i.units) for i in switch.inlets],
+                         [("", False, "", ["Turtle_1"]), ("", False, "lane5", ["Bambu_AMS_1"])])
+        self.assertEqual(switch.toolheads(), [0, 1])  # its outlets are plumbed all the same
+
+    def test_an_outlet_not_in_use(self):
+        status = switch_status()
+        status["outlets"]["B"] = None
+        status["lanes"]["lane5"] = None
+        switch, = self.read(status).switches
+        self.assertEqual(switch.outlets, [p.SwitchOutlet("A", "extruder"), p.SwitchOutlet("B", "")])
+        self.assertEqual((switch.toolheads(), switch.extruder_for(1), switch.lanes["lane5"]), ([0, -1], "", ""))
+
+    def test_missing_and_odd_keys(self):
+        for status in ({"answering": True}, {"calibrated": 1, "inlets": None, "outlets": None, "lanes": None},
+                       {"answering": True, "inlets": {"A": None, "C": {"units": ["Turtle_1"]}}, "outlets": {"C": "e3"}},
+                       {"answering": "yes", "inlets": ["A"], "outlets": "extruder", "lanes": ["lane1"]}):
+            with self.subTest(status=status):
+                switch, = self.read(status).switches
+                self.assertEqual(switch.inlets, [p.SwitchInlet("A"), p.SwitchInlet("B")])
+                self.assertEqual(switch.outlets, [p.SwitchOutlet("A"), p.SwitchOutlet("B")])
+                self.assertEqual((switch.lanes, switch.toolheads()), ({}, [-1, -1]))
+        odd = switch_status()
+        odd["inlets"]["A"].update(outlet="C", units="Turtle_1", lane=4, filament="true")
+        odd["lanes"] = {"lane1": 0, "": "extruder", 3: "extruder"}
+        switch, = self.read(odd).switches
+        self.assertEqual(switch.inlets[0], p.SwitchInlet("A", "", True, "4", ["Turtle_1"]))
+        self.assertEqual(switch.lanes, {"lane1": ""})
+
+    def test_no_switch(self):
+        fields = dict.fromkeys(p.SWITCH_FIELDS)
+        for answer in ({"status": {self.NAME: fields}}, {"status": {self.NAME: None}}, {"status": {}},
+                       {"status": {"AFC_BridgeBox Bridge_1": switch_status()}}, {}, None, []):
+            with self.subTest(answer=answer):
+                s = parsed()
+                p.merge_switch_status(answer, s)
+                self.assertEqual(s.switches, [])
+        self.assertIsNone(parsed().switch_of("lane5"))
+
+    def test_switches_in_the_order_of_their_names(self):
+        s = parsed()
+        p.merge_switch_status({"AFC_BridgeBox_switch Switch_10": {"answering": True},
+                               "AFC_BridgeBox_switch Switch_2": switch_status()}, s)
+        self.assertEqual([switch.name for switch in s.switches], ["Switch_2", "Switch_10"])
+        self.assertEqual(s.switch_of("lane1").name, "Switch_2")
+
+    def test_assign_gcode(self):
+        self.assertEqual(p.switch_assign_gcode("extruder1", lane="lane2"),
+                         "AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane2 EXTRUDER=extruder1 UNLOAD=1")
+        self.assertEqual(p.switch_assign_gcode("extruder", tool=12),
+                         "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T12 EXTRUDER=extruder UNLOAD=1")
 
 
 class FlowKTest(unittest.TestCase):

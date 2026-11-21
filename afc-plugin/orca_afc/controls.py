@@ -9,7 +9,8 @@ the printer's own G-code:
 - A tray's refresh button reads the spool's tag again with the command of the
   lane's unit, when the lane has a reader.
 - The tray edit popup sets the lane's color and material.
-- Load and Unload swap a lane into its toolhead and pull it back out.
+- Load and Unload swap a lane into its toolhead and pull it back out. Load
+  first puts a lane behind a filament switch on the toolhead picked for it.
 - The camera plays the printer's first webcam that Moonraker lists.
 - The fan popup shows every Klipper fan: the part fan and the fan_generic
   fans it sets, and those Klipper runs itself (heater, controller and
@@ -298,13 +299,30 @@ def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict, filame
     return protocol.build_lane_edit_gcode(snapshot, lane.name, changes) if changes else []
 
 
+def load_switch_gcode(snapshot: Snapshot, lane: Lane, toolhead) -> str:
+    """The command that puts a lane on the toolhead picked for its Load
+    (extruder_id), when its filament switch feeds that toolhead and the lane
+    is on the switch's other extruder; "" for a lane on no switch, a toolhead
+    that is no outlet of it and the extruder the lane is on already."""
+    switch = snapshot.switch_of(lane.name)
+    if switch is None or not protocol._is_integer(toolhead):
+        return ""
+    extruder = switch.extruder_for(toolhead)
+    if not protocol.is_safe_lane_name(extruder) or extruder == (switch.lanes.get(lane.name) or lane.extruder):
+        return ""
+    return protocol.switch_assign_gcode(extruder, lane=lane.name)
+
+
 def change_filament_gcode(snapshot: Snapshot, request: dict, shown: Layout) -> str:
     """Load (a tray) or Unload from the Device tab, whose units are `shown`.
 
     Unload takes the unit's own lane in a toolhead, the active toolhead's lane
     first, and never another unit's: AFC switches to that lane's toolhead
     first when it is docked. With no unit named (the external spool), it
-    takes the active toolhead's lane."""
+    takes the active toolhead's lane.
+
+    Load into a picked toolhead (extruder_id) first moves a lane behind a
+    filament switch to that toolhead's outlet: see load_switch_gcode()."""
     ams_id, slot_id = request.get("ams_id"), request.get("slot_id")
     if slot_id == NO_TRAY or request.get("target") == NO_TRAY:
         trays, box = lanes_by_tray(snapshot), shown.box(ams_id)
@@ -320,7 +338,9 @@ def change_filament_gcode(snapshot: Snapshot, request: dict, shown: Layout) -> s
     lane = lane_of(snapshot, shown.tool(ams_id, slot_id))
     if lane is None:
         raise AFCError("no lane on that tray")
-    return protocol.build_lane_action_gcode(snapshot, lane.name, "load")
+    load = protocol.build_lane_action_gcode(snapshot, lane.name, "load")
+    assign = load_switch_gcode(snapshot, lane, request.get("extruder_id"))
+    return assign + "\n" + load if assign else load
 
 
 # ------------------------------------------------------------------ camera

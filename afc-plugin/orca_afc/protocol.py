@@ -6,7 +6,8 @@ through Klipper, so an AFC printer can have many more filaments than toolheads.
 
 The data comes from Moonraker:
   - /printer/afc/status          AFC's webhook: units -> lanes -> status
-  - /printer/objects/query       the AFC object and per-lane objects (fallback)
+  - /printer/objects/query       the AFC object and per-lane objects (fallback),
+                                 unit dryers and filament switches
   - /server/database/item        namespace "lane_data", keyed by T(n) or lane name
 
 Nothing here talks to the network or to OrcaSlicer, so all of it is unit-tested.
@@ -92,6 +93,48 @@ class Unit:
 
 
 @dataclass
+class SwitchInlet:
+    """An inlet of a filament switch, with the units plumbed into it."""
+    letter: str = ""          # "A" or "B"
+    outlet: str = ""          # the outlet it exits at now, "" while the switch does not answer
+    filament: bool = False    # its sensor sees filament
+    lane: str = ""            # its lane loaded in a toolhead, "" for none
+    units: list = field(default_factory=list)  # unit names
+
+
+@dataclass
+class SwitchOutlet:
+    """An outlet of a filament switch."""
+    letter: str = ""          # "A" or "B"
+    extruder: str = ""        # the AFC extruder it feeds, "" for an outlet not in use
+
+
+@dataclass
+class Switch:
+    """A filament switch (AFC_BridgeBox_switch): units are plumbed into its two
+    inlets and each of its two outlets feeds an AFC extruder, so a lane of
+    those units loads into either. AFC's webhook carries none of this; it
+    comes from the switch's own Klipper object (see switch_objects_query())."""
+    name: str = ""
+    answering: bool = False
+    calibrated: bool = False
+    inlets: list = field(default_factory=list)   # [SwitchInlet], A then B
+    outlets: list = field(default_factory=list)  # [SwitchOutlet], A then B
+    lanes: dict = field(default_factory=dict)    # every lane through the switch -> the AFC extruder it is on now
+
+    def toolheads(self) -> list:
+        """The toolhead index behind each outlet, A's first, -1 for an outlet not in use."""
+        return [extruder_index_from_name(outlet.extruder) for outlet in self.outlets]
+
+    def extruder_for(self, toolhead: int) -> str:
+        """The AFC extruder of the outlet that feeds a toolhead index, "" when neither does."""
+        if toolhead < 0:
+            return ""
+        return next((outlet.extruder for outlet in self.outlets
+                     if extruder_index_from_name(outlet.extruder) == toolhead), "")
+
+
+@dataclass
 class U1PrintOptions:
     """The Snapmaker U1's own print-start switches, from its print_task_config
     object. Other printers have no such object, so `present` stays False."""
@@ -125,6 +168,7 @@ class Snapshot:
     message: str = ""         # AFC's oldest queued error or warning, until AFC_CLEAR_MESSAGE
     message_type: str = ""    # "error" or "warning"
     autocal_k: dict = field(default_factory=dict)  # lane -> K AFC autocal holds for its spool (_read_autocal())
+    switches: list = field(default_factory=list)   # [Switch], the printer's filament switches (merge_switch_status())
     # AMS filament backup, kept in the plugin's database namespace (merge_backup()):
     # a print sent from OrcaSlicer links matching spools, and these are the runout lanes it set.
     filament_backup: bool = True
@@ -140,6 +184,10 @@ class Snapshot:
         """Lane currently mapped to T(tool), or None."""
         key = "T%d" % tool
         return next((lane for lane in self.lanes if key in lane.maps), None)
+
+    def switch_of(self, lane: str) -> Switch | None:
+        """The filament switch a lane goes through, or None."""
+        return next((switch for switch in self.switches if lane in switch.lanes), None)
 
     def max_tool(self) -> int:
         """Highest T(n) mapped to any lane, -1 when none."""
@@ -703,6 +751,68 @@ def merge_dryer_status(status, out: Snapshot) -> None:
         else:
             continue
         unit.dryer = d
+
+
+# ------------------------------------------------------------------ filament switches
+
+SWITCH_PREFIX = "AFC_BridgeBox_switch "  # a filament switch's Klipper object, then its name
+SWITCH_FIELDS = ["answering", "calibrated", "inlets", "outlets", "lanes"]
+SWITCH_LETTERS = ("A", "B")  # its inlets and its outlets
+
+
+def switch_objects_query(objects_list) -> dict:
+    """Klipper objects to query for the filament switches in an objects list
+    answer ({"objects": [...]}): {"AFC_BridgeBox_switch Switch_1": [fields]}.
+    Empty for a printer with none."""
+    lst = objects_list.get("objects") if isinstance(objects_list, dict) else objects_list
+    names = lst if isinstance(lst, list) else []
+    return {name: list(SWITCH_FIELDS) for name in names
+            if isinstance(name, str) and name.startswith(SWITCH_PREFIX) and name[len(SWITCH_PREFIX):].strip()}
+
+
+def _read_switch(name: str, st: dict) -> Switch:
+    """One filament switch from its status object. A key it lacks, or one that
+    is null (an inlet's outlet while the switch does not answer, an outlet
+    not in use), reads as nothing there."""
+    def part(obj, key):
+        value = obj.get(key)
+        return value if isinstance(value, dict) else {}
+
+    inlets, outlets = part(st, "inlets"), part(st, "outlets")
+    switch = Switch(name=name, answering=_bool(st, "answering"), calibrated=_bool(st, "calibrated"))
+    for letter in SWITCH_LETTERS:
+        inlet = part(inlets, letter)
+        outlet = _str(inlet, "outlet")
+        switch.inlets.append(SwitchInlet(letter, outlet if outlet in SWITCH_LETTERS else "", _bool(inlet, "filament"),
+                                         _str(inlet, "lane"), _string_list(inlet.get("units"))))
+        switch.outlets.append(SwitchOutlet(letter, _str(outlets, letter)))
+    switch.lanes = {lane: extruder if isinstance(extruder, str) else ""
+                    for lane, extruder in part(st, "lanes").items() if isinstance(lane, str) and lane}
+    return switch
+
+
+def merge_switch_status(status, out: Snapshot) -> None:
+    """Read an objects query answer for switch_objects_query() into the
+    snapshot's switches, in the order of their names."""
+    st = status["status"] if isinstance(status, dict) and isinstance(status.get("status"), dict) else status
+    if not isinstance(st, dict):
+        return
+    found = []
+    for key, o in st.items():
+        # Klipper answers a query for an object it lacks with null fields.
+        if not isinstance(key, str) or not key.startswith(SWITCH_PREFIX) or not isinstance(o, dict) \
+                or not any(v is not None for v in o.values()):
+            continue
+        found.append(_read_switch(key[len(SWITCH_PREFIX):].strip(), o))
+    out.switches = sorted(found, key=lambda switch: _natural_key(switch.name))
+
+
+def switch_assign_gcode(extruder: str, lane: str = "", tool: int = -1) -> str:
+    """The command that puts a lane on one of its filament switch's two
+    extruders, unloading it first when it is loaded: the lane by its name, or
+    in a print file by the T number mapped to it (AFC only warns there when
+    the lane cannot reach that extruder)."""
+    return "AFC_BRIDGEBOX_SWITCH_ASSIGN %s EXTRUDER=%s UNLOAD=1" % ("LANE=" + lane if lane else "TOOL=T%d" % tool, extruder)
 
 
 class AFCError(ValueError):

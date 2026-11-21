@@ -10,7 +10,7 @@ import fake_orca
 from fake_moonraker import FakeMoonraker, closed_port_url
 from orca_afc import postprocess
 from orca_afc.postprocess import AFCGcode
-from test_protocol import webhook_fixture
+from test_protocol import switch_status, webhook_fixture
 
 orca = fake_orca.orca
 
@@ -54,6 +54,17 @@ class PostProcessTest(unittest.TestCase):
         self.assertEqual(lines[2], "SET_PRESSURE_ADVANCE ADVANCE=0.032 ; AFC spool flow K")
         self.assertEqual(lines[4], "T1 PURGE_LENGTH=" + PURGE)
         self.assertEqual(message, "AFC G-code: 2 tool changes, 1 lane-change purges, 2 spool PA settings")
+
+    def test_a_lane_behind_a_filament_switch_goes_to_the_toolhead_its_filament_was_sliced_for(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()  # T0 and T1's lanes are on extruder
+        self.write(BODY + CONFIG.replace("; CONFIG_BLOCK_END", "; filament_toolhead = 1,0\n; CONFIG_BLOCK_END") % "klipper")
+        message = postprocess.process_file(self.path, {}, lambda key: None)
+        lines = self.read().splitlines()
+        self.assertEqual(lines[0], "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T0 EXTRUDER=extruder1 UNLOAD=1")
+        self.assertEqual(lines[1], "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T1 EXTRUDER=extruder UNLOAD=1")
+        # T0's lane prints from the other toolhead now, so the change to T1 swaps toolheads and purges nothing.
+        self.assertIn("T1", lines)
+        self.assertIn("0 lane-change purges", message)
 
     def test_printer_not_answering(self):
         text = BODY + CONFIG % "klipper"

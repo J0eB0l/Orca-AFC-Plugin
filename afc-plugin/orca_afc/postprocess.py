@@ -66,7 +66,14 @@ def process_file(path: str, config: dict, value, timeout: float = READ_TIMEOUT) 
     # that does not answer with AFC gets its file as sliced.
     if snapshot is None and not settings.afc:
         return "AFC G-code: left as it is, without AFC: " + why
-    result = gcode.transform(text, gcode.plan_for(snapshot, settings.filaments, None, settings), settings)
+    plan = gcode.plan_for(snapshot, settings.filaments, None, settings)
+    # A lane behind a filament switch goes to the toolhead its filament was sliced for.
+    switches = snapshot is not None and snapshot.present and bool(snapshot.switches)
+    if switches:
+        gcode.plan_switches(plan, text, snapshot, settings)
+    result = gcode.transform(text, plan, settings)
+    if switches:
+        result.text = gcode.add_switch_lines(result.text, snapshot, settings)
     if result.text != text:
         with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
             f.write(result.text)

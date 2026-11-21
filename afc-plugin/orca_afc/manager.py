@@ -17,6 +17,7 @@ from .protocol import AFCError, Lane, Snapshot
 # How long a spool's flow K is trusted before it is read again. AFC autocal only
 # writes it after a calibration, so this mostly bounds how soon a new one shows.
 FLOW_K_MAX_AGE = 120.0
+SWITCH_OBJECTS_MAX_AGE = 60.0  # seconds a printer's list of filament switch objects is kept
 
 # Moonraker answers a G-code script only once Klipper has run it, and a lane load
 # (a long bowden, an ACE feeding, a purge) can take minutes. A lane move waits this
@@ -26,10 +27,13 @@ LANE_MOVE_TIMEOUT = 900.0
 _ACTION_WORDS = {"load": "loading", "unload": "unloading", "eject": "ejecting"}
 
 
-def read_snapshot(client: Moonraker) -> Snapshot:
+def read_snapshot(client: Moonraker, switch_objects: dict | None = None) -> Snapshot:
     """One AFC read: the webhook first, Klipper objects as the fallback, then
-    the lane_data database and the unit dryers to fill in the rest, and AMS
-    filament backup from the plugin's own database items."""
+    the lane_data database, the unit dryers and the filament switches to fill
+    in the rest, and AMS filament backup from the plugin's own database items.
+    `switch_objects` is the printer's protocol.switch_objects_query() when the
+    caller kept it; without it the objects list is read for it."""
+    objects_list = None  # Moonraker's objects list, read once
     try:
         snap = protocol.parse_status_endpoint(client.afc_status())
         webhook_error = None
@@ -81,6 +85,14 @@ def read_snapshot(client: Moonraker) -> Snapshot:
             protocol.merge_dryer_status(client.objects_query(dryers), snap)
         except MoonrakerError:
             pass
+    # Filament switches (BridgeBox) are Klipper objects of their own, found by name in the objects list.
+    try:
+        if switch_objects is None:
+            switch_objects = protocol.switch_objects_query(client.objects_list() if objects_list is None else objects_list)
+        if switch_objects:
+            protocol.merge_switch_status(client.objects_query(switch_objects), snap)
+    except MoonrakerError:
+        pass
     return snap
 
 
@@ -96,6 +108,7 @@ class AFCManager:
         self._flow_k = {}       # spool id -> (k, read at)
         self._articles = {}     # spool id -> its filament's article number, read with K
         self._k_way = ""        # how K was read last: "direct" (AFC's Spoolman) or "proxy" (Moonraker's)
+        self._switches = None   # (the printer's switch_objects_query(), read at)
         self._move = None       # (thread, "lane4 is loading") while a lane move runs
         self._move_error = ""   # how the last lane move failed, until the page shows it
 
@@ -108,8 +121,9 @@ class AFCManager:
             self._flow_k.clear()
             self._articles.clear()
             self._k_way = ""
+            self._switches = None
         try:
-            snap = read_snapshot(client)
+            snap = read_snapshot(client, self._switch_objects(client))
         except MoonrakerError as error:
             if client.url != self.printer:
                 self.snapshot, self.printer = Snapshot(), client.url
@@ -118,6 +132,19 @@ class AFCManager:
         with self._lock:
             self.snapshot, self.printer = snap, client.url
         return ""
+
+    def _switch_objects(self, client: Moonraker) -> dict:
+        """The printer's filament switch objects to query, kept for
+        SWITCH_OBJECTS_MAX_AGE: a switch comes and goes with a Klipper restart,
+        so the objects list that names them is not read on every poll. None
+        for this read when the list did not answer; the next read asks again."""
+        now = self._clock()
+        if self._switches is None or now - self._switches[1] >= SWITCH_OBJECTS_MAX_AGE:
+            try:
+                self._switches = (protocol.switch_objects_query(client.objects_list()), now)
+            except MoonrakerError:
+                return {}
+        return self._switches[0]
 
     def read(self, client: Moonraker) -> Snapshot | None:
         """A fresh read for the G-code step and the printer agent: what AFC

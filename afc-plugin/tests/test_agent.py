@@ -20,7 +20,7 @@ from orca_afc import installer
 from orca_afc.protocol import Lane
 from orca_afc.agent import AFCAgent
 from orca_afc.protocol import Snapshot
-from test_protocol import lane_status, webhook_fixture
+from test_protocol import lane_status, switch_status, webhook_fixture
 
 orca = fake_orca.orca
 
@@ -277,6 +277,39 @@ class StatusTest(Case):
         self.assertEqual((t2["tray_info_idx"], t2["tray_slot_placeholder"]), ("", "1"))  # nothing on T2
         self.assertEqual(second["tray"][0]["tray_info_idx"], "GFL_POLYLITE")
         self.assertEqual(second["tray"][1]["tray_color"], "00000000")  # lane6 is empty
+
+    def test_filament_switch(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.connect()
+        push = self.push()
+        self.assertEqual(push["afc_switches"], [{
+            "name": "Switch_1", "answering": True, "calibrated": True,
+            "inlets": [{"letter": "A", "outlet": "A", "filament": False, "lane": "", "color": "", "units": ["Turtle_1"]},
+                       {"letter": "B", "outlet": "B", "filament": True, "lane": "lane5", "color": "0000FFFF",
+                        "units": ["Bambu_AMS_1"]}],
+            "outlets": [{"letter": "A", "extruder": "extruder", "toolhead": 0},
+                        {"letter": "B", "extruder": "extruder1", "toolhead": 1}],
+            "text": "Switch_1\nInlet A (Turtle_1): outlet A, extruder, empty\n"
+                    "Inlet B (Bambu_AMS_1): outlet B, extruder1, lane5 loaded"}])
+        trays = {t["tool"]: t for u in push["ams"]["ams"] for t in u["tray"]}
+        self.assertEqual({tool: t.get("switch_toolheads") for tool, t in trays.items()},
+                         {0: [0, 1], 1: [0, 1], 2: None, 3: None, 4: [0, 1], 5: [0, 1]})
+        self.assertEqual(trays[4]["tray_color"], "0000FFFF")
+        # By T number the units on screen are no AFC units.
+        self.assertFalse([u for u in push["ams"]["ams"] if "switch" in u or "switch_inlet" in u])
+        # A switch that stops answering still shows, and its lanes load the plain way.
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"].update(answering=False)
+        push = self.push(2)
+        self.assertEqual((push["afc_switches"][0]["answering"], push["afc_switches"][0]["text"].splitlines()[-1]),
+                         (False, "The switch is not answering"))
+        self.assertFalse([t for u in push["ams"]["ams"] for t in u["tray"] if "switch_toolheads" in t])
+
+    def test_no_filament_switch(self):
+        self.connect()
+        push = self.push()
+        self.assertNotIn("afc_switches", push)
+        self.assertFalse([u for u in push["ams"]["ams"] if "switch" in u or "switch_inlet" in u])
+        self.assertFalse([t for u in push["ams"]["ams"] for t in u["tray"] if "switch_toolheads" in t])
 
     def test_saves_the_matched_id_on_the_spoolman_filament(self):
         filament = {"id": 4, "name": "PolyLite", "extra": {}}
@@ -1115,6 +1148,33 @@ class DeviceTabTest(Case):
         unload = dict(load, slot_id=255, target=255)
         self.assertEqual(self.send({"print": unload}), afc_agent.FAILED)  # no lane is in a toolhead
 
+    def test_load_with_a_toolhead_picked_and_no_filament_switch(self):
+        load = {"command": "ams_change_filament", "ams_id": 0, "slot_id": 1, "target": 1, "curr_temp": 215, "tar_temp": 215}
+        self.connect()
+        self.push()
+        self.assertEqual(self.send({"print": dict(load, extruder_id=1)}), 0)
+        self.agent._gcode.call(lambda: None, 5)
+        self.assertEqual(self.fake.scripts, ["CHANGE_TOOL LANE=lane2"])  # as it was
+
+    def test_load_into_the_toolhead_picked_on_a_filament_switch(self):
+        load = {"command": "ams_change_filament", "ams_id": 0, "slot_id": 1, "target": 1, "curr_temp": 215, "tar_temp": 215}
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.connect()
+        self.push()
+        for extruder_id, script in ((1, "AFC_BRIDGEBOX_SWITCH_ASSIGN LANE=lane2 EXTRUDER=extruder1 UNLOAD=1\n"
+                                        "CHANGE_TOOL LANE=lane2"),
+                                    (0, "CHANGE_TOOL LANE=lane2"),     # the extruder lane2 is on
+                                    (2, "CHANGE_TOOL LANE=lane2"),     # no outlet of the switch
+                                    (None, "CHANGE_TOOL LANE=lane2")):
+            request = dict(load) if extruder_id is None else dict(load, extruder_id=extruder_id)
+            with self.subTest(extruder_id=extruder_id):
+                self.assertEqual(self.send({"print": request}), 0)
+                self.agent._gcode.call(lambda: None, 5)
+                self.assertEqual(self.fake.scripts[-1], script)
+        self.assertEqual(len(self.fake.scripts), 4)  # the switch command and the load are one script, in that order
+        unload = dict(load, slot_id=255, target=255, extruder_id=1)
+        self.assertEqual(self.send({"print": unload}), afc_agent.FAILED)  # no lane is in a toolhead
+
 class BridgeBoxUpdateTest(Case):
     """The Update page's BridgeBox rows: each part's firmware beside the
     newest, and the Update on each (devices.py)."""
@@ -1547,6 +1607,15 @@ class UnitLayoutTest(Case):
         echo = self.calls.messages("print", "ams_filament_setting")[0]
         self.assertEqual((echo["ams_id"], echo["tray_id"], echo["nozzle_temp_min"]), (128, 0, 215))  # the lane's own temperature
 
+    def test_units_say_their_filament_switch_inlet(self):
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.connect()
+        status = self.push_by_unit()
+        self.assertEqual([(u["id"], u.get("switch"), u.get("switch_inlet")) for u in status["ams"]["ams"]],
+                         [("0", 0, "A"), ("1", 0, "B"), ("128", None, None)])  # the tool is on no switch
+        self.assertEqual(status["afc_switches"][0]["inlets"][1]["units"], ["Bambu_AMS_1"])
+        self.assertNotIn("switch", status["ams"]["ams"][2])
+
     def test_wide_masks_when_the_build_reads_them(self):
         self.connect()
         self.assertNotIn("ht_tray_bit", self.push_by_unit()["ams"])
@@ -1615,6 +1684,33 @@ class PrintTest(Case):
         # The job thread shows the latest stage when it looks, the start of the print last.
         self.assertEqual(stages[-1][0], afc_agent.STAGE_SENDING)
         self.assertTrue(all(code in range(101) for _, code, _ in stages))
+
+    def test_lanes_behind_a_filament_switch_go_to_their_sliced_toolheads(self):
+        # Filament 1 prints on T4 (lane5, on extruder1) and was sliced for toolhead 0, filament 2 the other way.
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch_status()
+        self.connect()
+        plate = PLATE.replace("; CONFIG_BLOCK_END\n", "; filament_toolhead = 0,1\n; CONFIG_BLOCK_END\n")
+        code, _ = self.start(self.print_params(filename=self.project(plate)))
+        self.assertEqual(code, 0)
+        lines = self.fake.uploads["Cube_box_plate_1.gcode"].decode().splitlines()
+        self.assertEqual(lines[4:8], ["AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T0 EXTRUDER=extruder1 UNLOAD=1",
+                                      "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T4 EXTRUDER=extruder UNLOAD=1",
+                                      "PRINT_START TOOL=4", "T4"])
+        self.assertEqual(sum(line.startswith("AFC_BRIDGEBOX_SWITCH_ASSIGN") for line in lines), 2)
+
+    def test_a_file_with_no_lane_behind_a_filament_switch_is_as_it_was(self):
+        self.connect()
+        plate = PLATE.replace("; CONFIG_BLOCK_END\n", "; filament_toolhead = 0,1\n; CONFIG_BLOCK_END\n")
+        self.assertEqual(self.start(self.print_params(filename=self.project(plate)))[0], 0)
+        before = self.fake.uploads["Cube_box_plate_1.gcode"]
+        self.assertNotIn(b"AFC_BRIDGEBOX_SWITCH_ASSIGN", before)
+        # The switch carries the other lanes: T1's and T5's, which the file does not print.
+        switch = switch_status()
+        switch["lanes"] = {"lane2": "extruder", "lane6": "extruder1"}
+        self.fake.objects["AFC_BridgeBox_switch Switch_1"] = switch
+        self.assertEqual(self.start(self.print_params(filename=self.project(plate)))[0], 0)
+        self.assertEqual(self.fake.uploads["Cube_box_plate_1.gcode"], before)
+        self.assertEqual(len(self.fake.started), 2)
 
     def test_u1_switches_go_into_the_file(self):
         self.fake.objects["print_task_config"] = {"auto_bed_leveling": True, "flow_calibrate": False,
@@ -1899,6 +1995,39 @@ class FileTest(unittest.TestCase):
     def test_prepare_leaves_other_flavors(self):
         text = PLATE.replace("gcode_flavor = klipper", "gcode_flavor = marlin2")
         self.assertEqual(afc_agent.prepare(text, afc_agent.PrintJob(ams_mapping="[4,0]"), Snapshot()), text)
+
+    def test_prepare_adds_the_filament_switch_lines_once(self):
+        from orca_afc.protocol import Lane, Switch, SwitchInlet, SwitchOutlet, U1PrintOptions
+        switch = Switch("Switch_1", True, False, [SwitchInlet("A", "A"), SwitchInlet("B", "B")],
+                        [SwitchOutlet("A", "extruder"), SwitchOutlet("B", "extruder1")], {"lane5": "extruder1"})
+        snap = Snapshot(present=True, switches=[switch], lanes=[
+            Lane(name="lane1", maps=["T0"], extruder="extruder", extruder_index=0),
+            Lane(name="lane5", maps=["T4"], extruder="extruder1", extruder_index=1)])
+        text = PLATE.replace("; CONFIG_BLOCK_END\n", "; filament_toolhead = 0,1\n; CONFIG_BLOCK_END\n")
+        job = afc_agent.PrintJob(ams_mapping="[4,0]")
+        plain = Snapshot(present=True, lanes=snap.lanes)
+        line = "AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T4 EXTRUDER=extruder UNLOAD=1\n"  # the switch is not calibrated yet
+        first = afc_agent.prepare(text, job, snap)
+        # The line moves lane5 to lane1's toolhead, so the file is the one of a printer with both lanes there:
+        # the change from T4 to T0 is a lane change in one toolhead and gets its purge.
+        moved = Snapshot(present=True, lanes=[snap.lanes[0], Lane(name="lane5", maps=["T4"], extruder="extruder",
+                                                                    extruder_index=0)])
+        self.assertEqual(first, afc_agent.prepare(text, job, moved).replace(HEADER, HEADER + line))
+        self.assertIn("T0 PURGE_LENGTH=", first)
+        self.assertNotIn("PURGE_LENGTH=", afc_agent.prepare(text, job, plain))
+        self.assertEqual(afc_agent.prepare(first, job, snap), first)  # the stored file, printed again
+        # Printed again with its filaments the other way round, T4 prints the filament sliced for extruder1,
+        # where lane5 is: each lane stays in its own toolhead and nothing is purged.
+        again = afc_agent.prepare(first, afc_agent.PrintJob(ams_mapping="[0,4]"), snap)
+        self.assertEqual(again, afc_agent.prepare(text, afc_agent.PrintJob(ams_mapping="[0,4]"), plain).replace(
+            HEADER, HEADER + line.replace("EXTRUDER=extruder ", "EXTRUDER=extruder1 ")))
+        # A U1's print switches follow them, in the stored file printed again too.
+        snap.u1_print = U1PrintOptions(True, True, False, False)
+        u1 = afc_agent.prepare(text, job, snap)
+        lines = u1.splitlines()
+        self.assertEqual((lines[4], lines[6]), (line.strip(), "PRINT_START TOOL=4"))
+        self.assertTrue(lines[5].startswith("SET_PRINT_PREFERENCES "))
+        self.assertEqual(afc_agent.prepare(u1, job, snap), u1)
 
     def test_prepare_keeps_a_flow_dynamics_test_k(self):
         # The Calibration tab's test prints its own K on each line; a normal print takes the spool's.
