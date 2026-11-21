@@ -3820,16 +3820,8 @@ bool StatusPanel::choose_switch_toolhead(const std::string &ams_id, const std::s
     const DevAmsTray *tray = obj->GetFilaSystem()->GetAmsTray(ams_id, slot_id);
     if (!tray || tray->switch_toolheads.size() != 2)
         return true;
-    // Each toolhead by the name the switch's outlet gives it, else the printer's own name for it, else its number.
     const MachineObject::AgentFilaSwitch *fila_switch = obj->agent_switch_of(ams_id);
-    const auto name_of = [this, tray, fila_switch](int at) {
-        const int head = tray->switch_toolheads[at];
-        if (fila_switch && !fila_switch->outlets[at].extruder.empty())
-            return from_u8(fila_switch->outlets[at].extruder);
-        if (head >= 0 && size_t(head) < obj->agent_toolheads.size() && !obj->agent_toolheads[head].name.empty())
-            return from_u8(obj->agent_toolheads[head].name);
-        return wxString::Format("%d", head);
-    };
+    const auto name_of = [this, tray, fila_switch](int at) { return from_u8(obj->switch_toolhead_name(fila_switch, tray->switch_toolheads[at])); };
     MessageDialog dialog(this, _L("This lane goes through a filament switch. Which toolhead should it load into?"), wxEmptyString,
                          wxICON_QUESTION | wxYES | wxNO | wxCANCEL);
     for (int at = 0; at < 2; ++at) // the toolhead the tray feeds now is the one in focus

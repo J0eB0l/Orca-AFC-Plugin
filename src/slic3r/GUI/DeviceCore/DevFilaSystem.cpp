@@ -683,9 +683,12 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                     auto unit_name_it = it->find("unit_name");
                     curr_ams->m_unit_name = unit_name_it != it->end() && unit_name_it->is_string() ?
                                                 wxString::FromUTF8(unit_name_it->get<std::string>()) : wxString();
-                    // Orca: and say which of its filament switches the unit is plumbed into.
+                    // Orca: and say which of its filament switches the unit is plumbed into, at which inlet.
                     auto switch_it = it->find("switch");
                     curr_ams->m_agent_switch = switch_it != it->end() && switch_it->is_number_integer() ? switch_it->get<int>() : -1;
+                    auto inlet_it = it->find("switch_inlet");
+                    const std::string inlet = inlet_it != it->end() && inlet_it->is_string() ? inlet_it->get<std::string>() : std::string();
+                    curr_ams->m_agent_switch_inlet = curr_ams->m_agent_switch < 0 ? -1 : inlet == "A" ? 0 : inlet == "B" ? 1 : -1;
 
                     // Orca: a printer agent shows a single-lane unit as an AMS HT, with "dryer": false when it has no dryer.
                     auto dryer_it = it->find("dryer");

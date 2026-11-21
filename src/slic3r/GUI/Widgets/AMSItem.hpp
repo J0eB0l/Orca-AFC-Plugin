@@ -8,6 +8,7 @@
 #include "../DeviceManager.hpp"
 #include "slic3r/GUI/Event.hpp"
 #include "slic3r/GUI/AmsMappingPopup.hpp"
+#include <array>
 #include <string>
 #include <wx/anybutton.h>
 #include <wx/colour.h>
@@ -457,19 +458,47 @@ public:
     std::string m_file_name;
     // bool            m_ams_loading{ false };
     void            doRender(wxDC &dc);
-    // Orca: a printer agent's switch is drawn live in place of the glyph: a line from each inlet (along the top,
-    // A on the left) to the outlet it is at (along the bottom), in the color of the filament it holds.
-    struct Route
-    {
-        int      outlet{-1}; // 0 = A, 1 = B, -1 = at neither
-        bool     filament{false};
-        wxColour colour;
-        bool     operator==(const Route &other) const { return outlet == other.outlet && filament == other.filament && colour == other.colour; }
-    };
-    void               set_routes(const std::vector<Route> &routes); // none draws the glyph
-    std::vector<Route> m_routes;
     SwitcherImage(wxWindow *parent, wxWindowID id, std::string file_name, const wxSize& size, const wxPoint &pos = wxDefaultPosition);
     ~SwitcherImage();
+};
+
+// Orca: a printer agent's filament switch, drawn live across a row of its own: the units plumbed into each inlet
+// on the left, the toolhead each outlet feeds on the right, and in the body between them a line from each inlet
+// to the outlet it is at, in the color of the filament it holds.
+class SwitchRoutes : public wxWindow
+{
+public:
+    struct Inlet
+    {
+        wxString units;           // the units plumbed into it
+        int      outlet{-1};      // 0 = A, 1 = B, -1 = at neither
+        bool     filament{false}; // it holds filament
+        wxColour colour;          // of that filament
+        bool     shown{false};    // the unit on screen is one of its units
+        bool     operator==(const Inlet &other) const
+        {
+            return units == other.units && outlet == other.outlet && filament == other.filament && colour == other.colour && shown == other.shown;
+        }
+    };
+    struct State
+    {
+        std::array<Inlet, 2>    inlets;  // A, B
+        std::array<wxString, 2> outlets; // A, B: the toolhead each feeds, "" for an outlet not in use
+        bool                    operator==(const State &other) const { return inlets == other.inlets && outlets == other.outlets; }
+    };
+
+    explicit SwitchRoutes(wxWindow *parent);
+    void set_state(const State &state);
+    void msw_rescale();
+
+private:
+    void   paintEvent(wxPaintEvent &evt);
+    wxRect body() const;         // the switch's body, in the middle of the row
+    int    row(int at) const;    // the height of inlet and outlet A (0) or B (1)
+    void   draw_routes(wxDC &dc); // the body and the lines in it
+    void   draw_names(wxDC &dc);  // the text on either side
+
+    State m_state;
 };
 
 

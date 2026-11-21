@@ -221,6 +221,7 @@ public:
     std::string GetAmsId() const { return m_ams_id; }
     wxString    GetUnitName() const { return m_unit_name; } // Orca: the agent's own unit name, empty for Bambu printers
     int         GetAgentSwitch() const { return m_agent_switch; } // Orca: the printer agent's filament switch the unit is plumbed into, its place in MachineObject::agent_fila_switches (-1 = none)
+    int         GetAgentSwitchInlet() const { return m_agent_switch_inlet; } // Orca: the inlet of that switch the unit is plumbed into: 0 = A, 1 = B (-1 = none)
     wxString    GetDisplayName() const; // display
 
     void     SetAmsType(int type) { m_ams_type = (AmsType)type; }
@@ -285,6 +286,7 @@ private:
     int           m_ext_id;//extruder id
     wxString      m_unit_name; // Orca: a printer agent's own name for this unit, shown instead of the type and number
     int           m_agent_switch = -1; // Orca: see GetAgentSwitch
+    int           m_agent_switch_inlet = -1; // Orca: see GetAgentSwitchInlet
     // Orca: pull-mode / multi-vendor agent model — keeps the legacy single m_ext_id for existing
     // consumers and carries the switch-aware binding alongside it. Without a Filament Track Switch
     // the set is {m_ext_id}; with one installed the device binds both extruders and records which

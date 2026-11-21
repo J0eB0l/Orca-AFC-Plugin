@@ -68,6 +68,7 @@ protected:
     int         m_total_ext_count = 1;
     AMSextruder *m_extruder{nullptr};
     SwitcherImage *m_switcher{nullptr};       // Orca: filament-switch routing glyph (hidden unless a switch is installed)
+    SwitchRoutes  *m_switch_routes{nullptr};  // Orca: a printer agent's filament switch, in a row of its own (hidden on a printer without one)
     AMSRoadDownPart* m_down_road{ nullptr };
 
     // Orca: "AMS not initialized" warning banner, materialized lazily only when a switch needs it (see show_switcher_status)

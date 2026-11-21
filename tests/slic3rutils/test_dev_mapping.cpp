@@ -96,7 +96,7 @@ TEST_CASE("A unit names its filament switch and a tray the toolheads it can load
     const json on_switch = json::parse(R"({
         "ams": {
             "tray_exist_bits": "1",
-            "ams": [ { "id": "0", "info": "00000001", "switch": 0, "tray": [
+            "ams": [ { "id": "0", "info": "00000001", "switch": 0, "switch_inlet": "B", "tray": [
                 { "id": "0", "tray_color": "FF0000FF", "toolhead": 4, "switch_toolheads": [4, 5] }
             ] } ]
         }
@@ -106,6 +106,7 @@ TEST_CASE("A unit names its filament switch and a tray the toolheads it can load
     DevAms* ams = obj.GetFilaSystem()->GetAmsById("0");
     REQUIRE(ams != nullptr);
     CHECK(ams->GetAgentSwitch() == 0);
+    CHECK(ams->GetAgentSwitchInlet() == 1);
     DevAmsTray* tray = obj.GetFilaSystem()->GetAmsTray("0", "0");
     REQUIRE(tray != nullptr);
     CHECK(tray->switch_toolheads == std::vector<int>{4, 5});
@@ -125,8 +126,24 @@ TEST_CASE("A unit names its filament switch and a tray the toolheads it can load
     DevFilaSystemParser::ParseV1_0(off_switch, &obj, obj.GetFilaSystem().get(), false);
 
     CHECK(ams->GetAgentSwitch() == -1);
+    CHECK(ams->GetAgentSwitchInlet() == -1);
     CHECK(tray->switch_toolheads.empty());
     CHECK(obj.agent_switch_of("0") == nullptr);
+}
+
+TEST_CASE("A filament switch's toolhead goes by its outlet's name, else the printer's, else its number", "[DevMapping]")
+{
+    MachineObject obj(nullptr, nullptr, "test", "test_dev", "127.0.0.1");
+    obj.agent_toolheads.resize(6);
+    obj.agent_toolheads[4].name = "Tool 5";
+    MachineObject::AgentFilaSwitch fila_switch;
+    fila_switch.outlets[0] = {"extruder4", 4};
+    fila_switch.outlets[1] = {"", 5};
+
+    CHECK(obj.switch_toolhead_name(&fila_switch, 4) == "extruder4");
+    CHECK(obj.switch_toolhead_name(nullptr, 4) == "Tool 5");
+    CHECK(obj.switch_toolhead_name(&fila_switch, 5) == "5");
+    CHECK(obj.switch_toolhead_name(&fila_switch, -1) == "-1");
 }
 
 TEST_CASE("Switch-bound AMS trays map to the left extruder", "[DevMapping]")

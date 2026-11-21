@@ -54,6 +54,33 @@ namespace Slic3r { namespace GUI {
 #define AMS_CANS_WINDOW_SIZE wxSize(FromDIP(264), -1)
 #define SINGLE_SLOT_AMS_PANEL_SIZE wxSize(FromDIP(264), FromDIP(160))
 
+namespace {
+// Orca: a printer agent's filament switch as SwitchRoutes draws it, with the inlet of the unit on screen picked out.
+SwitchRoutes::State switch_routes(MachineObject &obj, const MachineObject::AgentFilaSwitch &fila_switch, const std::string &shown)
+{
+    SwitchRoutes::State state;
+    for (size_t at = 0; at < state.inlets.size(); ++at) {
+        const MachineObject::AgentFilaSwitch::Inlet &inlet = fila_switch.inlets[at];
+        state.inlets[at].outlet   = inlet.outlet;
+        state.inlets[at].filament = inlet.filament;
+        state.inlets[at].colour   = inlet.color.empty() ? AMS_CONTROL_BRAND_COLOUR : DevAmsTray::decode_color(inlet.color);
+        const MachineObject::AgentFilaSwitch::Outlet &outlet = fila_switch.outlets[at];
+        if (outlet.toolhead >= 0 || !outlet.extruder.empty())
+            state.outlets[at] = wxString::FromUTF8(obj.switch_toolhead_name(&fila_switch, outlet.toolhead));
+    }
+    // Each inlet's units, by the names over their trays.
+    for (const auto &[id, unit] : obj.GetFilaSystem()->GetAmsList()) {
+        const int at = unit ? unit->GetAgentSwitchInlet() : -1;
+        if (at < 0 || obj.agent_switch_of(id) != &fila_switch)
+            continue;
+        SwitchRoutes::Inlet &inlet = state.inlets[at];
+        inlet.units += (inlet.units.empty() ? "" : ", ") + unit->GetDisplayName();
+        inlet.shown = inlet.shown || id == shown;
+    }
+    return state;
+}
+} // namespace
+
 
 AMSControl::AMSControl(wxWindow *parent, wxWindowID id, const wxPoint &pos, const wxSize &size)
     : wxSimplebook(parent, wxID_ANY, pos, size)
@@ -248,6 +275,12 @@ AMSControl::AMSControl(wxWindow *parent, wxWindowID id, const wxPoint &pos, cons
     m_sizer_body->Add(m_sizer_ams_body, 0, wxALIGN_CENTER, 0);
     m_sizer_body->Add(m_sizer_down_road, 0, wxALIGN_CENTER, 0);
     m_sizer_body->Add(m_sizer_ams_option, 0, wxEXPAND, 0);
+
+    // Orca: a printer agent's filament switch, under the toolhead; hidden, so it takes no room on a printer
+    // without one. Shown from UpdateAms.
+    m_switch_routes = new SwitchRoutes(m_amswin);
+    m_switch_routes->Hide();
+    m_sizer_body->Add(m_switch_routes, 0, wxEXPAND | wxTOP, FromDIP(8));
 
     m_amswin->SetSizer(m_sizer_body);
     m_amswin->Layout();
@@ -534,6 +567,7 @@ void AMSControl::msw_rescale()
     m_button_ams_setting->SetBitmap(m_button_ams_setting_normal.bmp());
 
     m_extruder->msw_rescale();
+    m_switch_routes->msw_rescale();
 
     if (m_button_extruder_feed) m_button_extruder_feed->Rescale(); // ORCA
     if (m_button_extruder_back) m_button_extruder_back->Rescale(); // ORCA
@@ -1093,25 +1127,30 @@ void AMSControl::UpdateAms(const std::string   &series_name,
     // Orca: inert on any printer without a Filament Track Switch — install is false, so the banner is
     // never materialized, the glyph stays hidden, and every ShowRoad(true) below is a no-op.
     const auto [install, ready] = isFilaSwitchReady();
-    // Orca: a printer agent's filament switch shows with the units plumbed into it, drawn live, with what it is
-    // doing as its tooltip.
+    // Orca: a printer agent's filament switch shows in a row of its own, drawn live, with what it is doing as its
+    // tooltip: the switch of the unit on screen, else the printer's first, so the row stays from unit to unit.
     const MachineObject::AgentFilaSwitch *agent_switch = obj ? obj->agent_switch_of(GetShownUnit()) : nullptr;
-    std::vector<SwitcherImage::Route>     routes;
-    if (agent_switch) {
-        for (const MachineObject::AgentFilaSwitch::Inlet &inlet : agent_switch->inlets) {
-            const wxColour filament = inlet.color.empty() ? AMS_CONTROL_BRAND_COLOUR : DevAmsTray::decode_color(inlet.color);
-            routes.push_back({inlet.outlet, inlet.filament, inlet.filament ? filament : AMS_CONTROL_GRAY500});
-        }
-    }
-    m_switcher->set_routes(routes);
+    if (!agent_switch && obj && !obj->agent_fila_switches.empty())
+        agent_switch = &obj->agent_fila_switches.front();
+    if (agent_switch)
+        m_switch_routes->set_state(switch_routes(*obj, *agent_switch, GetShownUnit()));
     const wxString switch_text = agent_switch ? wxString::FromUTF8(agent_switch->text) : wxString();
-    if (m_switcher->GetToolTipText() != switch_text)
-        m_switcher->SetToolTip(switch_text);
+    if (m_switch_routes->GetToolTipText() != switch_text)
+        m_switch_routes->SetToolTip(switch_text);
+    if (m_switch_routes->IsShown() != (agent_switch != nullptr)) {
+        m_switch_routes->Show(agent_switch != nullptr);
+        m_amswin->Layout();
+        m_amswin->Fit();
+        // The control is a row taller or shorter, which every window around it makes room for, the nearest first.
+        InvalidateBestSize();
+        for (wxWindow *around = GetParent(); around; around = around->IsTopLevel() ? nullptr : around->GetParent())
+            around->Layout();
+    }
     if (agent_switch)
         show_switcher_status(!agent_switch->calibrated, _L("The filament switch is not calibrated. Run AFC Calibration to use both of its toolheads."));
     else
         show_switcher_status(install && (!ready), _L("AMS has not been initialized. Please initialize it before use."));
-    bool isShow = (install && m_total_ext_count >= 2) || agent_switch != nullptr;
+    bool isShow = install && m_total_ext_count >= 2;
     if (m_switcher->IsShown() != isShow)
     {
         m_switcher->Show(isShow);

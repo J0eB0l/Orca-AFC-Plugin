@@ -321,17 +321,11 @@ wxString lane_name(const MachineObject::AgentLane& lane)
     return from_u8(lane.name + " \xC2\xB7 " + lane.unit);
 }
 
-// The toolhead a filament switch sends a lane to, by the name the switch's outlet gives it, else the
-// printer's own name for it, else its number.
+// The toolhead a filament switch sends a lane to, as the lane's switch names it.
 wxString toolhead_name(const MachineObject& obj, const MachineObject::AgentLane& lane, int head)
 {
-    if (lane.fila_switch >= 0 && size_t(lane.fila_switch) < obj.agent_fila_switches.size())
-        for (const MachineObject::AgentFilaSwitch::Outlet& outlet : obj.agent_fila_switches[lane.fila_switch].outlets)
-            if (outlet.toolhead == head && !outlet.extruder.empty())
-                return from_u8(outlet.extruder);
-    if (head >= 0 && size_t(head) < obj.agent_toolheads.size() && !obj.agent_toolheads[head].name.empty())
-        return from_u8(obj.agent_toolheads[head].name);
-    return wxString::Format("%d", head);
+    const bool known = lane.fila_switch >= 0 && size_t(lane.fila_switch) < obj.agent_fila_switches.size();
+    return from_u8(obj.switch_toolhead_name(known ? &obj.agent_fila_switches[lane.fila_switch] : nullptr, head));
 }
 
 MachineObject* selected_machine()

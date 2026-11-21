@@ -27,6 +27,10 @@
 #include <wx/dcclient.h>
 #include <wx/dc.h>
 #include <wx/pen.h>
+#include <wx/brush.h>
+#include <wx/bitmap.h>
+#include <wx/dcmemory.h>
+#include <wx/window.h>
 #include <wx/peninfobase.h>
 #include <cstdlib>
 #include "slic3r/GUI/DeviceCore/DevConfigUtil.h"
@@ -828,32 +832,10 @@ void SwitcherImage::render(wxDC &dc)
 #endif
 }
 
-void SwitcherImage::set_routes(const std::vector<Route> &routes)
-{
-    if (m_routes == routes)
-        return;
-    m_routes = routes;
-    Refresh();
-}
-
 void SwitcherImage::doRender(wxDC &dc)
 {
     auto size = GetSize();
-    if (m_show_state && !m_routes.empty()) {
-        const int  pad  = FromDIP(2);
-        const auto x_of = [&size](int at) { return size.x * (at == 0 ? 1 : 3) / 4; };
-        for (size_t at = 0; at < m_routes.size() && at < 2; ++at) {
-            const Route  &route = m_routes[at];
-            const wxPoint from(x_of(int(at)), pad);
-            const wxPoint to = route.outlet < 0 ? wxPoint(from.x, size.y / 2) : wxPoint(x_of(route.outlet), size.y - pad);
-            if (route.filament) { // an edge, so a filament in the background's color still shows
-                dc.SetPen(wxPen(AMS_CONTROL_GRAY500, FromDIP(4)));
-                dc.DrawLine(from, to);
-            }
-            dc.SetPen(wxPen(route.colour, FromDIP(2)));
-            dc.DrawLine(from, to);
-        }
-    } else if (m_show_state) {
+    if (m_show_state){
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(*wxWHITE);
         dc.DrawBitmap(m_switcher.bmp(), wxPoint((size.x - m_switcher.GetBmpSize().x) / 2, 0));
@@ -877,6 +859,126 @@ SwitcherImage::SwitcherImage(wxWindow *parent, wxWindowID id, std::string file_n
 }
 
 SwitcherImage::~SwitcherImage() {}
+
+
+// Orca: SwitchRoutes — a printer agent's filament switch, drawn live.
+namespace {
+// In DIPs.
+constexpr int SWITCH_ROW_HEIGHT = 37; // a toolhead picture's
+constexpr int SWITCH_BODY_WIDTH = 44;
+constexpr int SWITCH_TEXT_GAP   = 6;  // between the body, an inlet's letter and its units
+} // namespace
+
+SwitchRoutes::SwitchRoutes(wxWindow *parent)
+{
+    wxWindow::Create(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxFULL_REPAINT_ON_RESIZE); // the body stays in the middle
+    SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+    SetFont(Label::Body_10);
+    SetMinSize(wxSize(-1, FromDIP(SWITCH_ROW_HEIGHT)));
+    Bind(wxEVT_PAINT, &SwitchRoutes::paintEvent, this);
+}
+
+void SwitchRoutes::set_state(const State &state)
+{
+    if (m_state == state)
+        return;
+    m_state = state;
+    Refresh();
+}
+
+void SwitchRoutes::msw_rescale()
+{
+    SetMinSize(wxSize(-1, FromDIP(SWITCH_ROW_HEIGHT)));
+    Refresh();
+}
+
+wxRect SwitchRoutes::body() const
+{
+    const wxSize size  = GetSize();
+    const int    width = FromDIP(SWITCH_BODY_WIDTH), pad = FromDIP(2);
+    return wxRect((size.x - width) / 2, pad, width, size.y - 2 * pad);
+}
+
+int SwitchRoutes::row(int at) const
+{
+    const wxRect box = body();
+    return box.y + box.height * (at == 0 ? 1 : 3) / 4;
+}
+
+void SwitchRoutes::paintEvent(wxPaintEvent &evt)
+{
+    wxPaintDC dc(this);
+#ifdef __WXMSW__ // smooth lines there take a wxGCDC; the names stay on the paint DC, which draws text at the window's size
+    const wxSize size = GetSize();
+    wxMemoryDC   memdc;
+    wxBitmap     bmp(size.x, size.y);
+    memdc.SelectObject(bmp);
+    memdc.Blit({0, 0}, size, &dc, {0, 0});
+    {
+        wxGCDC dc2(memdc);
+        draw_routes(dc2);
+    }
+    memdc.SelectObject(wxNullBitmap);
+    dc.DrawBitmap(bmp, 0, 0);
+#else
+    draw_routes(dc);
+#endif
+    draw_names(dc);
+}
+
+void SwitchRoutes::draw_routes(wxDC &dc)
+{
+    const wxRect box = body();
+    dc.SetPen(wxPen(AMS_CONTROL_GRAY500, FromDIP(1)));
+    dc.SetBrush(wxBrush(wxColour(128, 128, 128)));
+    dc.DrawRoundedRectangle(box, FromDIP(4));
+    const int lead = FromDIP(10); // a line runs level this far in from either side
+    // A line that holds filament is drawn second, over the other one where they cross.
+    for (const bool filament : {false, true})
+        for (size_t at = 0; at < m_state.inlets.size(); ++at) {
+            const Inlet &inlet = m_state.inlets[at];
+            if (inlet.filament != filament)
+                continue;
+            std::vector<wxPoint> line{{box.x, row(int(at))}, {box.x + lead, row(int(at))}};
+            if (inlet.outlet < 0) { // at neither outlet: it ends inside
+                line.emplace_back(box.x + box.width / 2, box.y + box.height / 2);
+            } else {
+                line.emplace_back(box.GetRight() - lead, row(inlet.outlet));
+                line.emplace_back(box.GetRight(), row(inlet.outlet));
+            }
+            if (inlet.filament) { // an edge, so a filament in the body's color still shows
+                dc.SetPen(wxPen(wxColour(64, 64, 64), FromDIP(5)));
+                dc.DrawLines(int(line.size()), line.data());
+            }
+            dc.SetPen(wxPen(inlet.filament ? inlet.colour : wxColour(238, 238, 238), FromDIP(inlet.filament ? 3 : 2)));
+            dc.DrawLines(int(line.size()), line.data());
+        }
+}
+
+void SwitchRoutes::draw_names(wxDC &dc)
+{
+    const wxRect   box  = body();
+    const int      gap  = FromDIP(SWITCH_TEXT_GAP), edge = FromDIP(2);
+    const wxColour text = StateColor::darkModeColorFor(AMS_CONTROL_GRAY800), dim = StateColor::darkModeColorFor(AMS_CONTROL_GRAY700);
+    dc.SetFont(GetFont());
+    const int letters = std::max(dc.GetTextExtent("A").x, dc.GetTextExtent("B").x);
+    for (size_t at = 0; at < m_state.inlets.size(); ++at) {
+        const Inlet   &inlet  = m_state.inlets[at];
+        const wxString letter = at == 0 ? "A" : "B";
+        const int      top    = row(int(at)) - dc.GetCharHeight() / 2;
+        // The inlet's letter against the body and its units before that, cut short where the row ends.
+        const int      before = box.x - 2 * gap - letters;
+        const wxString units  = wxControl::Ellipsize(inlet.units, dc, wxELLIPSIZE_END, std::max(0, before - edge));
+        dc.SetTextForeground(inlet.shown ? AMS_CONTROL_BRAND_COLOUR : text);
+        dc.DrawText(letter, box.x - gap - dc.GetTextExtent(letter).x, top);
+        dc.SetTextForeground(inlet.shown ? text : dim);
+        dc.DrawText(units, before - dc.GetTextExtent(units).x, top);
+        // The toolhead the outlet at this height feeds.
+        const int after = box.GetRight() + 1 + gap;
+        dc.SetTextForeground(text);
+        dc.DrawText(wxControl::Ellipsize(m_state.outlets[at], dc, wxELLIPSIZE_END, std::max(0, GetSize().x - after - edge)), after, top);
+    }
+}
 
 
 //DevAms Extruder

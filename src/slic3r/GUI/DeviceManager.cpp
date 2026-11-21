@@ -1537,6 +1537,17 @@ const MachineObject::AgentFilaSwitch* MachineObject::agent_switch_of(const std::
     return at >= 0 && size_t(at) < agent_fila_switches.size() ? &agent_fila_switches[at] : nullptr;
 }
 
+std::string MachineObject::switch_toolhead_name(const AgentFilaSwitch* fila_switch, int toolhead) const
+{
+    if (fila_switch)
+        for (const AgentFilaSwitch::Outlet& outlet : fila_switch->outlets)
+            if (outlet.toolhead == toolhead && !outlet.extruder.empty())
+                return outlet.extruder;
+    if (toolhead >= 0 && size_t(toolhead) < agent_toolheads.size() && !agent_toolheads[toolhead].name.empty())
+        return agent_toolheads[toolhead].name;
+    return std::to_string(toolhead);
+}
+
 // Orca: drops the errors and warnings the Assistant page lists from the printer agent's log (agent_log).
 int MachineObject::command_set_toolhead_nozzle(int extruder, float diameter, const std::string& type, const std::string& flow)
 {

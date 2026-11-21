@@ -690,6 +690,9 @@ public:
     std::vector<AgentFilaSwitch> agent_fila_switches;
     // Orca: the filament switch the unit is plumbed into, nullptr for none
     const AgentFilaSwitch* agent_switch_of(const std::string& ams_id) const;
+    // Orca: what to call a toolhead a filament switch feeds: the name its outlet gives the toolhead, else the
+    // printer's own name for it, else its number. fila_switch may be nullptr.
+    std::string switch_toolhead_name(const AgentFilaSwitch* fila_switch, int toolhead) const;
     // Orca: the printer console's open prompt (agent_prompt), which the Calibration window shows for a printer
     // agent that runs its own calibration there: agent_calibration_gcode starts it ("" for Bambu's window).
     // id changes whenever a prompt opens or closes; each button sends its G-code.
