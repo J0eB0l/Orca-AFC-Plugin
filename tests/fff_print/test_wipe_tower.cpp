@@ -813,11 +813,13 @@ TEST_CASE("A filament's lane toolhead overrides the project's manual filament ma
     CHECK(print.get_filament_maps() == std::vector<int>{ 1, 2 });
 }
 
-// Slices wipe_tower_toolchange_config's two filaments, which swap every layer, for two nozzles with Multi-material
+// Slices wipe_tower_toolchange_config's two filaments, both in every layer, for two nozzles with Multi-material
 // per toolhead and Purge in prime tower. Both lanes feed toolhead 0 through one inlet of a filament switch, which can
 // send each to toolhead `other` too (0-based, one per filament, -1 = it cannot). A flush between the two is 280 mm3
-// (multifilament_config), so 28 s at the 10 mm3/s set here, and a tool change takes `tool_change` seconds.
-static void slice_behind_filament_switch(Print &print, const char *other, double tool_change, const char *map_mode = "Auto For Flush")
+// (multifilament_config), so 28 s at the 10 mm3/s set here, and a tool change takes `tool_change` seconds. `heights`
+// is how high each toolhead prints, 0 = as high as the printer.
+static void slice_behind_filament_switch(Print &print, const char *other, double tool_change, const char *map_mode = "Auto For Flush",
+                                         const char *heights = "0,0")
 {
     DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
     config.set_num_extruders(2);
@@ -829,7 +831,7 @@ static void slice_behind_filament_switch(Print &print, const char *other, double
                                     { "nozzle_diameter", "0.4,0.4" },
                                     { "printer_extruder_id", "1,2" },
                                     { "printer_extruder_variant", "Direct Drive Standard,Direct Drive Standard" },
-                                    { "extruder_printable_height", "0,0" },
+                                    { "extruder_printable_height", heights },
                                     { "filament_map_mode", map_mode },
                                     { "filament_map", "1,1" },
                                     { "filament_max_volumetric_speed", "10,10" },
@@ -875,6 +877,9 @@ TEST_CASE("A filament behind a filament switch keeps its toolhead when the print
     }
     SECTION("the switch cannot send its lane there") {
         slice_behind_filament_switch(print, "-1,-1", 10.);
+    }
+    SECTION("the other toolhead does not print as high as the part") {
+        slice_behind_filament_switch(print, "1,1", 10., "Auto For Flush", "0,5");
     }
     CHECK(print.get_filament_maps() == std::vector<int>{ 1, 1 });
     CHECK(print.lane_toolheads() == std::vector<int>{ 0, 0 });
