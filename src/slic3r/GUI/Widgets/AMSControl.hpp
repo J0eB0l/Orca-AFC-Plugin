@@ -76,7 +76,8 @@ protected:
     wxPanel*        tipPanel{nullptr};
     wxBoxSizer*     tipSizer{nullptr};
     wxStaticBitmap* icon{nullptr};
-    wxStaticText*   tipText{nullptr};
+    Label*          tipText{nullptr};
+    wxString        tipMessage; // Orca: what the banner says, as given (the label holds it wrapped)
 
     /*items*/
     wxBoxSizer* m_sizer_ams_items{nullptr};
@@ -180,8 +181,10 @@ public:
 
     // Orca: Filament Track Switch awareness. isFilaSwitchReady() resolves the selected machine and
     // returns {installed, ready}; show_switcher_status() toggles the warning banner, which says text.
+    // fit_rows() lays the control out after a row came, went or changed height.
     std::tuple<bool, bool> isFilaSwitchReady();
     void show_switcher_status(bool show, const wxString &text);
+    void fit_rows();
 
     void UpdatePassRoad(std::string ams_id, AMSPassRoadType type, AMSPassRoadSTEP step);
     void CreateAms();

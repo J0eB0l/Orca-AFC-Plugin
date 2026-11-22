@@ -1139,12 +1139,7 @@ void AMSControl::UpdateAms(const std::string   &series_name,
         m_switch_routes->SetToolTip(switch_text);
     if (m_switch_routes->IsShown() != (agent_switch != nullptr)) {
         m_switch_routes->Show(agent_switch != nullptr);
-        m_amswin->Layout();
-        m_amswin->Fit();
-        // The control is a row taller or shorter, which every window around it makes room for, the nearest first.
-        InvalidateBestSize();
-        for (wxWindow *around = GetParent(); around; around = around->IsTopLevel() ? nullptr : around->GetParent())
-            around->Layout();
+        fit_rows();
     }
     if (agent_switch)
         show_switcher_status(!agent_switch->calibrated, _L("The filament switch is not calibrated. Run AFC Calibration to use both of its toolheads."));
@@ -1806,6 +1801,16 @@ std::tuple<bool, bool> AMSControl::isFilaSwitchReady()
     return {false, false};
 }
 
+void AMSControl::fit_rows()
+{
+    m_amswin->Layout();
+    m_amswin->Fit();
+    // The control is a row taller or shorter, which every window around it makes room for, the nearest first.
+    InvalidateBestSize();
+    for (wxWindow *around = GetParent(); around; around = around->IsTopLevel() ? nullptr : around->GetParent())
+        around->Layout();
+}
+
 void AMSControl::show_switcher_status(bool show, const wxString &text)
 {
     // Orca: never materialize the banner on printers that never request it, so the AMS control is
@@ -1822,25 +1827,28 @@ void AMSControl::show_switcher_status(bool show, const wxString &text)
         icon = new wxStaticBitmap(tipPanel, wxID_ANY,
             wxArtProvider::GetBitmap(wxART_INFORMATION, wxART_MESSAGE_BOX, wxSize(FromDIP(16), FromDIP(16))));
         tipSizer->Add(icon, 0, wxALL, FromDIP(8));
-        tipText = new wxStaticText(tipPanel, wxID_ANY, text);
+        // Orca: the text has the control's width less the icon and the borders, and wraps there, so a sentence
+        // too long for one line takes a second one.
+        const int text_width = m_amswin->GetMinSize().GetWidth() - FromDIP(16) - 4 * FromDIP(8);
+        tipText = new Label(tipPanel, wxFont(10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD), wxEmptyString,
+                            LB_AUTO_WRAP, wxSize(text_width, -1));
         tipText->SetForegroundColour(wxColour(255, 255, 255));
-        tipText->SetFont(wxFont(10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
-        tipText->Wrap(-1);
-        tipText->SetMinSize(wxSize(-1, -1));
         tipSizer->Add(tipText, 0, wxALL | wxALIGN_CENTER_VERTICAL | wxEXPAND, FromDIP(8));
         m_sizer_body->Add(tipPanel, 1, wxEXPAND, 0);
     }
-    if (show && tipText->GetLabel() != text) { // Orca: the banner serves Bambu's switch and a printer agent's
+    bool changed = tipPanel->IsShown() != show;
+    if (show && tipMessage != text) { // Orca: the banner serves Bambu's switch and a printer agent's
+        tipMessage = text;
         tipText->SetLabel(text);
-        tipPanel->Layout();
+        changed = true;
     }
-    if (tipPanel->IsShown() == show)
+    if (!changed)
     {
         return;
     }
     tipPanel->Show(show);
-    m_amswin->Layout();
-    m_amswin->Fit();
+    tipPanel->Layout();
+    fit_rows(); // Orca: the banner is as tall as its lines of text
 }
 
 void AMSControl::parse_object(MachineObject* obj) {
