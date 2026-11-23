@@ -914,6 +914,46 @@ TEST_CASE("An AFC lane change does not unretract the toolchange retraction", "[W
     CHECK(longest_unretract_after_lane_change(true) < 1.);
 }
 
+TEST_CASE("An AFC change notes the retraction it left and the unretraction it plans before its T line", "[WipeTower]")
+{
+    // Both filaments feed toolhead 0 with a 5 mm toolchange retraction: each change retracts the outgoing
+    // filament 5 mm and does not unretract the incoming one, and a comment line before the T line says so.
+    DynamicPrintConfig config = wipe_tower_toolchange_config("klipper");
+    config.set_deserialize_strict({ { "single_extruder_multi_material", "0" },
+                                    { "multi_extruder_multi_material", "1" },
+                                    { "purge_in_prime_tower", "1" },
+                                    { "filament_toolhead", "0,0" },
+                                    { "use_relative_e_distances", "1" },
+                                    { "retraction_length", "0.5,0.5" },
+                                    { "retract_length_toolchange", "5,5" },
+                                    { "afc_enabled", "1" } });
+    const std::string gcode = slice_with_prime_tower(config);
+    CHECK_THAT(gcode, Catch::Matchers::ContainsSubstring("\n; AFC retraction: RETRACT=5.000 UNRETRACT=0.000\nT"));
+    // Every note is followed by its T line, and the T lines stay what any slicer writes.
+    std::istringstream lines(gcode);
+    std::string        line;
+    bool               noted         = false;
+    int                notes         = 0;
+    int                orphan_notes  = 0;
+    int                changed_lines = 0;
+    while (std::getline(lines, line)) {
+        const bool tool_line = line.size() > 1 && line[0] == 'T' && line[1] >= '0' && line[1] <= '9';
+        if (noted && !tool_line)
+            ++orphan_notes;
+        if (tool_line && line.find("RETRACT") != std::string::npos)
+            ++changed_lines;
+        noted = line.rfind("; AFC retraction: ", 0) == 0;
+        if (noted)
+            ++notes;
+    }
+    CHECK(notes > 1);
+    CHECK(orphan_notes == 0);
+    CHECK(changed_lines == 0);
+    // Without AFC nothing is noted.
+    config.set_deserialize_strict({ { "afc_enabled", "0" } });
+    CHECK_THAT(slice_with_prime_tower(config), !Catch::Matchers::ContainsSubstring("RETRACT="));
+}
+
 TEST_CASE("A Snapmaker U1 flushes a fifth of the lane change volume on the prime tower", "[WipeTower]")
 {
     // A U1 forms tips instead of cutting, so a lane change flushes 56 mm3 of the 280 mm3, still more than

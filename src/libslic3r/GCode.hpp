@@ -884,6 +884,10 @@ protected:
     // Orca: after a lane change on an AFC toolhead (the outgoing filament, on old_extruder_id, and the
     // incoming one on the same toolhead), forget the incoming filament's recorded retraction.
     void forget_lane_change_retraction(int old_extruder_id);
+    // Orca: say in a comment line before the T line of a filament change how far the outgoing filament is
+    // retracted and how far the G-code will unretract the incoming one, for an AFC that evens out a change
+    // it makes another way.
+    void add_afc_retracts(std::string &gcode, unsigned int new_filament_id, double outgoing_retracted);
 
     std::unique_ptr<CoolingBuffer>      m_cooling_buffer;
     std::unique_ptr<SpiralVase>         m_spiral_vase;
