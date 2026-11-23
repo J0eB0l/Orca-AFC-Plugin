@@ -173,7 +173,7 @@ class AFCObjectTest(unittest.TestCase):
     def test_multiple_mapping(self):
         s = parsed()
         self.assertFalse(s.multiple_mapping)
-        self.assertEqual(p.afc_object_query()["AFC"], ["multiple_tool_mapping", "message"])
+        self.assertEqual(p.afc_object_query()["AFC"], ["multiple_tool_mapping", "message", "toolchange_retraction"])
         p.merge_afc_object({"eventtime": 1.0, "status": {"AFC": {"multiple_tool_mapping": True}}}, s)
         self.assertTrue(s.multiple_mapping)
         self.assertEqual(len(s.lanes), 4)
@@ -184,6 +184,22 @@ class AFCObjectTest(unittest.TestCase):
         self.assertTrue(s.multiple_mapping)
         p.merge_afc_object({"AFC": {"multiple_tool_mapping": False}}, s)
         self.assertFalse(s.multiple_mapping)
+
+    def test_toolchange_retraction(self):
+        s = parsed()
+        self.assertFalse(s.toolchange_retraction)
+        p.merge_afc_object({"status": {"AFC": {"toolchange_retraction": True}}}, s)
+        self.assertTrue(s.toolchange_retraction)
+        # An answer without the field or without AFC leaves it alone.
+        p.merge_afc_object({"status": {"AFC": {"multiple_tool_mapping": True}}}, s)
+        self.assertTrue(s.toolchange_retraction)
+        p.merge_afc_object([], s)
+        self.assertTrue(s.toolchange_retraction)
+        p.merge_afc_object({"AFC": {"toolchange_retraction": False}}, s)
+        self.assertFalse(s.toolchange_retraction)
+        # Klipper answers the field of an AFC that does not have it with null: it does not even it out.
+        p.merge_afc_object({"status": {"AFC": {"toolchange_retraction": None}}}, s)
+        self.assertFalse(s.toolchange_retraction)
 
     def test_message(self):
         s = parsed()
@@ -263,6 +279,10 @@ class AFCObjectTest(unittest.TestCase):
         s = p.parse_objects_status({"status": status})
         self.assertFalse(s.spoolman)
         self.assertTrue(s.multiple_mapping)
+        self.assertFalse(s.toolchange_retraction)
+        status["AFC"]["toolchange_retraction"] = True
+        self.assertTrue(p.parse_objects_status({"status": status}).toolchange_retraction)
+        del status["AFC"]["toolchange_retraction"]
         self.assertEqual(len(s.units), 1)
         self.assertEqual(s.units[0].type, "Box_Turtle")
         self.assertEqual(s.units[0].lanes, ["lane1", "lane2"])

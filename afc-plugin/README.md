@@ -31,6 +31,14 @@ Klipper file to AFC:
   `PURGE_LENGTH` unless the print dialog's mapping changed them. A Snapmaker U1
   forms a tip on the filament it unloads instead of cutting it, so on a U1
   both purge a fifth of the table's volume, which is made for a printer that cuts;
+- the AFC build of OrcaSlicer notes before each `T` line how far the file
+  retracted the filament it leaves and how far it will unretract the one it
+  changes to. For an AFC that evens that out (it reports
+  `toolchange_retraction`), the `T` line gets both as
+  `RETRACT=<mm> UNRETRACT=<mm>`: a lane AFC loads to the nozzle tip is pulled
+  back by what the file is about to unretract, and a lane that waited in its
+  toolhead is pushed out by what the file will not. For any other AFC the `T`
+  lines stay as any slicer writes them;
 - a lane whose Spoolman spool has a saved flow K prints with it:
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` after its `T` line, and the file's own PA
   lines for it take that K (filaments with adaptive pressure advance keep theirs);

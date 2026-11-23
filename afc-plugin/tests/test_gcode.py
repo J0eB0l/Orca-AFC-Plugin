@@ -225,6 +225,84 @@ class PurgeTest(unittest.TestCase):
         self.assertTrue(out.splitlines(keepends=True)[1].endswith("\r\n"))
 
 
+NOTE = "; AFC retraction: RETRACT=5.000 UNRETRACT=0.000\n"
+
+
+class RetractionTest(unittest.TestCase):
+    """The file's toolchange retraction goes on a T line only for an AFC that evens it out."""
+
+    EVENS = g.Plan(retraction=True)
+
+    def run_file(self, body, plan):
+        text = body + config_block()
+        result = g.transform(text, plan)
+        self.assertTrue(result.text.endswith(config_block()))
+        return result.text[:-len(config_block())], result
+
+    def test_an_afc_that_evens_it_out_gets_both_lengths(self):
+        out, result = self.run_file("T0\nG1 X1\n" + NOTE + "T1\nG1 X2\n", self.EVENS)
+        self.assertEqual(out, "T0\nG1 X1\n" + NOTE + "T1 RETRACT=5.000 UNRETRACT=0.000\nG1 X2\n")
+        self.assertEqual(result.retractions, 1)
+        self.assertEqual(result.summary(), "2 tool changes, 0 lane-change purges, 0 spool PA settings, "
+                                           "1 changes with the file's retraction")
+
+    def test_any_other_afc_gets_the_t_line_as_sliced(self):
+        body = "T0\nG1 X1\n" + NOTE + "T1\nG1 X2\n"
+        out, result = self.run_file(body, g.Plan())
+        self.assertEqual(out, body)
+        self.assertEqual(result.retractions, 0)
+        self.assertEqual(result.summary(), "2 tool changes, 0 lane-change purges, 0 spool PA settings")
+
+    def test_an_earlier_pass_is_replaced_or_taken_off(self):
+        body = NOTE + "T1 RETRACT=1 UNRETRACT=2 ; change\n"
+        self.assertEqual(self.run_file(body, self.EVENS)[0], NOTE + "T1 RETRACT=5.000 UNRETRACT=0.000 ; change\n")
+        self.assertEqual(self.run_file(body, g.Plan())[0], NOTE + "T1 ; change\n")
+
+    def test_a_line_without_a_note_keeps_what_it_has(self):
+        body = "T1 RETRACT=1 UNRETRACT=2\n"
+        self.assertEqual(self.run_file(body, self.EVENS)[0], body)
+        self.assertEqual(self.run_file(body, g.Plan())[0], body)
+
+    def test_a_note_is_for_the_line_right_after_it(self):
+        for between in ("G1 X1\n", "\n", "; another comment\n"):
+            body = NOTE + between + "T1\n"
+            out, result = self.run_file(body, self.EVENS)
+            self.assertEqual(out, body, between)
+            self.assertEqual(result.retractions, 0, between)
+
+    def test_only_a_note_with_two_lengths_counts(self):
+        for note in ("; AFC retraction: RETRACT=x UNRETRACT=0.000\n", "; AFC retraction: RETRACT=5.000\n",
+                     "; AFC retraction: RETRACT=-5 UNRETRACT=0\n", ";AFC retraction: RETRACT=5 UNRETRACT=0\n"):
+            body = note + "T1 RETRACT=1 UNRETRACT=2\n"
+            self.assertEqual(self.run_file(body, self.EVENS)[0], body, note)
+
+    def test_a_comment_on_the_line_is_left_alone(self):
+        body = NOTE + "T1 ; RETRACT=9 as sliced\n"
+        self.assertEqual(self.run_file(body, g.Plan())[0], body)
+        self.assertEqual(self.run_file(body, self.EVENS)[0],
+                         NOTE + "T1 RETRACT=5.000 UNRETRACT=0.000 ; RETRACT=9 as sliced\n")
+
+    def test_beside_a_purge_and_a_renumbered_tool(self):
+        plan = g.Plan(tools={1: 3}, toolheads={0: 0, 1: 0}, retraction=True)
+        out, result = self.run_file("T0\n" + NOTE + "T1\n", plan)
+        length = g._format(100 / area(1.75), 1)
+        self.assertEqual(out.splitlines()[2], "T3 PURGE_LENGTH=%s RETRACT=5.000 UNRETRACT=0.000" % length)
+        self.assertEqual((result.purges, result.retractions), (1, 1))
+
+    def test_a_file_with_windows_line_ends(self):
+        text = ("T0\r\n" + NOTE.replace("\n", "\r\n") + "T1\r\n" + config_block().replace("\n", "\r\n"))
+        out = g.transform(text, self.EVENS).text
+        self.assertIn("\r\nT1 RETRACT=5.000 UNRETRACT=0.000\r\n", out)
+
+    def test_a_second_pass_changes_nothing_more(self):
+        once = g.transform("T0\n" + NOTE + "T1\n" + config_block(), self.EVENS).text
+        self.assertEqual(g.transform(once, self.EVENS).text, once)
+
+    def test_a_note_among_the_files_settings_is_not_one(self):
+        text = "T0\n" + config_block(extra=NOTE) + "T1 RETRACT=1 UNRETRACT=2\n"
+        self.assertEqual(g.transform(text, self.EVENS).text, text)
+
+
 class TimelapseTest(unittest.TestCase):
     def test_a_frame_before_each_layer_change(self):
         text = "PRINT_START\n;LAYER_CHANGE\n;Z:0.2\nG1 X1\n;LAYER_CHANGE\n;Z:0.4\nG1 X2\n"
@@ -353,6 +431,16 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(plan.tools, {0: 4, 2: 0})
         self.assertEqual(plan.toolheads, {0: 1, 1: 0, 2: 0})
         self.assertEqual(plan.flow_k, {0: 0.05, 2: 0.03})
+
+    def test_an_afc_that_evens_out_toolchange_retraction(self):
+        self.assertFalse(g.plan_for(snapshot(), 3).retraction)
+        evens = snapshot()
+        evens.toolchange_retraction = True
+        self.assertTrue(g.plan_for(evens, 3).retraction)
+        # A printer that did not answer evens out nothing, whatever an earlier read said.
+        evens.present = False
+        self.assertFalse(g.plan_for(evens, 3).retraction)
+        self.assertFalse(g.plan_for(None, 3).retraction)
 
     def test_without_afc(self):
         one_nozzle = g.FileSettings(nozzles=1)

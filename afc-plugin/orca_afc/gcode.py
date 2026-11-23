@@ -32,6 +32,15 @@ rewrites the file for what AFC does with it:
   Snapmaker U1 forms a tip on the filament it unloads instead of cutting it, so
   its lane changes purge a fifth of that volume (the table is made for a
   printer that cuts); the AFC build's prime tower flushes a fifth there too.
+- **Toolchange retraction.** The AFC build of OrcaSlicer notes before each `T`
+  line how far the file retracted the filament it leaves and how far it will
+  unretract the one it changes to (`; AFC retraction: RETRACT=<mm>
+  UNRETRACT=<mm>`). An AFC that reports `toolchange_retraction` evens out a
+  change it makes another way than the file plans it: a lane it loads to the
+  nozzle tip where the file unretracts one that waited in its toolhead, or the
+  reverse. For such an AFC the `T` line gets both lengths. For any other the
+  `T` lines stay as any slicer writes them, and lose the lengths an earlier
+  pass put there. The notes stay in the file either way.
 - **Spool pressure advance.** A lane whose Spoolman spool has a saved flow K
   (`flow_k`, written by AFC autocal) prints with it: a
   `SET_PRESSURE_ADVANCE ADVANCE=<k>` follows its `T` line, and the file's own
@@ -78,6 +87,10 @@ TOWER_CHANGE_END = "; CP TOOLCHANGE END"
 
 _T_LINE = re.compile(r"^([ \t]*)T(\d{1,3})(?=[ \t;\r\n]|$)(.*)$", re.S)
 _PURGE = re.compile(r"[ \t]*PURGE_LENGTH=[^ \t;\r\n]*", re.I)
+# The line the AFC build of OrcaSlicer writes before a T line: how far the file retracted the filament it
+# leaves and how far it will unretract the one it changes to.
+_RETRACTION_NOTE = re.compile(r"^; AFC retraction: RETRACT=(\d+(?:\.\d+)?) UNRETRACT=(\d+(?:\.\d+)?)[ \t]*\r?\n?$")
+_RETRACTS = re.compile(r"[ \t]+(?:UN)?RETRACT=[^ \t;\r\n]*", re.I)
 _TEMP_LINE = re.compile(r"^[ \t]*M10[49](?=[ \t;\r\n]|$)", re.I)
 _TEMP_TOOL = re.compile(r"(?<=[ \t])T(\d+)", re.I)
 _A_PARAM = re.compile(r"[ \t]A\d", re.I)
@@ -365,6 +378,7 @@ class Plan:
     inlets: dict = field(default_factory=dict)
     flow_k: dict = field(default_factory=dict)
     top_cover: bool = False  # the printer reports a U1 top cover on
+    retraction: bool = False  # AFC evens out the file's toolchange retraction (Snapshot.toolchange_retraction)
 
 
 def plan_for(snapshot: Snapshot | None, filaments: int, mapping: dict | None = None,
@@ -373,7 +387,8 @@ def plan_for(snapshot: Snapshot | None, filaments: int, mapping: dict | None = N
     `snapshot`. `mapping` is the print dialog's filament -> AFC T number;
     without it each filament prints as its own T number. Without AFC data, a
     file sliced for one nozzle still knows every lane feeds toolhead 0."""
-    plan = Plan(top_cover=snapshot is not None and snapshot.top_cover)
+    plan = Plan(top_cover=snapshot is not None and snapshot.top_cover,
+                retraction=snapshot is not None and snapshot.present and snapshot.toolchange_retraction)
     for filament in range(filaments):
         tool = mapping.get(filament, filament) if mapping else filament
         if tool != filament:
@@ -399,10 +414,13 @@ class Result:
     pressure_advance: int = 0
     top_cover: str = ""  # the U1 top cover mode this rewrite set
     chamber_lines: int = 0  # M141 and M191 lines dropped from a U1 file
+    retractions: int = 0  # T lines that got the file's retraction for AFC
 
     def summary(self) -> str:
         text = "%d tool changes, %d lane-change purges, %d spool PA settings" % (
             self.tool_changes, self.purges, self.pressure_advance)
+        if self.retractions:
+            text += ", %d changes with the file's retraction" % self.retractions
         if self.top_cover:
             text += ", U1 top cover: " + self.top_cover
         if self.chamber_lines:
@@ -466,9 +484,11 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
     in_config = False
     in_tower_change = False
     fan_off_next = False  # the cavity fan line after a dropped M191 goes too
+    noted = None          # the retraction note of the line before, for the T line it is written for
     out = []
     for line in lines:
         first = line.lstrip(" \t")[:1]
+        note, noted = noted, None
         if fan_off_next:
             fan_off_next = False
             if _AUX_FAN_OFF.match(line):
@@ -487,6 +507,9 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 in_tower_change = True
             elif line.startswith(TOWER_CHANGE_END):
                 in_tower_change = False
+            elif not in_config:
+                match = _RETRACTION_NOTE.match(line)
+                noted = match.groups() if match else None
             out.append(line)
             continue
         if in_config or not first:
@@ -536,7 +559,15 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                 if purge >= 0.05:
                     purge_text = " PURGE_LENGTH=" + _format(purge, 1)
                     result.purges += 1
-                line = "%sT%d%s%s%s" % (indent, renumber.get(number, number), purge_text, rest, newline)
+                retract_text = ""
+                if note:
+                    # What an earlier pass put on the line goes; an AFC that evens it out gets the note's.
+                    params, sep, comment = rest.partition(";")
+                    rest = _RETRACTS.sub("", params) + sep + comment
+                    if plan.retraction:
+                        retract_text = " RETRACT=%s UNRETRACT=%s" % note
+                        result.retractions += 1
+                line = "%sT%d%s%s%s%s" % (indent, renumber.get(number, number), purge_text, retract_text, rest, newline)
                 out.append(line)
                 if filament in plan.flow_k and not settings.adaptive(filament):
                     out.append("SET_PRESSURE_ADVANCE ADVANCE=%s %s\n" % (_format(plan.flow_k[filament], 4), PA_NOTE))

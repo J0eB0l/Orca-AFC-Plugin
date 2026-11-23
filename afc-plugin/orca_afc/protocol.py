@@ -159,6 +159,8 @@ class Snapshot:
     spoolman: bool = False    # AFC has Spoolman configured
     spoolman_url: str = ""    # Spoolman base URL when AFC reports one
     multiple_mapping: bool = False
+    # AFC evens out a file's toolchange retraction from RETRACT and UNRETRACT on its T lines
+    toolchange_retraction: bool = False
     current_lane: str = ""    # lane loaded in the active toolhead
     extruders: list = field(default_factory=list)
     units: list = field(default_factory=list)  # [Unit]
@@ -391,6 +393,7 @@ def _read_afc_object(afc: dict, out: Snapshot) -> None:
     out.version = _str(afc, "version")
     out.current_lane = _str(afc, "current_load")
     out.multiple_mapping = _bool(afc, "multiple_tool_mapping")
+    out.toolchange_retraction = _bool(afc, "toolchange_retraction")
     spoolman = afc.get("spoolman")
     if spoolman is not None:
         out.spoolman = (isinstance(spoolman, str) and bool(spoolman)) or spoolman is True
@@ -506,7 +509,7 @@ def afc_object_query() -> dict:
     autocal holds for each lane. A printer
     without those objects answers them with null fields (see
     _read_u1_print_options)."""
-    return {"AFC": ["multiple_tool_mapping", "message"],
+    return {"AFC": ["multiple_tool_mapping", "message", "toolchange_retraction"],
             "print_task_config": ["auto_bed_leveling", "flow_calibrate", "time_lapse_camera"],
             "purifier": ["power_detected"],
             "AFC_autocal": ["lane_k"]}
@@ -524,6 +527,8 @@ def merge_afc_object(status, out: Snapshot) -> None:
     afc = st.get("AFC")
     if isinstance(afc, dict) and afc.get("multiple_tool_mapping") is not None:
         out.multiple_mapping = _bool(afc, "multiple_tool_mapping")
+    if isinstance(afc, dict) and afc.get("toolchange_retraction") is not None:
+        out.toolchange_retraction = _bool(afc, "toolchange_retraction")
     if isinstance(afc, dict):
         _read_message(afc, out)
 
