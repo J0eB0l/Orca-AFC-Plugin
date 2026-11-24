@@ -207,7 +207,9 @@ Then:
   runs before CHANGE_TOOL. A print file carries the toolhead of each lane
   behind a switch: one `AFC_BRIDGEBOX_SWITCH_ASSIGN TOOL=T<n> EXTRUDER=<extruder> UNLOAD=1`
   line per T number before its first command, for the toolhead that filament
-  was sliced for. An inlet holds one lane at a time, so a lane another one
+  was sliced for. AFC puts a lane such a line moved back on its unit's own
+  extruder once the print is over and the lane is out of its toolhead. An
+  inlet holds one lane at a time, so a lane another one
   took out of its toolhead loads again when it next prints: back in a toolhead
   that last printed it, its `T` line gets the file's prime volume as
   `PURGE_LENGTH`, so AFC purges its least. The suggested spool layout of the
