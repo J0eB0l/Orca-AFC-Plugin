@@ -439,6 +439,10 @@ void SyncAmsInfoDialog::update_map_when_change_map_mode()
                 m_cur_colors_in_thumbnail[i] = result;
             }
         }
+        // Orca: a printer agent's empty slots keep the project's filaments, so no tray moves up the list.
+        const std::vector<std::string> &names = m_ams_combo_info.ams_names;
+        if (std::find(names.begin(), names.end(), std::string()) != names.end())
+            m_tip_text->SetLabel(m_tip_attention_keep_slots);
     }
     update_thumbnail_data_accord_plate_index(false);
 }
@@ -972,6 +976,7 @@ SyncAmsInfoDialog::SyncAmsInfoDialog(wxWindow *parent, SyncInfo &info) :
         tip_sizer->Add(m_attention_text, 0, wxALIGN_LEFT | wxTOP, FromDIP(2));
         m_tip_attention_color_map = _L("Only synchronize filament type and color, not including AMS slot information.");
         m_tip_attention_override  = _L("Replace the project filaments list sequentially based on printer filaments. And unused printer filaments will be automatically added to the end of the list.");
+        m_tip_attention_keep_slots = _L("Each printer filament replaces the project filament of its own slot. A slot the printer has no filament in keeps the project's filament.");
         m_tip_text = new Label(m_scrolledWindow, m_tip_attention_color_map, LB_AUTO_WRAP);
         m_tip_text->SetMinSize(wxSize(SyncAttentionTipWidth, -1));
         m_tip_text->SetMaxSize(wxSize(SyncAttentionTipWidth, -1));
@@ -2957,7 +2962,9 @@ void SyncAmsInfoDialog::generate_override_fix_ams_list()
                 for (auto col : m_ams_combo_info.ams_multi_color_filment[index]) {
                     cols.push_back(decode_ams_color(col));
                 }
-                it->second->item->set_ams_info(ams_color, ams_id, 0, cols);//generate_override_fix_ams_list
+                // Orca: a printer agent's empty slot has no tray, so its filament stays and shows as unmapped.
+                if (!ams_id.empty())
+                    it->second->item->set_ams_info(ams_color, ams_id, 0, cols);//generate_override_fix_ams_list
                 index++;
             }
         }

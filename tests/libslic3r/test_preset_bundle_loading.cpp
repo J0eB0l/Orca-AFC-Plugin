@@ -5785,6 +5785,42 @@ TEST_CASE("An empty AMS slot between loaded single-colour slots keeps every slot
         CHECK(multi[i] == colours[i]);
 }
 
+// A printer agent lists every slot, an empty one as a placeholder that an overwriting sync leaves alone, so
+// the trays the sync window draws under the project's filaments have to stay in line with the slots.
+TEST_CASE("The trays listed for an overwriting sync stay on their own slots past an empty one", "[Preset][Bundle][AMS]")
+{
+    PresetBundle bundle;
+    Preset      &pla = add_inmemory_preset(bundle.filaments, "System PLA", "");
+    pla.is_system    = true;
+    pla.filament_id  = "GFA00";
+    bundle.set_num_filaments(3u, std::string("#111111"));
+    bundle.filament_presets = {"System PLA", "System PLA", "System PLA"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = {"#101010", "#202020", "#303030"};
+
+    auto add_slot = [&](int slot, const std::string &name, const std::string &colour) {
+        const bool         empty = colour.empty();
+        DynamicPrintConfig config;
+        config.set_key_value("filament_id", new ConfigOptionStrings{empty ? "" : "GFA00"});
+        config.set_key_value("filament_colour", new ConfigOptionStrings{colour});
+        config.set_key_value("filament_multi_colour", new ConfigOptionStrings{});
+        config.set_key_value("filament_type", new ConfigOptionStrings{empty ? "" : "PLA"});
+        config.set_key_value("tray_name", new ConfigOptionStrings{name});
+        config.set_key_value("filament_slot_placeholder", new ConfigOptionBools{empty});
+        bundle.filament_ams_list.emplace(slot, std::move(config));
+    };
+    add_slot(0, "HT-A", "");
+    add_slot(1, "A1", "#FF0000");
+    add_slot(2, "A2", "");
+    add_slot(3, "A3", "#00FF00");
+    add_slot(4, "A4", "");
+
+    // An empty slot shows the project's filament with no tray name, gray past the project's filaments.
+    AMSComboInfo info;
+    bundle.get_ams_cobox_infos(info);
+    CHECK(info.ams_names == std::vector<std::string>{"", "A1", "", "A3", ""});
+    CHECK(info.ams_filament_colors == std::vector<std::string>{"#101010", "#FF0000", "#303030", "#00FF00", "#CECECE"});
+}
+
 // A user preset carries its system parent's filament_id, so a slot holding one for the filament a
 // tray reports keeps it through a sync; a slot whose tray holds another filament takes that filament.
 TEST_CASE("Syncing the AMS keeps a slot's user preset for the tray's filament", "[Preset][Bundle][AMS]")

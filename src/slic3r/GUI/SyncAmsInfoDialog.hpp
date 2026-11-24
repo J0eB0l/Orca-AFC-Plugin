@@ -311,6 +311,7 @@ private:
     wxStaticText *m_attention_text{nullptr};
     wxString m_tip_attention_color_map;
     wxString m_tip_attention_override;
+    wxString m_tip_attention_keep_slots; // Orca: for a printer agent's list with empty slots
     Label* m_tip_text{nullptr};
     //wxStaticText *m_specify_color_cluster_title = nullptr;
     //wxStaticText*  m_used_colors_tip_text{nullptr};

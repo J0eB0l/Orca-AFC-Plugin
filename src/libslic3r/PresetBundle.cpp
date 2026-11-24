@@ -4638,6 +4638,17 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
         auto  filament_changed     = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
         auto  filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colour")->values;
         if (filament_id.empty()) {
+            // Orca: an empty slot of a printer agent keeps the project's filament at overwrite, and the trays after
+            // it their own slots (sync_ams_list): it counts as that filament, with no tray name.
+            if (ams.has("filament_slot_placeholder") && ams.opt_bool("filament_slot_placeholder", 0u)) {
+                const size_t                    slot   = combox_info.ams_names.size();
+                const std::vector<std::string> &colors = project_config.option<ConfigOptionStrings>("filament_colour")->values;
+                const std::string               color  = slot < colors.size() && !colors[slot].empty() ? colors[slot] : "#CECECE";
+                combox_info.ams_filament_presets.push_back(slot < this->filament_presets.size() ? this->filament_presets[slot] : std::string());
+                combox_info.ams_filament_colors.push_back(color);
+                combox_info.ams_multi_color_filment.push_back({color});
+                combox_info.ams_names.emplace_back();
+            }
             continue;
         }
         if (!filament_changed && this->filament_presets.size() > combox_info.ams_filament_presets.size()) {
