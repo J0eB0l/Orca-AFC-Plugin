@@ -212,7 +212,8 @@ Then:
   inlet holds one lane at a time, so a lane another one
   took out of its toolhead loads again when it next prints: back in a toolhead
   that last printed it, its `T` line gets the file's prime volume as
-  `PURGE_LENGTH`, so AFC purges its least. The suggested spool layout of the
+  `PURGE_LENGTH`, on the prime tower too, so AFC purges its least and not its
+  default length. The suggested spool layout of the
   AFC build reads each lane's switch, inlet and reachable toolheads, and
   prints two filaments of one unit through a nozzle each when the flushes
   that skips take longer than the tool changes it adds.

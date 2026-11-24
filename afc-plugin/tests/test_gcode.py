@@ -198,11 +198,20 @@ class PurgeTest(unittest.TestCase):
         self.assertAlmostEqual(purge(out, 3), round(45 / area(1.75), 1))   # 1 back
         self.assertIsNone(purge(out, 4))                                   # 2 was never taken out
 
-    def test_the_tower_primes_a_lane_that_comes_back(self):
+    def test_a_lane_that_comes_back_on_the_tower_primes_too(self):
+        # AFC loads it there as anywhere, and a T line with no length gets AFC's default purge.
         plan = g.Plan(toolheads={0: 0, 2: 1}, inlets={0: self.INLET, 2: self.INLET})
         out = self.run_file("T0\n" + tower_change(2) + tower_change(0) + tower_change(2), plan, extra=TOWER + self.PRIME)
-        self.assertNotIn("PURGE_LENGTH", out)
-        # Off the tower AFC primes it.
+        self.assertIsNone(purge(out, 0))  # the first lane each toolhead loads
+        self.assertIsNone(purge(out, 3))
+        self.assertAlmostEqual(purge(out, 8), round(45 / area(1.75), 1))
+        self.assertAlmostEqual(purge(out, 13), round(45 / area(2.85), 1))
+        # The same with the tower only priming ("Purge in prime tower" off).
+        tower = TOWER.replace("purge_in_prime_tower = 1", "purge_in_prime_tower = 0")
+        out = self.run_file("T0\n" + tower_change(2) + tower_change(0) + tower_change(2), plan, extra=tower + self.PRIME)
+        self.assertEqual([purge(out, n) for n in (0, 3, 8, 13)],
+                         [None, None, round(45 / area(1.75), 1), round(45 / area(2.85), 1)])
+        # And off the tower.
         out = self.run_file("T0\n" + tower_change(2) + "T0\n", plan, extra=TOWER + self.PRIME)
         self.assertAlmostEqual(purge(out, 6), round(45 / area(1.75), 1))
 

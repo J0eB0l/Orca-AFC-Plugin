@@ -27,11 +27,12 @@ rewrites the file for what AFC does with it:
   print dialog's mapping. Every other lane change still goes to the poop. A
   filament switch inlet holds one lane at a time, so a lane another one took
   out of its toolhead loads again when it next prints: back in a toolhead
-  that last printed it, off the tower, it gets the file's prime volume as its
-  PURGE_LENGTH, so AFC purges its least and not its default length. A
-  Snapmaker U1 forms a tip on the filament it unloads instead of cutting it, so
-  its lane changes purge a fifth of that volume (the table is made for a
-  printer that cuts); the AFC build's prime tower flushes a fifth there too.
+  that last printed it, it gets the file's prime volume as its PURGE_LENGTH,
+  on the prime tower as well, so AFC purges its least and not its default
+  length. A Snapmaker U1 forms a tip on the filament it unloads instead of
+  cutting it, so its lane changes purge a fifth of the flushing volume (the
+  table is made for a printer that cuts); the AFC build's prime tower flushes
+  a fifth there too.
 - **Toolchange retraction.** The AFC build of OrcaSlicer notes before each `T`
   line how far the file retracted the filament it leaves and how far it will
   unretract the one it changes to (`; AFC retraction: RETRACT=<mm>
@@ -549,7 +550,7 @@ def transform(text: str, plan: Plan, settings: FileSettings | None = None) -> Re
                     if before >= 0 and before != filament and not flushed:
                         volume = settings.flush_volume(head, before, filament)
                         purge = volume / area if area > 0 else 0.0
-                    elif back and before == filament and not in_tower_change:
+                    elif back and before == filament:
                         purge = settings.prime_volume / area if area > 0 else 0.0
                     # What the file had there is replaced, so the line carries only this purge.
                     rest = _PURGE.sub("", rest)
