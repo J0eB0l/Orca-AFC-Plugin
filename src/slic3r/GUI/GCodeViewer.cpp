@@ -1772,6 +1772,7 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     m_toolhead_lanes = false;
     m_switch_filaments.clear();
     m_switch_lanes = false;
+    m_switch_split = false;
     const auto* afc = print.full_print_config().option<ConfigOptionBool>("afc_enabled");
     if (!print.is_BBL_printer() && afc && afc->value && print.config().nozzle_diameter.values.size() > 1) {
         m_toolhead_nozzles = print.config().nozzle_diameter.values;
@@ -1788,6 +1789,8 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
             const std::vector<int>& own    = print.config().filament_toolhead.values;
             const std::vector<int>& other  = print.config().filament_switch_toolhead.values;
             const std::vector<int>  sliced = print.lane_toolheads();
+            const std::vector<int>& inlets = print.config().filament_switch_inlet.values;
+            std::map<int, int>      inlet_head; // the toolhead the first used filament of each inlet prints on
             auto nozzle = [this](int head) { return size_t(head) < m_toolhead_nozzles.size() ? m_toolhead_nozzles[head] : 0.; };
             for (auto extruder_id : m_viewer.get_used_extruders_ids()) {
                 if (extruder_id >= own.size() || extruder_id >= other.size() || extruder_id >= sliced.size() || other[extruder_id] < 0 ||
@@ -1797,6 +1800,8 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
                 m_switch_lanes = m_viewer.get_used_extruders_ids().size() > 1;
                 if (sliced[extruder_id] != own[extruder_id])
                     m_switch_filaments.push_back(int(extruder_id) + 1);
+                if (extruder_id < inlets.size() && inlets[extruder_id] >= 0)
+                    m_switch_split |= inlet_head.emplace(inlets[extruder_id], sliced[extruder_id]).first->second != sliced[extruder_id];
             }
         }
     }
@@ -5775,8 +5780,12 @@ void GCodeViewer::render_legend_toolhead_groups(float window_padding)
                                                   unsigned(m_switch_filaments.size())),
                                         filaments),
                            ImGui::GetContentRegionAvail().x);
-    } else if (m_switch_lanes)
-        imgui.text_wrapped(_u8L("The filament switch keeps its lanes on their own tool: the other tool would not make this print shorter."),
+    } else if (m_switch_split)
+        // TRN "already": the lanes are where an earlier print or the user left them, which the printer keeps.
+        imgui.text_wrapped(_u8L("The filament switch already feeds filaments of one inlet to different tools: moving one to the other tool would not make this print shorter."),
+                           ImGui::GetContentRegionAvail().x);
+    else if (m_switch_lanes)
+        imgui.text_wrapped(_u8L("The filament switch keeps its lanes on the tool they are on now: the other tool would not make this print shorter."),
                            ImGui::GetContentRegionAvail().x);
     // The lanes that change tools least for this print, and Sync layout to AFC once the spools are moved.
     if (m_toolhead_lanes) {

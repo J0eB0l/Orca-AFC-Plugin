@@ -108,9 +108,10 @@ the other has a nozzle of another size, as its paths are made for the nozzle of 
 toolhead cannot reach its parts, and on a plate printed by object. `Print::lane_toolheads` says where each lane
 was sliced. The prime tower plans its lane change flushes from it, the file's `filament_toolhead` line
 carries it to the agent, and the preview's Filament Grouping box names the filaments that print on the
-other toolhead. A layout synced from the dialog names the toolheads itself, and so do trays picked in the
-print dialog that need another slice. Those filaments then stay on the toolhead named
-(`filament_switch_toolhead` cleared) until the filaments are synced again.
+other toolhead. When none moves and the printer already has filaments of one inlet on different toolheads,
+where an earlier print left their lanes, the box says that instead. A layout synced from the dialog names
+the toolheads itself, and so do trays picked in the print dialog that need another slice. Those filaments
+then stay on the toolhead named (`filament_switch_toolhead` cleared) until the filaments are synced again.
 
 A printer without a filament switch is planned as before: its layout counts lane changes only.
 

@@ -233,9 +233,11 @@ private:
     // suggested spool layout needs.
     bool                                       m_toolhead_lanes{false};
     // ... and its filament switch: the used filaments the slice sent to the other toolhead their switch reaches
-    // (numbered from 1), and whether it could have sent any.
+    // (numbered from 1), whether it could have sent any, and whether used filaments of one inlet print on
+    // different toolheads.
     std::vector<int>                           m_switch_filaments;
     bool                                       m_switch_lanes{false};
+    bool                                       m_switch_split{false};
 
     // bounding box of toolpaths
     BoundingBoxf3 m_paths_bounding_box;
