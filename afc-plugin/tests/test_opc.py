@@ -1,5 +1,6 @@
 """Reading OrcaSlicer's packed vendor profiles (system/<vendor>.opc)."""
 
+import json
 import os
 import struct
 import tempfile
@@ -58,9 +59,9 @@ def model(name, model_id):
             b"".join(s("") for _ in range(9)))
 
 
-def body(vendor, models=(), filaments=(), machines=(), version=2):
-    profile = s(vendor) + s(vendor) + s("1.0.0") + s("") + s("") + q(len(models)) + b"".join(models) + ss([]) + ss([])
-    return (struct.pack("<I", version) + s(vendor) + s("1.0.0") + ss(KEYS) + q(len(TYPES)) +
+def body(vendor, models=(), filaments=(), machines=(), version=2, stamp="1.0.0"):
+    profile = s(vendor) + s(vendor) + s(stamp) + s("") + s("") + q(len(models)) + b"".join(models) + ss([]) + ss([])
+    return (struct.pack("<I", version) + s(vendor) + s(stamp) + ss(KEYS) + q(len(TYPES)) +
             struct.pack("<%dH" % len(TYPES), *TYPES) + ss(["", "on"]) + q(1) + s(vendor) + profile +
             entries([entry("0.20mm", "process/0.20mm.json", config=CONFIG)]) + entries(list(filaments)) +
             entries(list(machines)) + q(0))
@@ -88,7 +89,7 @@ class ReadTest(unittest.TestCase):
             machines=[entry("Generic ToolChanger Printer 0.4 nozzle", "machine/MyToolChanger 0.4.json",
                             config=CONFIG)]))
         vendor = opc.read(path)
-        self.assertEqual(vendor.name, "Custom")
+        self.assertEqual((vendor.name, vendor.version), ("Custom", "1.0.0"))
         self.assertEqual(vendor.models, {"Generic ToolChanger Printer": "my_toolchanger_01"})
         self.assertEqual([(e.name, e.inherits, e.filament_id, e.instantiation) for e in vendor.filaments],
                          [("Generic PLA @MyToolChanger", "Generic PLA @System", "", "true"),
@@ -125,6 +126,31 @@ class PackedIdTest(unittest.TestCase):
             self.assertEqual(of("Generic PLA @System", "OrcaFilamentLibrary"), "OFDSrzZ8")
             self.assertEqual(of("Loop"), "")
             self.assertEqual(of("Not there"), "")
+
+    def test_json_files_left_from_an_older_install(self):
+        """OrcaSlicer reads a vendor from its .opc unless the vendor's .json
+        beside it is newer, whatever JSON files are still on disk."""
+        with tempfile.TemporaryDirectory() as root:
+            system = os.path.join(root, "system")
+            write(os.path.join(system, "OrcaFilamentLibrary.opc"), body("OrcaFilamentLibrary", stamp="2.4.0.26", filaments=[
+                entry("Bambu PLA Basic @System", "filament/Bambu/Bambu PLA Basic @System.json",
+                      inherits="Bambu PLA Basic @base"),
+                entry("Bambu PLA Basic @base", "filament/Bambu/Bambu PLA Basic @base.json",
+                      inherits="fdm_filament_pla", filament_id="OFoiVqVM")]))
+            folder = os.path.join(system, "OrcaFilamentLibrary", "filament", "Bambu")
+            os.makedirs(folder)
+            for name, data in (("Bambu PLA Basic @System", {"inherits": "Bambu PLA Basic @base"}),
+                               ("Bambu PLA Basic @base", {"filament_id": "OGFA00"})):
+                with open(os.path.join(folder, name + ".json"), "w") as f:
+                    json.dump(data, f)
+            profile = os.path.join(system, "OrcaFilamentLibrary.json")
+            candidate = presets.Candidate(name="Bambu PLA Basic @System", type="PLA", vendor="", system=True,
+                                          file=os.path.join(folder, "Bambu PLA Basic @System.json"),
+                                          base="Bambu PLA Basic @System")
+            for version, wanted in (("02.03.02.60", "OFoiVqVM"), ("2.4.0.26", "OFoiVqVM"), ("2.4.0.27", "OGFA00")):
+                with open(profile, "w") as f:
+                    json.dump({"name": "OrcaFilamentLibrary", "version": version}, f)
+                self.assertEqual(presets.FilamentIds().of(candidate), wanted, version)
 
 
 if __name__ == "__main__":

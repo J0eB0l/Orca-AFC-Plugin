@@ -248,25 +248,30 @@ class FilamentIds:
     def of(self, candidate: Candidate) -> str:
         path = candidate.file
         if path not in self._ids:
-            if os.path.isfile(path):
-                self._ids[path] = self._read(path)
+            packed = self._packed(path, candidate.base or candidate.name)
+            if packed is not None:
+                self._ids[path] = packed
             else:
-                self._ids[path] = self._packed(path, candidate.base or candidate.name)
+                self._ids[path] = self._read(path) if os.path.isfile(path) else ""
         return self._ids[path]
 
-    def _packed(self, path: str, name: str) -> str:
-        """A system preset's id from its vendor's .opc: the path OrcaSlicer
-        gives it is system/<vendor>/<sub path>, which no longer exists."""
+    def _packed(self, path: str, name: str):
+        """A system preset's id from its vendor's .opc, or None when OrcaSlicer
+        reads the preset from its JSON file. The path OrcaSlicer gives a
+        packed preset is system/<vendor>/<sub path>, which is gone or is left
+        over from an older install, with that version's ids."""
         root = _profiles_root(path)
         if not root or not name:
-            return ""
+            return None
         vendor = os.path.relpath(path, root).split(os.sep)[0]
+        if name not in (self._pack(root, vendor) or {}):
+            return None
         return self._packed_id(root, vendor, name, set())
 
     def _packed_id(self, root: str, vendor: str, name: str, seen: set) -> str:
         """As OrcaSlicer resolves it: the preset's own id, else its parent's,
         looked up in its own vendor first, then in the filament library."""
-        entries = self._pack(root, vendor)
+        entries = self._pack(root, vendor) or {}
         entry = entries.get(name)
         if entry is None or (vendor, name) in seen:
             return ""
@@ -276,11 +281,17 @@ class FilamentIds:
         parent_vendor = vendor if entry.inherits in entries else LIBRARY
         return self._packed_id(root, parent_vendor, entry.inherits, seen)
 
-    def _pack(self, root: str, vendor: str) -> dict:
+    def _pack(self, root: str, vendor: str):
+        """The vendor's filament presets by name when OrcaSlicer reads the
+        vendor from its .opc, else None: as PresetBundle::read_vendor does, the
+        .opc counts when its stamp is at least the version of the vendor's
+        .json beside it, or there is no .json."""
         path = os.path.join(root, vendor + ".opc")
         if path not in self._packs:
             packed = opc.read(path)
-            self._packs[path] = {e.name: e for e in packed.filaments} if packed is not None else {}
+            if packed is not None and not _covers(packed.version, os.path.join(root, vendor + ".json")):
+                packed = None
+            self._packs[path] = {e.name: e for e in packed.filaments} if packed is not None else None
         return self._packs[path]
 
     def _read(self, path: str) -> str:
@@ -323,6 +334,23 @@ def _profiles_root(path: str) -> str:
         if parts[i].lower() == "system":
             return os.sep.join(parts[:i + 1]) or os.sep
     return ""
+
+
+def _covers(stamp: str, profile: str) -> bool:
+    """Whether an .opc made from vendor version `stamp` is at least the
+    vendor .json `profile` (PresetCacheFormat.cpp cache_covers_version)."""
+    if not os.path.exists(profile):
+        return True
+    data = _load(profile)
+    on_disk = _version(data.get("version")) if isinstance(data, dict) else None
+    cached = _version(stamp)
+    return on_disk is not None and cached is not None and cached >= on_disk
+
+
+def _version(text) -> tuple:
+    """A profile version's numbers: "02.03.02.60" -> (2, 3, 2, 60); None when it has none."""
+    found = re.match(r"\s*(\d+(?:\.\d+)*)", str(text or ""))
+    return tuple(int(n) for n in found.group(1).split(".")) if found else None
 
 
 def _load(path: str):

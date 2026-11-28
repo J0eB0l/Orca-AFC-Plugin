@@ -40,6 +40,7 @@ class Entry:
 @dataclass
 class Vendor:
     name: str
+    version: str      # the vendor version the cache was made from
     models: dict      # printer model name -> model_id
     filaments: list   # Entry
     machines: list    # Entry
@@ -160,7 +161,7 @@ def read(path: str):
         if r.u32() != VERSION:
             return None
         name = r.string()
-        r.string()  # vendor version
+        version = r.string()
         r.strings()  # option names
         count = r.u64()
         types = list(struct.unpack("<%dH" % count, r.take(2 * count)))
@@ -174,4 +175,4 @@ def read(path: str):
         return None
     if r.pos != len(body):
         return None
-    return Vendor(name, models, filaments, machines)
+    return Vendor(name, version, models, filaments, machines)
