@@ -24,6 +24,11 @@ SWITCH_OBJECTS_MAX_AGE = 60.0  # seconds a printer's list of filament switch obj
 # long on its own thread; past it, Klipper is still at it and nothing is reported.
 LANE_MOVE_TIMEOUT = 900.0
 
+# The Spoolman filament field AFC reads a lane's OrcaSlicer filament id from, and the
+# name the plugin saved it under before AFC named the field.
+FILAMENT_ID_FIELD = "orca_filament_id"
+OLD_FILAMENT_ID_FIELD = "filament_id"
+
 _ACTION_WORDS = {"load": "loading", "unload": "unloading", "eject": "ejecting"}
 
 
@@ -237,21 +242,23 @@ class AFCManager:
 
     @staticmethod
     def _write_filament_id(call, filament: dict, filament_id: str, field_checked: bool = False) -> None:
-        """Put the id in a Spoolman filament's "filament_id" field, made first
-        when Spoolman has none."""
+        """Put the id in a Spoolman filament's "orca_filament_id" field, which
+        AFC reads a lane's filament id from, made first when Spoolman has none."""
         if not field_checked:
             fields = call("GET", "/v1/field/filament")
-            if not any(isinstance(f, dict) and f.get("key") == "filament_id" for f in fields or []):
-                call("POST", "/v1/field/filament/filament_id", {"name": "Filament ID", "field_type": "text"})
+            if not any(isinstance(f, dict) and f.get("key") == FILAMENT_ID_FIELD for f in fields or []):
+                call("POST", "/v1/field/filament/" + FILAMENT_ID_FIELD,
+                     {"name": "OrcaSlicer Filament ID", "field_type": "text"})
         extra = dict(filament.get("extra") or {})
         # Spoolman keeps every extra field JSON-encoded.
-        extra["filament_id"] = json.dumps(filament_id)
+        extra[FILAMENT_ID_FIELD] = json.dumps(filament_id)
         call("PATCH", "/v1/filament/%d" % filament["id"], {"extra": extra})
 
     def save_filament_id(self, client: Moonraker, spool: int, filament_id: str, spoolman_url: str = "") -> str:
         """Save OrcaSlicer's filament id on a spool's Spoolman filament, in its
-        "filament_id" field, unless the filament already holds one. Returns
-        an error, or ""."""
+        "orca_filament_id" field, unless the filament already holds one. An id
+        the filament holds under the older name (_old_filament_id()) is the one
+        saved. Returns an error, or ""."""
         error = ""
         for call in self._spoolman_calls(client, spoolman_url):
             try:
@@ -259,9 +266,9 @@ class AFCManager:
                 filament = record.get("filament") if isinstance(record, dict) else None
                 if not isinstance(filament, dict) or not isinstance(filament.get("id"), int):
                     return "Spoolman: spool %d has no filament" % spool
-                if protocol.spoolman_text((filament.get("extra") or {}).get("filament_id")):
+                if _held_filament_id(filament):
                     return ""
-                self._write_filament_id(call, filament, filament_id)
+                self._write_filament_id(call, filament, _old_filament_id(filament) or filament_id)
             except MoonrakerError as failure:
                 error = str(failure)
                 continue
@@ -273,8 +280,9 @@ class AFCManager:
         would get, the way the sync picks one for a spool (presets.product_id(),
     else the id of the spool's own preset, presets.own_id()):
         ([{filament, name, material, filament_id, preset, state}], error). The
-        state is "has" (an id is there), "fill" (one would be written) or
-        "none" (no system preset names its vendor and product, and the
+        state is "has" (an id is there), "fill" (one would be written: the one
+        the filament holds under the older field name, else the one worked
+        out) or "none" (no system preset names its vendor and product, and the
         spool's own preset would have no id of its own)."""
         error = ""
         for call in self._spoolman_calls(client, spoolman_url):
@@ -288,12 +296,14 @@ class AFCManager:
             return sorted(rows, key=lambda r: (order[r["state"]], r["name"].lower())), ""
         return [], error
 
-    def shelf_spools(self, client: Moonraker, candidates: list, ids, spoolman_url: str = "") -> tuple:
+    def shelf_spools(self, client: Moonraker, candidates: list, ids, spoolman_url: str = "",
+                     work_out: bool = True) -> tuple:
         """What the filament sync makes each Spoolman filament's own preset
         from (trays.spool_json()), loaded or not, so every filament can be
         picked while no spool of it is in a lane: (list, error). One per
         preset name; a filament with no name to give its preset, or no
-        preset of its material to copy, has none."""
+        preset of its material to copy, has none. `work_out` as in
+        presets.best()."""
         error = ""
         for call in self._spoolman_calls(client, spoolman_url):
             try:
@@ -307,7 +317,9 @@ class AFCManager:
                 names = presets.spool_preset_names(lane) if lane else []
                 if not names or names[0].lower() in named:
                     continue
-                base = presets.best(lane, candidates, ids)
+                # The id the filament holds picks the preset to copy, as a loaded spool's does.
+                lane.filament_id = _held_filament_id(record)
+                base = presets.best(lane, candidates, ids, work_out)
                 if base:
                     named.add(names[0].lower())
                     out.append(trays.spool_json(lane, names, base))
@@ -557,13 +569,25 @@ def _filament_lane(filament) -> Lane | None:
                 density=_number(filament.get("density"), float), diameter=_number(filament.get("diameter"), float))
 
 
+def _held_filament_id(filament: dict) -> str:
+    """The OrcaSlicer filament id a Spoolman filament holds, "" for none."""
+    return protocol.spoolman_text((filament.get("extra") or {}).get(FILAMENT_ID_FIELD))
+
+
+def _old_filament_id(filament: dict) -> str:
+    """The id a Spoolman filament holds under the field name used before AFC
+    named the field, "" for none. A filament with no id under the new name
+    takes this one, so the ids saved earlier carry over."""
+    return protocol.spoolman_text((filament.get("extra") or {}).get(OLD_FILAMENT_ID_FIELD))
+
+
 def _plan_row(filament, candidates: list, ids) -> dict | None:
     """One Spoolman filament for filament_id_plan(), None for a record that is not one."""
     lane = _filament_lane(filament)
     if lane is None:
         return None
-    has = protocol.spoolman_text((filament.get("extra") or {}).get("filament_id"))
-    filament_id = has or presets.product_id(lane, candidates, ids)
+    has = _held_filament_id(filament)
+    filament_id = has or _old_filament_id(filament) or presets.product_id(lane, candidates, ids)
     own = "" if filament_id else presets.own_id(lane, candidates, ids)
     preset = ""
     if filament_id:

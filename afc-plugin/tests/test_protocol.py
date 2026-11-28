@@ -107,6 +107,14 @@ class WebhookTest(unittest.TestCase):
         s = parsed(fixture)
         self.assertEqual((s.find_lane("lane1").filament_id, s.find_lane("lane2").filament_id), ("OF5CgdDq", ""))
         self.assertEqual(s.find_lane("lane5").filament_id, "")
+        self.assertTrue(s.filament_ids)
+
+    def test_lanes_carry_a_filament_id_only_where_afc_reports_one(self):
+        # An AFC whose lanes report no filament_id keeps none, whatever SET_FILAMENT_INFO it has.
+        self.assertFalse(parsed().filament_ids)
+        fixture = webhook_fixture()
+        fixture["status:"]["AFC"]["Turtle_1"]["lane1"]["filament_id"] = ""
+        self.assertTrue(parsed(fixture).filament_ids)
 
     def test_spool_article(self):
         self.assertEqual(p.spool_article({"filament": {"article_number": " GFA00 "}}), "GFA00")
@@ -343,8 +351,17 @@ class GcodeTest(unittest.TestCase):
     def test_lane_edit_filament_id(self):
         s = parsed()
         self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": "OF5CgdDq", "material": "PLA"}),
-                         ["SET_MATERIAL LANE=lane2 MATERIAL=PLA", "SET_FILAMENT_ID LANE=lane2 ID=OF5CgdDq"])
-        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": ""}), ["SET_FILAMENT_ID LANE=lane2"])
+                         ["SET_MATERIAL LANE=lane2 MATERIAL=PLA", "SET_FILAMENT_INFO LANE=lane2 FILAMENT_ID=OF5CgdDq"])
+        # An empty one clears.
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": ""}),
+                         ["SET_FILAMENT_INFO LANE=lane2 FILAMENT_ID="])
+        # One SET_FILAMENT_INFO carries it with the vendor and the name, after a new spool, which drops the old id.
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": "OF5CgdDq", "filament_name": "PolyLite PLA",
+                                                              "vendor": "Polymaker", "spool_id": 7}),
+                         ["SET_SPOOL_ID LANE=lane2 SPOOL_ID=7",
+                          'SET_FILAMENT_INFO LANE=lane2 VENDOR="Polymaker" NAME="PolyLite PLA" FILAMENT_ID=OF5CgdDq'])
+        self.assertEqual(p.build_lane_edit_gcode(s, "lane2", {"filament_id": "OF5CgdDq", "filament_name": "PolyLite PLA"}),
+                         ['SET_FILAMENT_INFO LANE=lane2 NAME="PolyLite PLA" FILAMENT_ID=OF5CgdDq'])
 
     def test_lane_edit_filament_info(self):
         s = parsed()

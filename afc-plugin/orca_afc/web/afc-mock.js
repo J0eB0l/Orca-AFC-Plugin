@@ -166,7 +166,7 @@
           return reply(msg.afc_id, true, '', state(false));
         }
         case 'filament_id_plan':
-          return reply(msg.afc_id, true, '', { rows: fidRows });
+          return reply(msg.afc_id, true, '', { rows: fidRows, saving: true });
         default:
           return reply(msg.afc_id, true, '', {});
       }

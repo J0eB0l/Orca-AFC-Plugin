@@ -266,9 +266,10 @@ def lane_of(snapshot: Snapshot, tray: int):
 def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict, filament_ids: bool = False,
                            info: tuple | None = None) -> list:
     """The tray edit popup's color and material for the lane, where they differ
-    from what AFC has, and with `filament_ids` (AFC has SET_FILAMENT_ID) the
-    picked preset's filament id, which AFC keeps with the spool and sends back
-    in lane_data. A reset (no tray_info_idx) drops the id of a lane with no
+    from what AFC has, and with `filament_ids` (AFC's lanes carry a filament
+    id, and the printer's "Match and save filament IDs" is ticked) the picked
+    preset's filament id, which AFC keeps with the spool and sends back in
+    lane_data. A reset (no tray_info_idx) drops the id of a lane with no
     Spoolman spool; a spool's own id comes from Spoolman.
 
     `info` is the picked preset's (vendor, filament name), given where AFC has
@@ -290,7 +291,7 @@ def filament_setting_gcode(snapshot: Snapshot, lane: Lane, request: dict, filame
     if isinstance(material, str) and material and material.upper() != (lane.material or "").upper():
         changes["material"] = material
     if (filament_ids and isinstance(picked, str) and re.fullmatch(r"[A-Za-z0-9_\-+.]{1,64}", picked)
-            and (picked != lane.filament_id or "material" in changes)):
+            and picked != lane.filament_id):
         changes["filament_id"] = picked
     if info and picked and lane.spool_id <= 0:
         for key, value, now in (("vendor", info[0], lane.vendor), ("filament_name", info[1], lane.filament_name)):

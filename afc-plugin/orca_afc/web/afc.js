@@ -297,6 +297,7 @@
 
   let runoutOpen = false;    // panel: the infinite spool sheet is open
   let fidOpen = false;       // panel: the filament ids sheet is open
+  let fidSaving = false;     // the printer's "Match and save filament IDs" is ticked
   let fidRows = null;        // its Spoolman filaments, null while they are read
   let stateJson = '';         // `state` as last drawn, to skip redrawing an unchanged poll
 
@@ -360,7 +361,7 @@
     const linked = chains().length;
     const runoutBtn = '<button class="btn' + (runoutOpen ? ' on' : '') + '" id="runout" title="Runout lanes: what AFC loads when a lane runs out">' + icon('infinite') +
       'Infinite spool' + (linked ? '<span class="count">' + linked + '</span>' : '') + '</button>';
-    const fidBtn = afc.spoolman ? '<button class="btn' + (fidOpen ? ' on' : '') + '" id="fid" title="The OrcaSlicer filament ID each Spoolman filament has, or gets at the next sync">' +
+    const fidBtn = afc.spoolman ? '<button class="btn' + (fidOpen ? ' on' : '') + '" id="fid" title="The OrcaSlicer filament ID each Spoolman filament has, or would get">' +
       'Filament IDs</button>' : '';
     let html = bar('AFC ' + esc(afc.version || '') + (afc.spoolman ? ' · Spoolman' : ''), stats + fidBtn + runoutBtn);
     html += '<div class="main"><div class="scroll" id="scroll">' + headsStrip(afc);
@@ -426,7 +427,9 @@
   async function readFilamentIds() {
     fidRows = null;
     try {
-      fidRows = (await call('filament_id_plan')).rows;
+      const plan = await call('filament_id_plan');
+      fidRows = plan.rows;
+      fidSaving = !!plan.saving;
     } catch (e) {
       fidRows = [];
       toast(e.message, true);
@@ -437,12 +440,13 @@
   function fidSheet() {
     const rows = fidRows || [];
     let html = '<div class="drawer wide" id="drawer"><div class="sheet-head"><span class="logo">' + icon('afc') + '</span>' +
-      '<div class="grow"><h2>Filament IDs</h2><span class="hint">OrcaSlicer picks a spool\'s preset by the filament ID on its Spoolman filament. ' +
-      'Each filament sync gives every filament with no ID the ID of its vendor\'s system preset for the product its name holds; a name that is only a color gets the vendor\'s plain preset, and a filament no system preset is gets the ID of its own preset. IDs already there stay.</span></div>' +
+      '<div class="grow"><h2>Filament IDs</h2><span class="hint">OrcaSlicer picks a spool\'s preset by the filament ID in the orca_filament_id field of its Spoolman filament, which AFC hands on with the lane. ' +
+      (fidSaving ? 'Each filament sync gives every filament with no ID the ID of its vendor\'s system preset for the product its name holds; a name that is only a color gets the vendor\'s plain preset, and a filament no system preset is gets the ID of its own preset. IDs already there stay.'
+        : 'Nothing is written while "Match and save filament IDs" is off in the printer\'s AFC settings: an ID already there is used, and this list shows the ID each other filament would get with it on.') + '</span></div>' +
       '<button class="btn icon ghost" id="close" title="Close">' + icon('close') + '</button></div><div class="sheet-body">';
     if (fidRows === null) html += '<div class="hint">Reading Spoolman…</div>';
     else if (!rows.length) html += '<div class="hint">Spoolman has no filaments.</div>';
-    const label = { fill: 'Gets an ID at the next sync', none: 'No preset names it', has: 'Has an ID' };
+    const label = { fill: fidSaving ? 'Gets an ID at the next sync' : 'Would get an ID', none: 'No preset names it', has: 'Has an ID' };
     let last = '';
     for (const r of rows) {
       if (r.state !== last) { html += '<div class="section-label">' + label[r.state] + '</div>'; last = r.state; }

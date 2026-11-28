@@ -164,6 +164,15 @@ Then:
   `flow_k`), which the slice uses over the preset's. This needs the AFC build of
   OrcaSlicer; official OrcaSlicer 2.5 picks the best fitting existing preset, or
   the generic one of the material.
+  A lane AFC holds an OrcaSlicer filament ID for (the `orca_filament_id` field of
+  its spool's Spoolman filament, or `SET_FILAMENT_INFO LANE=<lane>
+  FILAMENT_ID=<id>`) takes the preset with that ID. With **Match and save
+  filament IDs** ticked in the printer settings' AFC group (off by default),
+  sync also works the ID out for a spool that has none, from its vendor and
+  name, and saves it: on every Spoolman filament that lacks one, as its
+  `orca_filament_id`, and the preset picked in a tray's edit popup goes to AFC
+  as the lane's ID. An ID an earlier plugin version saved in a Spoolman
+  `filament_id` field is copied to `orca_filament_id` as it is.
   In the AFC build, sync also puts the lane load, lane unload and tool swap
   times AFC measured into the printer's load, unload and tool change times, so
   the time estimate counts the printer's own changes. They are the median of

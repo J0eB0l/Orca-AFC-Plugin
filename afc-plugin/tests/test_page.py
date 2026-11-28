@@ -94,6 +94,12 @@ class AFCPageTest(unittest.TestCase):
         answer = self.ask("filament_id_plan")
         self.assertTrue(answer["ok"])
         self.assertEqual([(r["filament"], r["state"]) for r in answer["data"]["rows"]], [(5, "none")])
+        self.assertFalse(answer["data"]["saving"])  # "Match and save filament IDs" is off by default
+
+    def test_filament_id_plan_says_ids_are_saved_with_the_box_ticked(self):
+        orca.bundle.printer["afc_filament_ids"] = "1"
+        self.fake.filaments = []
+        self.assertTrue(self.ask("filament_id_plan")["data"]["saving"])
 
     def test_lane_action(self):
         self.ask("get_state")

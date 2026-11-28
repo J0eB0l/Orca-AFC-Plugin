@@ -149,6 +149,10 @@ class Case(unittest.TestCase):
         self.assertEqual(self.agent.connect_printer(self.params), 0)
         self.calls.wait_for(lambda e: e[0] == "printer_connected")
 
+    def save_ids(self):
+        """Ticks "Match and save filament IDs" in the printer preset that prints to the fake."""
+        orca.bundle.printer.values.update({"print_host": self.fake.url, "afc_filament_ids": True})
+
     def send(self, payload):
         return self.agent.send_message_to_printer(self.dev_id, json.dumps(payload), 0, 0)
 
@@ -312,30 +316,53 @@ class StatusTest(Case):
         self.assertFalse([t for u in push["ams"]["ams"] for t in u["tray"] if "switch_toolheads" in t])
 
     def test_saves_the_matched_id_on_the_spoolman_filament(self):
+        self.save_ids()
         filament = {"id": 4, "name": "PolyLite", "extra": {}}
         self.fake.spools = {12: {"id": 12, "filament": filament}}
         self.connect()
         self.push()
         deadline = time.monotonic() + 5
-        while "filament_id" not in filament["extra"] and time.monotonic() < deadline:
+        while "orca_filament_id" not in filament["extra"] and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertEqual(filament["extra"]["filament_id"], '"GFL_POLYLITE"')
+        self.assertEqual(filament["extra"], {"orca_filament_id": '"GFL_POLYLITE"'})
+        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["orca_filament_id"])
+
+    def test_saves_no_id_while_the_box_is_off(self):
+        orca.bundle.printer.values["print_host"] = self.fake.url
+        filament = {"id": 4, "name": "PolyLite", "extra": {}}
+        self.fake.spools = {12: {"id": 12, "filament": filament}}
+        self.connect()
+        self.push()
+        self.agent._spoolman.call(lambda: None, 5)  # whatever went to Spoolman has been sent
+        self.assertEqual((filament["extra"], self.fake.filament_fields), ({}, []))
 
     def test_a_sync_gives_shelf_filaments_their_ids(self):
         # A filament no lane holds gets its id on a sync too; one with an id keeps it.
+        self.save_ids()
         self.fake.objects["AFC"]["spoolman"] = True
         shelf = {"id": 7, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"}, "extra": {}}
         kept = {"id": 8, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
-                "extra": {"filament_id": '"Pmine01"'}}
+                "extra": {"orca_filament_id": '"Pmine01"'}}
         self.fake.spools = {20: {"id": 20, "filament": shelf}, 21: {"id": 21, "filament": kept}}
         self.connect()
         self.push()
         self.assertTrue(self.agent.fetch_filament_info(self.dev_id, "Subscription"))
         deadline = time.monotonic() + 5
-        while "filament_id" not in shelf["extra"] and time.monotonic() < deadline:
+        while "orca_filament_id" not in shelf["extra"] and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertEqual(shelf["extra"].get("filament_id"), '"GFL_POLYLITE"')
-        self.assertEqual(kept["extra"]["filament_id"], '"Pmine01"')
+        self.assertEqual(shelf["extra"].get("orca_filament_id"), '"GFL_POLYLITE"')
+        self.assertEqual(kept["extra"], {"orca_filament_id": '"Pmine01"'})
+
+    def test_a_sync_gives_no_shelf_filament_an_id_while_the_box_is_off(self):
+        orca.bundle.printer.values["print_host"] = self.fake.url
+        self.fake.objects["AFC"]["spoolman"] = True
+        shelf = {"id": 7, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"}, "extra": {}}
+        self.fake.spools = {20: {"id": 20, "filament": shelf}}
+        self.connect()
+        self.push()
+        self.assertTrue(self.agent.fetch_filament_info(self.dev_id, "Subscription"))
+        self.agent._spoolman.call(lambda: None, 5)
+        self.assertEqual(shelf["extra"], {})
 
     def test_pushes_every_spoolman_filaments_spool_for_its_own_preset(self):
         self.fake.objects["AFC"]["spoolman"] = True
@@ -609,14 +636,33 @@ class DeviceTabTest(Case):
         self.assertNotIn("filament_preset", tray)
         self.assertEqual(len(self.calls.messages("print", "ams_filament_setting")), 1)
 
+    def afc_with_filament_ids(self):
+        """An AFC that reports each lane's filament id and sets it with SET_FILAMENT_INFO."""
+        self.fake.gcode_help[afc_agent.SET_FILAMENT_INFO] = "Sets filament vendor, name and slicer filament id"
+        for unit in self.fake.webhook["status:"]["AFC"].values():
+            for lane in unit.values():
+                if "spool_id" in lane:
+                    lane["filament_id"] = ""
+
     def test_popup_keeps_the_pick_in_afc_as_its_filament_id(self):
-        self.fake.gcode_help[afc_agent.SET_FILAMENT_ID] = "Sets the slicer's filament id for a lane"
+        self.save_ids()
+        self.afc_with_filament_ids()
         self.connect()
         self.push()
         self.assertEqual(self.popup(tray_color="00FF00FF", tray_type="PETG", tray_info_idx="OFDSrzZ8"), 0)
         self.calls.messages("print", "push_status", 2)
-        self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8\n"
+        self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_FILAMENT_INFO LANE=lane1 FILAMENT_ID=OFDSrzZ8\n"
                       "SET_COLOR LANE=lane1 COLOR=00FF00", self.fake.scripts)
+
+    def test_popup_sends_no_filament_id_while_the_box_is_off(self):
+        orca.bundle.printer.values["print_host"] = self.fake.url
+        self.afc_with_filament_ids()
+        self.connect()
+        self.push()
+        self.assertEqual(self.popup(tray_color="00FF00FF", tray_type="PETG", tray_info_idx="OFDSrzZ8"), 0)
+        self.calls.messages("print", "push_status", 2)
+        self.assertIn("SET_MATERIAL LANE=lane1 MATERIAL=PETG\nSET_COLOR LANE=lane1 COLOR=00FF00", self.fake.scripts)
+        self.assertFalse(any("FILAMENT_ID=" in script for script in self.fake.scripts))
 
     def test_popup_names_a_plain_spool_in_afc(self):
         self.fake.gcode_help[afc_agent.SET_FILAMENT_INFO] = "Sets filament vendor and name for a lane"
@@ -633,11 +679,14 @@ class DeviceTabTest(Case):
         self.assertEqual(tray["filament_preset"], "Polymaker PolyLite PLA @Voron")
 
     def test_popup_sends_no_filament_id_to_an_afc_without_it(self):
+        # An older AFC: SET_FILAMENT_INFO without a FILAMENT_ID, and no id in lane status.
+        self.save_ids()
+        self.fake.gcode_help[afc_agent.SET_FILAMENT_INFO] = "Sets filament vendor and name for a lane"
         self.connect()
         self.push()
         self.assertEqual(self.popup(tray_info_idx="OFDSrzZ8"), 0)
         self.calls.messages("print", "push_status", 2)
-        self.assertFalse(any("SET_FILAMENT_ID" in script or "SET_FILAMENT_INFO" in script
+        self.assertFalse(any("FILAMENT_ID=" in script or "SET_FILAMENT_INFO" in script
                              for script in self.fake.scripts))
 
     def test_preset_pick_ends_with_the_spool(self):

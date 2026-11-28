@@ -280,7 +280,7 @@ class FillFilamentIdsTest(Case):
         self.fake.filaments = [
             {"id": 3, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"}, "extra": {}},
             {"id": 4, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
-             "extra": {"filament_id": '"Pmine01"'}},
+             "extra": {"orca_filament_id": '"Pmine01"'}},
             {"id": 5, "name": "Mystery PLA", "material": "PLA", "vendor": {"name": "Nobody"}, "extra": {}},
             {"id": 6, "name": "Mystery PLA", "material": "PLA", "vendor": None, "extra": {}},
         ]
@@ -297,16 +297,31 @@ class FillFilamentIdsTest(Case):
     def test_fill_writes_only_the_planned_empty_ones(self):
         written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [3, 4, 6])
         self.assertEqual((written, error), (1, ""))
-        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments],
+        self.assertEqual([f["extra"].get("orca_filament_id") for f in self.fake.filaments],
                          ['"OF5CgdDq"', '"Pmine01"', None, None])
-        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
-
+        self.assertEqual(self.fake.filament_fields,
+                         [{"key": "orca_filament_id", "name": "OrcaSlicer Filament ID", "field_type": "text"}])
 
     def test_fill_with_no_list_writes_every_empty_one(self):
         written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids)
         self.assertEqual((written, error), (2, ""))
-        self.assertEqual([f["extra"].get("filament_id") for f in self.fake.filaments],
+        self.assertEqual([f["extra"].get("orca_filament_id") for f in self.fake.filaments],
                          ['"OF5CgdDq"', '"Pmine01"', '"P49e71ff"', None])
+
+    def test_an_id_under_the_older_field_name_carries_over(self):
+        # Saved before AFC named the field: it moves over as it is, the worked out one does not replace it.
+        self.fake.filaments[0]["extra"] = {"filament_id": '"OFpicked"'}
+        self.fake.filaments[3]["extra"] = {"filament_id": '"Pold0001"'}
+        rows, error = self.manager.filament_id_plan(self.client, self.candidates, self.ids)
+        self.assertEqual(error, "")
+        self.assertEqual([(r["filament"], r["state"], r["filament_id"]) for r in rows],
+                         [(6, "fill", "Pold0001"), (5, "fill", "P49e71ff"), (3, "fill", "OFpicked"), (4, "has", "Pmine01")])
+        written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids)
+        self.assertEqual((written, error), (3, ""))
+        self.assertEqual([f["extra"].get("orca_filament_id") for f in self.fake.filaments],
+                         ['"OFpicked"', '"Pmine01"', '"P49e71ff"', '"Pold0001"'])
+        # The older field stays as it was.
+        self.assertEqual(self.fake.filaments[0]["extra"]["filament_id"], '"OFpicked"')
 
     def test_shelf_spools_one_per_preset_name(self):
         self.fake.filaments[0].update({"settings_extruder_temp": 215, "settings_bed_temp": 60, "density": 1.24,
@@ -321,10 +336,41 @@ class FillFilamentIdsTest(Case):
                          ("Polymaker PolyLite PLA", "Polymaker", 215, 60, 1.24, 1.75, -1.0))
         self.assertEqual(spools[1]["base"], "Polymaker PolyLite PLA")
 
+    def test_shelf_spool_copies_the_preset_its_filament_id_names(self):
+        import os, json as _json
+        from orca_afc.presets import Candidate
+        path = os.path.join(os.path.dirname(self.candidates[0].file), "Polymaker PolyTerra PLA.json")
+        with open(path, "w") as f:
+            _json.dump({"filament_id": "OFterra1"}, f)
+        self.candidates.append(Candidate(name="Polymaker PolyTerra PLA", type="PLA", vendor="Polymaker", system=True,
+                                         file=path, base_system=True))
+        self.fake.filaments = [{"id": 3, "name": "PolyLite PLA", "material": "PLA", "vendor": {"name": "Polymaker"},
+                                "extra": {"orca_filament_id": '"OFterra1"'}}]
+        for work_out in (True, False):
+            spools, error = self.manager.shelf_spools(self.client, self.candidates, self.ids, work_out=work_out)
+            self.assertEqual((error, [s["base"] for s in spools]), ("", ["Polymaker PolyTerra PLA"]))
+
+    def test_shelf_spool_without_an_id_is_not_matched_by_product_when_ids_are_not_worked_out(self):
+        import os, json as _json
+        from orca_afc.presets import Candidate
+        path = os.path.join(os.path.dirname(self.candidates[0].file), "Bambu PLA Basic.json")
+        with open(path, "w") as f:
+            _json.dump({"filament_id": "OFbasic1"}, f)
+        self.candidates = [Candidate(name="Bambu PLA Basic", type="PLA", vendor="Bambu Lab", system=True,
+                                     file=path, base_system=True, visible=False),
+                           Candidate(name="Generic PLA", type="PLA", vendor="Generic", system=True, file="")]
+        # Its vendor's preset is not ticked in the filament list: only the product match looks at those.
+        self.fake.filaments = [{"id": 3, "name": "Jade White", "material": "PLA", "vendor": {"name": "Bambu Lab"},
+                                "extra": {}}]
+        spools, _error = self.manager.shelf_spools(self.client, self.candidates, self.ids)
+        self.assertEqual([s["base"] for s in spools], ["Bambu PLA Basic"])
+        spools, _error = self.manager.shelf_spools(self.client, self.candidates, self.ids, work_out=False)
+        self.assertEqual([s["base"] for s in spools], ["Generic PLA"])
+
     def test_fill_writes_a_spools_own_id(self):
         written, error = self.manager.fill_filament_ids(self.client, self.candidates, self.ids, [5])
         self.assertEqual((written, error), (1, ""))
-        self.assertEqual(self.fake.filaments[2]["extra"].get("filament_id"), '"P49e71ff"')
+        self.assertEqual(self.fake.filaments[2]["extra"].get("orca_filament_id"), '"P49e71ff"')
 
 
 class FilamentIdTest(Case):
@@ -335,19 +381,24 @@ class FilamentIdTest(Case):
     def test_saved_on_the_filament_with_its_field(self):
         filament = self.spool()
         self.assertEqual(self.manager.save_filament_id(self.client, 12, "OF5CgdDq"), "")
-        self.assertEqual(filament["extra"]["filament_id"], '"OF5CgdDq"')
-        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["filament_id"])
+        self.assertEqual(filament["extra"]["orca_filament_id"], '"OF5CgdDq"')
+        self.assertEqual([f["key"] for f in self.fake.filament_fields], ["orca_filament_id"])
 
     def test_an_id_already_there_stays(self):
+        filament = self.spool({"orca_filament_id": '"OFothers"'})
+        self.assertEqual(self.manager.save_filament_id(self.client, 12, "OF5CgdDq"), "")
+        self.assertEqual(filament["extra"]["orca_filament_id"], '"OFothers"')
+        self.assertEqual(self.fake.filament_fields, [])
+
+    def test_an_id_under_the_older_field_name_is_the_one_saved(self):
         filament = self.spool({"filament_id": '"OFothers"'})
         self.assertEqual(self.manager.save_filament_id(self.client, 12, "OF5CgdDq"), "")
-        self.assertEqual(filament["extra"]["filament_id"], '"OFothers"')
-        self.assertEqual(self.fake.filament_fields, [])
+        self.assertEqual(filament["extra"], {"filament_id": '"OFothers"', "orca_filament_id": '"OFothers"'})
 
     def test_other_fields_kept(self):
         filament = self.spool({"drying_temp_c": "55"})
         self.manager.save_filament_id(self.client, 12, "OF5CgdDq")
-        self.assertEqual(filament["extra"], {"drying_temp_c": "55", "filament_id": '"OF5CgdDq"'})
+        self.assertEqual(filament["extra"], {"drying_temp_c": "55", "orca_filament_id": '"OF5CgdDq"'})
 
     def test_missing_spool_is_an_error(self):
         self.assertIn("No spool", self.manager.save_filament_id(self.client, 99, "OF5CgdDq"))

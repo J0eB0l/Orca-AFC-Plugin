@@ -221,6 +221,33 @@ class FilamentIdTest(unittest.TestCase):
         spool.filament_id = "OFgone00"  # no preset carries it: matched as before
         self.assertEqual(presets.match(spool, candidates, ids), "OF5CgdDq")
 
+    def test_box_off_matches_only_an_id_the_lane_holds(self):
+        # "Match and save filament IDs" off: no product words, an id AFC holds still picks its preset.
+        generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
+        lite = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyLite PLA.json"), {"filament_id": "OF5CgdDq"})
+        terra = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyTerra PLA.json"), {"filament_id": "OFterra1"})
+        candidates = [Candidate(name="Polymaker PolyLite PLA", type="PLA", vendor="Polymaker", system=True, file=lite,
+                                base_system=True, visible=False),
+                      Candidate(name="Polymaker PolyTerra PLA", type="PLA", vendor="Polymaker", system=True, file=terra,
+                                base_system=True, visible=False),
+                      candidate("Generic PLA", file=generic)]
+        ids = FilamentIds()
+        spool = lane(product="PolyLite")
+        self.assertEqual(presets.match(spool, candidates, ids, work_out=False), "OFDSrzZ8")
+        self.assertEqual(presets.best(spool, candidates, ids, work_out=False), "Generic PLA")
+        self.assertEqual((presets.match(spool, candidates, ids), presets.best(spool, candidates, ids)),
+                         ("OF5CgdDq", "Polymaker PolyLite PLA"))
+        spool.filament_id = "OFterra1"
+        self.assertEqual(presets.match(spool, candidates, ids, work_out=False), "OFterra1")
+        self.assertEqual(presets.best(spool, candidates, ids, work_out=False), "Polymaker PolyTerra PLA")
+
+    def test_works_out_ids_only_when_the_printer_has_the_box_ticked(self):
+        Preset = fake_orca.Preset
+        self.assertEqual([presets.works_out_ids(p) for p in (
+            None, Preset({}), Preset({"afc_filament_ids": "0"}), Preset({"afc_filament_ids": "1"}),
+            Preset({"afc_filament_ids": True}), Preset({"afc_filament_ids": ["1"]}))],
+            [False, False, False, True, True, True])
+
     def test_product_id_needs_the_vendor_and_product(self):
         generic = self.write(os.path.join(self.system, "V", "filament", "Generic PLA.json"), {"filament_id": "OFDSrzZ8"})
         lite = self.write(os.path.join(self.system, "V", "filament", "Polymaker PolyLite PLA.json"), {"filament_id": "OF5CgdDq"})

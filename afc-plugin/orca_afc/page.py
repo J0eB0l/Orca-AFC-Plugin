@@ -71,18 +71,20 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
         except RuntimeError as error:  # OrcaSlicer is starting up or closing
             url, api_key, hint = "", "", str(error)
         client = Moonraker(url, api_key) if url else None
-        candidates = []
+        candidates, saving = [], False
         if message.get("cmd") in FILAMENT_ID_COMMANDS:
             try:
-                candidates = presets.collect(orca.host.preset_bundle())
+                bundle = orca.host.preset_bundle()
+                candidates = presets.collect(bundle)
+                saving = presets.works_out_ids(bundle.current_printer_preset())
             except Exception:  # starting up or closing: nothing matches
                 pass
-        self.worker.submit(lambda: self._answer(message, client, hint, candidates))
+        self.worker.submit(lambda: self._answer(message, client, hint, candidates, saving))
 
-    def _answer(self, message: dict, client, hint: str, candidates: list) -> None:
+    def _answer(self, message: dict, client, hint: str, candidates: list, saving: bool = False) -> None:
         afc_id = message.get("afc_id")
         try:
-            data = self._handle(str(message.get("cmd")), message.get("params") or {}, client, hint, candidates)
+            data = self._handle(str(message.get("cmd")), message.get("params") or {}, client, hint, candidates, saving)
             self.post_message({"afc_id": afc_id, "ok": True, "data": data})
         except AFCError as error:
             self.post_message({"afc_id": afc_id, "ok": False, "message": str(error)})
@@ -90,7 +92,7 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
             traceback.print_exc()
             self.post_message({"afc_id": afc_id, "ok": False, "message": "AFC plugin error: %s" % error})
 
-    def _handle(self, cmd: str, params: dict, client, hint: str, candidates: list = ()):
+    def _handle(self, cmd: str, params: dict, client, hint: str, candidates: list = (), saving: bool = False):
         manager = self.manager
         printer = client.url if client else ""
         if cmd in FILAMENT_ID_COMMANDS:
@@ -100,7 +102,8 @@ class AFCPage(orca.pages.PagesPluginCapabilityBase):
             rows, error = manager.filament_id_plan(client, list(candidates), self.ids, spoolman)
             if error:
                 raise AFCError(error)
-            return {"rows": rows}
+            # `saving`: the printer's "Match and save filament IDs" is ticked, so a sync writes the missing ids.
+            return {"rows": rows, "saving": saving}
         if cmd == "get_state":
             error = manager.refresh(client) if client and params.get("refresh", True) else ""
             return manager.state(printer, hint, error)

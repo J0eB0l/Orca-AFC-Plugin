@@ -39,7 +39,7 @@ class Lane:
     sub_type: str = ""
     vendor: str = ""
     filament_name: str = ""
-    filament_id: str = ""     # OrcaSlicer's id for the spool's filament, from its Spoolman filament
+    filament_id: str = ""     # OrcaSlicer's id for the spool's filament, as AFC holds it for the lane
     bambu_id: str = ""        # Bambu's id for it (GFA00) from a Bambu tag, the Spoolman filament's article number
     spool_id: int = 0         # Spoolman spool id, 0 = none
     weight: float = 0.0       # remaining grams
@@ -161,6 +161,7 @@ class Snapshot:
     multiple_mapping: bool = False
     # AFC evens out a file's toolchange retraction from RETRACT and UNRETRACT on its T lines
     toolchange_retraction: bool = False
+    filament_ids: bool = False  # AFC's lanes carry a filament id (SET_FILAMENT_INFO FILAMENT_ID= sets it)
     current_lane: str = ""    # lane loaded in the active toolhead
     extruders: list = field(default_factory=list)
     units: list = field(default_factory=list)  # [Unit]
@@ -494,6 +495,7 @@ def parse_status_endpoint(result) -> Snapshot | None:
                 continue
             lane = Lane(name=lane_name, unit=unit.name, unit_type=unit.type)
             _fill_lane(lane_obj, lane)
+            out.filament_ids = out.filament_ids or "filament_id" in lane_obj
             lane.unit = unit.name  # the webhook groups by unit; trust the grouping
             unit.lanes.append(lane.name)
             out.lanes.append(lane)
@@ -581,6 +583,7 @@ def parse_objects_status(status) -> Snapshot | None:
             continue
         lane = Lane(name=name)
         _fill_lane(obj, lane)
+        out.filament_ids = out.filament_ids or "filament_id" in obj
         lane.unit_type = unit_types.get(lane.unit, "")
         placed = False
         for unit in out.units:
@@ -958,8 +961,8 @@ def to_json(s: Snapshot) -> dict:
 
 # ------------------------------------------------------------------ G-code from the page
 
-_EDIT_ORDER = ("spool_id", "map", "material", "filament_id", "vendor", "filament_name", "color", "weight",
-               "nozzle_temp", "bed_temp")
+_INFO_FIELDS = ("vendor", "filament_name", "filament_id")  # one SET_FILAMENT_INFO carries them
+_EDIT_ORDER = ("spool_id", "map", "material") + _INFO_FIELDS + ("color", "weight", "nozzle_temp", "bed_temp")
 
 
 def is_safe_text(v, max_len: int = 64) -> bool:
@@ -971,8 +974,8 @@ def is_safe_text(v, max_len: int = 64) -> bool:
 
 def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> list:
     """G-code for a lane edit from the AFC page. `changes` may hold color
-    ("#RRGGBB"), material, filament_id (OrcaSlicer's, "" clears), vendor and
-    filament_name (one SET_FILAMENT_INFO; "" clears, a field left out stays),
+    ("#RRGGBB"), material, vendor, filament_name and filament_id (OrcaSlicer's)
+    (one SET_FILAMENT_INFO; "" clears, a field left out stays),
     weight (g), spool_id (0 clears), map ("T5"), nozzle_temp, bed_temp.
     Values are checked and never interpolated raw."""
     if not is_safe_lane_name(lane_name) or snapshot.find_lane(lane_name) is None:
@@ -999,14 +1002,9 @@ def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> 
             if not isinstance(val, str) or not _safe_value(val, 32):
                 raise AFCError("material may only use letters, digits and + - _ .")
             out.append("SET_MATERIAL" + lane_arg + " MATERIAL=" + val)
-        elif key == "filament_id":
-            # After SET_MATERIAL, which drops the lane's id when the material changes.
-            if not isinstance(val, str) or (val and not _safe_value(val, 64)):
-                raise AFCError("filament id may only use letters, digits and + - _ .")
-            out.append("SET_FILAMENT_ID" + lane_arg + (" ID=" + val if val else ""))
-        elif key in ("vendor", "filament_name"):
-            if key == "filament_name" and "vendor" in changes:
-                continue  # went out with the vendor
+        elif key in _INFO_FIELDS:
+            if any(earlier in changes for earlier in _INFO_FIELDS[:_INFO_FIELDS.index(key)]):
+                continue  # went out with the first of them
             line = "SET_FILAMENT_INFO" + lane_arg
             for field_name, param in (("vendor", "VENDOR"), ("filament_name", "NAME")):
                 if field_name in changes:
@@ -1014,6 +1012,12 @@ def build_lane_edit_gcode(snapshot: Snapshot, lane_name: str, changes: dict) -> 
                     if not is_safe_text(text):
                         raise AFCError(field_name.replace("_", " ") + " may only use letters, digits, spaces and + - _ . ( ) & / , !")
                     line += " %s=\"%s\"" % (param, text)
+            if "filament_id" in changes:
+                # After SET_SPOOL_ID: a lane given another spool drops the id it held.
+                text = changes["filament_id"]
+                if not isinstance(text, str) or (text and not _safe_value(text, 64)):
+                    raise AFCError("filament id may only use letters, digits and + - _ .")
+                line += " FILAMENT_ID=" + text
             out.append(line)
         elif key == "weight":
             if not _is_number(val) or val < 0 or val > 100000:

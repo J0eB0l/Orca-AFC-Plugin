@@ -140,12 +140,14 @@ class TrayTest(unittest.TestCase):
         request = {"tray_info_idx": "OFDSrzZ8", "tray_type": "PLA"}
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request), [])
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, True),
-                         ["SET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8"])
+                         ["SET_FILAMENT_INFO LANE=lane1 FILAMENT_ID=OFDSrzZ8"])
         lane1.filament_id = "OFDSrzZ8"
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, True), [])
-        # A new material drops AFC's id, so the same pick goes again after it.
+        # AFC keeps the id through a new material, so the same pick is not sent again.
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OFDSrzZ8", "tray_type": "PETG"}, True),
-                         ["SET_MATERIAL LANE=lane1 MATERIAL=PETG", "SET_FILAMENT_ID LANE=lane1 ID=OFDSrzZ8"])
+                         ["SET_MATERIAL LANE=lane1 MATERIAL=PETG"])
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OFother1", "tray_type": "PETG"}, True),
+                         ["SET_MATERIAL LANE=lane1 MATERIAL=PETG", "SET_FILAMENT_INFO LANE=lane1 FILAMENT_ID=OFother1"])
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": "OF x;M112"}, True), [])
 
     def test_popup_names_the_spool_where_afc_keeps_it(self):
@@ -155,6 +157,9 @@ class TrayTest(unittest.TestCase):
         info = ("Polymaker", "PolyLite PLA")
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, info),
                          ['SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyLite PLA"'])
+        # With the id too, one command carries all three.
+        self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, True, info),
+                         ['SET_FILAMENT_INFO LANE=lane1 VENDOR="Polymaker" NAME="PolyLite PLA" FILAMENT_ID=OF5CgdDq'])
         # Only what differs, and nothing for an unknown vendor (None) or a name AFC cannot take.
         lane1.vendor = "Polymaker"
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, request, False, info),
@@ -172,7 +177,7 @@ class TrayTest(unittest.TestCase):
         lane1 = self.snap.lanes[0]
         lane1.filament_id = "OFDSrzZ8"
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": ""}, True),
-                         ["SET_FILAMENT_ID LANE=lane1"])
+                         ["SET_FILAMENT_INFO LANE=lane1 FILAMENT_ID="])
         lane1.spool_id = 7  # a spool's id is Spoolman's
         self.assertEqual(controls.filament_setting_gcode(self.snap, lane1, {"tray_info_idx": ""}, True), [])
 

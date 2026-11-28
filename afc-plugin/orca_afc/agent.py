@@ -174,6 +174,26 @@ def is_afc_preset(preset) -> bool:
     return agent == AGENT_ID if agent else _first(preset.config_value("afc_enabled")).lower() in ("true", "1")
 
 
+def filament_id_printers(bundle) -> set:
+    """The dev ids of the printers whose preset has "Match and save filament
+    IDs" ticked (presets.works_out_ids()). The selected preset decides for
+    its printer, else the first preset of the printer. UI thread."""
+    out, seen = set(), set()
+    printers = bundle.printers if bundle is not None else None
+    listed = [printers.preset(i) for i in range(printers.size())] if printers is not None else []
+    for preset in [bundle.current_printer_preset() if bundle is not None else None] + listed:
+        host = _first(preset.config_value("print_host")) if preset is not None else ""
+        if not host:
+            continue
+        dev_id = dev_id_from_address(host, _first(preset.config_value("printhost_port")))
+        if dev_id in seen:
+            continue
+        seen.add(dev_id)
+        if presets.works_out_ids(preset):
+            out.add(dev_id)
+    return out
+
+
 def printer_presets(bundle) -> list:
     """Watched() of each printer preset OrcaSlicer puts in this agent's
     device list for the Multi-device tab (GUI_App::add_afc_preset_printers()):
@@ -682,8 +702,8 @@ def auto_lanes(extra_options: str) -> bool:
 _U1_OPTIONS_LINE = re.compile(r"^SET_PRINT_PREFERENCES [^\r\n]*FORCE=1(?=\r?$)", re.M)
 
 
-SET_FILAMENT_ID = "SET_FILAMENT_ID"  # AFC keeps a lane's OrcaSlicer filament id
-SET_FILAMENT_INFO = "SET_FILAMENT_INFO"  # AFC keeps a lane's vendor and filament name without Spoolman
+# AFC keeps a lane's vendor and filament name without Spoolman, and its OrcaSlicer filament id
+SET_FILAMENT_INFO = "SET_FILAMENT_INFO"
 FLOW_K_CALIBRATION = "AFC_CALIBRATE_LANE_FLOW_K"  # AFC autocal: measure the current lane's K and save it
 FLOW_K_NOTE = "AFC_autocal: "                     # how autocal answers it in the console
 _FLOW_K_STORED = re.compile(r"AFC_autocal: stored K=([0-9.]+) for (\S+)")
@@ -812,7 +832,6 @@ class _Printer:
     lights: list = field(default_factory=list)        # Klipper objects the lamp switches
     fans: list = field(default_factory=list)          # Klipper fans, for the fan popup (controls.find_fans())
     flow_calibration: bool = False                    # AFC autocal's FLOW_K_CALIBRATION command is there
-    filament_ids: bool = False                        # AFC's SET_FILAMENT_ID is there (keeps a tray's preset id)
     filament_info: bool = False                       # AFC's SET_FILAMENT_INFO is there (keeps a lane's vendor and name)
     chamber: str = ""                                 # the Klipper object that reads the chamber's temperature
     snapshot: object = None                           # the last AFC snapshot, for the Device tab's controls
@@ -898,7 +917,9 @@ else:
             self._selected = ""
             self._candidates = []     # presets.Candidate, read on the UI thread
             self._presets_due = 0.0
-            self._match = {}          # (material, sub type, vendor, product, filament id, Bambu id) -> (filament id, base, product id)
+            # (material, sub type, vendor, product, filament id, Bambu id, ids worked out) -> (filament id, base, product id)
+            self._match = {}
+            self._id_printers = set() # dev ids whose preset has "Match and save filament IDs" ticked (filament_id_printers())
             self._bambu_map = False   # bambu_ids has OrcaSlicer's map of Bambu's filament ids
             self._ids = presets.FilamentIds()
             self._spoolman = Worker("AFC printer agent Spoolman")  # saves filament ids, off the poll thread
@@ -1069,10 +1090,11 @@ else:
                 bundle = bundle if bundle is not None else orca.host.preset_bundle()
                 candidates = presets.collect(bundle)
                 watched = printer_presets(bundle) if multi_device() else []
+                id_printers = filament_id_printers(bundle)
             except Exception:  # starting up or closing
                 return
             with self._lock:
-                self._candidates, self._match = candidates, {}
+                self._candidates, self._match, self._id_printers = candidates, {}, id_printers
                 self._presets_due = time.monotonic() + PRESETS_EVERY
                 self._watch(watched)
 
@@ -1117,7 +1139,6 @@ else:
             try:
                 commands = printer.client.get("/printer/gcode/help")
                 printer.flow_calibration = isinstance(commands, dict) and FLOW_K_CALIBRATION in commands
-                printer.filament_ids = isinstance(commands, dict) and SET_FILAMENT_ID in commands
                 printer.filament_info = isinstance(commands, dict) and SET_FILAMENT_INFO in commands
             except MoonrakerError:
                 pass
@@ -1792,10 +1813,19 @@ else:
                     else:
                         lane.flow_k = k
 
+        def _works_out_ids(self, printer: _Printer) -> bool:
+            """Whether the printer's preset has "Match and save filament IDs"
+            ticked: the plugin then works out a filament id for each spool from
+            its vendor and name and saves it to Spoolman and AFC. Off, only an
+            id AFC already holds for a lane picks its preset."""
+            with self._lock:
+                return printer.dev_id in self._id_printers
+
         def _trays(self, printer: _Printer, snapshot) -> tuple:
             """For each loaded tray: the filament id of the preset that fits its
             spool best, and the fields OrcaSlicer's sync makes the spool's own
             preset from, with the preset picked for the lane in the tray popup."""
+            work_out = self._works_out_ids(printer)
             with self._lock:
                 candidates, cache = self._candidates, self._match
                 for name, (_, keys) in list(printer.lane_presets.items()):
@@ -1807,11 +1837,13 @@ else:
             for tray, lane in trays.lanes_by_tray(snapshot).items():
                 if not lane.has_filament:
                     continue
-                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id, lane.bambu_id)
+                key = (lane.material, lane.sub_type, lane.vendor, lane.filament_name, lane.filament_id, lane.bambu_id,
+                       work_out)
                 if key not in cache:
-                    product = presets.product_id(lane, candidates, self._ids)
-                    cache[key] = (presets.match(lane, candidates, self._ids), presets.best(lane, candidates, self._ids),
-                                  product or presets.own_id(lane, candidates, self._ids))
+                    product = presets.product_id(lane, candidates, self._ids) if work_out else ""
+                    cache[key] = (presets.match(lane, candidates, self._ids, work_out),
+                                  presets.best(lane, candidates, self._ids, work_out),
+                                  (product or presets.own_id(lane, candidates, self._ids)) if work_out else "")
                 ids[tray], base, product = cache[key]
                 if product and lane.spool_id > 0 and not lane.filament_id:
                     self._save_filament_id(printer, snapshot, lane.spool_id, product)
@@ -1830,13 +1862,13 @@ else:
             return ids, extras
 
         def _fill_filament_ids(self, printer: _Printer) -> None:
-            """On a sync, gives every Spoolman filament with no id the one a
-            spool of it would get (AFCManager.fill_filament_ids()), shelf spools
-            too, so a spool is matched exactly from its first load. Ids already
-            there stay; after the first sync this is one read of Spoolman's
-            filaments."""
+            """On a sync of a printer with "Match and save filament IDs" ticked,
+            gives every Spoolman filament with no id the one a spool of it would
+            get (AFCManager.fill_filament_ids()), shelf spools too, so a spool is
+            matched exactly from its first load. Ids already there stay; after
+            the first sync this is one read of Spoolman's filaments."""
             snapshot = printer.snapshot
-            if snapshot is None or not snapshot.spoolman:
+            if snapshot is None or not snapshot.spoolman or not self._works_out_ids(printer):
                 return
             spoolman = protocol.spoolman_for_printer(snapshot.spoolman_url, printer.client.url)
             with self._lock:
@@ -1861,11 +1893,12 @@ else:
                 return
             printer.shelf_due = now + SHELF_EVERY
             spoolman = protocol.spoolman_for_printer(snapshot.spoolman_url, printer.client.url)
+            work_out = self._works_out_ids(printer)
             with self._lock:
                 candidates = list(self._candidates)
 
             def read():
-                found, error = printer.manager.shelf_spools(printer.client, candidates, self._ids, spoolman)
+                found, error = printer.manager.shelf_spools(printer.client, candidates, self._ids, spoolman, work_out)
                 if not error:
                     printer.shelf = found
             self._spoolman.submit(read)
@@ -2142,9 +2175,10 @@ else:
         def _filament_setting(self, printer: _Printer, job: dict) -> int:
             """The tray popup: the lane takes its color and material, and the
             preset picked for it until it gets another spool (in AFC too, as
-            its filament id, where AFC has SET_FILAMENT_ID, and as its vendor
-            and filament name, where AFC has SET_FILAMENT_INFO). A reset (no
-            filament) drops the pick."""
+            its vendor and filament name where AFC has SET_FILAMENT_INFO, and
+            as its filament id where AFC's lanes carry one and the printer's
+            "Match and save filament IDs" is ticked). A reset (no filament)
+            drops the pick."""
             lane = controls.lane_of(printer.snapshot, self._layout(printer).tool(job.get("ams_id"), job.get("slot_id")))
             if lane is None:
                 return FAILED
@@ -2155,9 +2189,10 @@ else:
                 with self._lock:
                     candidates = self._candidates
                 info = presets.picked_spool_info(preset, candidates)
+            ids = printer.filament_info and printer.snapshot.filament_ids and self._works_out_ids(printer)
             try:
-                script = controls.filament_setting_gcode(printer.snapshot, lane, job, printer.filament_ids, info) \
-                    if printer.filament_ids or not reset else []
+                script = controls.filament_setting_gcode(printer.snapshot, lane, job, ids, info) \
+                    if ids or not reset else []
             except AFCError:
                 return ERR_INVALID_RESULT
             with self._lock:
@@ -2167,7 +2202,8 @@ else:
                     # The pick holds through the vendor and name it sends, which change the
                     # lane's spool_key() once AFC has them.
                     after = lane
-                    if any(line.startswith(SET_FILAMENT_INFO + " ") for line in script):
+                    if any(line.startswith(SET_FILAMENT_INFO + " ") and (" VENDOR=" in line or " NAME=" in line)
+                           for line in script):
                         after = replace(lane, **{k: v for k, v in zip(("vendor", "filament_name"), info)
                                                  if protocol.is_safe_text(v)})
                     printer.lane_presets[lane.name] = (preset, (spool_key(lane), spool_key(after)))

@@ -84,6 +84,14 @@ def _first(value) -> str:
     return "".join(out)
 
 
+def works_out_ids(preset) -> bool:
+    """Whether a printer preset has "Match and save filament IDs" ticked
+    (afc_filament_ids): the plugin then works out a filament id for each of
+    the printer's spools from its vendor and name and saves it to Spoolman and
+    AFC. No preset, or an OrcaSlicer without the setting, counts as off."""
+    return preset is not None and _first(preset.config_value("afc_filament_ids")).lower() in ("true", "1")
+
+
 def _base(filaments, preset):
     """The preset the sync matches for `preset`, as PresetCollection::get_preset_base
     finds it: itself when it is a system preset or inherits nothing, else the
@@ -474,22 +482,25 @@ def by_product(lane: Lane, candidates: list, ids: FilamentIds) -> list:
     return sorted(found, key=lambda c: (not c.visible, not c.system, c.name))
 
 
-def best(lane: Lane, candidates: list, ids: FilamentIds | None = None) -> str:
+def best(lane: Lane, candidates: list, ids: FilamentIds | None = None, work_out: bool = True) -> str:
     """The name of the preset that fits the lane's spool best: the one a
-    spool's own preset is copied from. "" when none is of its material."""
-    found = ((by_id(lane, candidates, ids) or by_product(lane, candidates, ids)) if ids else []) \
+    spool's own preset is copied from. "" when none is of its material.
+    `work_out` off leaves out the preset product_id() works out for a spool
+    that names no id (by_product())."""
+    found = ((by_id(lane, candidates, ids) or (by_product(lane, candidates, ids) if work_out else [])) if ids else []) \
         or rank(lane, candidates) or generic(lane, candidates)
     return found[0].name if found else ""
 
 
-def match(lane: Lane, candidates: list, ids: FilamentIds) -> str:
-    """The filament id the sync should pick for a loaded lane: the id its
-    Spoolman filament holds when a preset carries it, else the one
-    product_id() reads from its vendor and name, else the best scored
-    preset's, else the generic one's, else UNKNOWN_FILAMENT_ID so the sync
-    still falls back on the material."""
+def match(lane: Lane, candidates: list, ids: FilamentIds, work_out: bool = True) -> str:
+    """The filament id the sync should pick for a loaded lane: the id AFC
+    holds for it when a preset carries it, else, with `work_out` (the
+    printer's "Match and save filament IDs"), the one product_id() reads from
+    its vendor and name, else the best scored preset's, else the generic
+    one's, else UNKNOWN_FILAMENT_ID so the sync still falls back on the
+    material."""
     ids.learn(candidates)
-    found = by_id(lane, candidates, ids) + by_product(lane, candidates, ids)
+    found = by_id(lane, candidates, ids) + (by_product(lane, candidates, ids) if work_out else [])
     for candidate in found + rank(lane, candidates) + generic(lane, candidates):
         filament_id = ids.of(candidate)
         if filament_id:
