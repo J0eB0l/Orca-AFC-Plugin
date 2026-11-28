@@ -152,6 +152,13 @@ ooze prevention is offered preheating. Neither changes a setting without a click
 macros handle these keeps its own. The `afc_*` options are written into the G-code config block only
 when `afc_enabled` is ticked.
 
+A lane's filament id reaches OrcaSlicer from AFC as the tray's `tray_info_idx`, and picks the preset that
+carries it. AFC reads it from the Spoolman filament's `orca_filament_id` field, or keeps the one
+`SET_FILAMENT_INFO FILAMENT_ID=` set. With `afc_filament_ids` (off by default) the AFC plugin also works
+out an id for a spool without one from its vendor and filament name, saves it in that Spoolman field, and
+sends the preset picked in the tray popup to AFC as the lane's id. Off, an id AFC already holds still
+picks its preset, and the plugin saves nothing.
+
 The Storage page keeps one implementation for both kinds of printer: `PrinterFileSystem` speaks a Bambu
 printer's file protocol, and for a Moonraker printer `MoonrakerFileTunnel` answers that protocol from
 Moonraker's HTTP file API in place of the Bambu library's tunnel. The printer's access code is the API

@@ -1246,6 +1246,16 @@ void PrintConfigDef::init_common_params()
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("afc_filament_ids", coBool);
+    def->label = L("Match and save filament IDs");
+    def->tooltip = L("Works out the filament ID of each spool from its vendor and filament name to pick its preset, and "
+                     "saves the ID on the spool's Spoolman filament and, for a preset picked in the tray popup, in AFC, "
+                     "so the next match is exact. Unticked, a filament ID AFC already holds for a lane still picks its "
+                     "preset, and nothing is saved.");
+    def->mode = comAdvanced;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("afc_settings_check", coBool);
     def->label = L("Suggest AFC's settings");
     def->tooltip = L("Once a session, offers AFC's recommended printer settings when they differ (ramming, cooling "
