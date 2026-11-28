@@ -74,11 +74,12 @@ template<class Option, class Value> bool set_every_value(Option *option, const V
 // id, OrcaSlicer salts the name with the time; this salts it with a count, so the id stays the same each sync.
 std::string spool_filament_id(const PresetCollection &filaments, const std::string &spool_name)
 {
-    const std::string key = lower_ascii(spool_name);
+    // Trimmed as preset_base_key() trims: the name before a preset's "@" ends in a space.
+    const std::string name = boost::trim_copy(spool_name);
+    const std::string key  = lower_ascii(name);
     for (const Preset &preset : filaments)
         if (preset.is_system && !preset.filament_id.empty() && preset.filament_id != "null" && preset_base_key(preset.name) == key)
             return preset.filament_id;
-    const std::string name = boost::trim_copy(spool_name);
     for (unsigned salt = 0; salt < 1000; ++salt) {
         const std::string id = user_filament_id(salt == 0 ? name : name + "#" + std::to_string(salt));
         if (std::none_of(filaments.begin(), filaments.end(),

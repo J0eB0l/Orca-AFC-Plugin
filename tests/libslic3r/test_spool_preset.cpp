@@ -1,9 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <string>
+
 #include "libslic3r/Config.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SpoolPreset.hpp"
+
+#include "test_utils.hpp"
 
 using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
@@ -65,4 +71,26 @@ TEST_CASE("A spool's own filament gets OrcaSlicer's id for a filament the user m
 {
     CHECK(user_filament_id("Polymaker PolyLite PLA") == "P29ee6b9");
     CHECK(user_filament_id("Sunlu PLA Meta") == "Pdb40f94");
+}
+
+TEST_CASE("Every printer's copy of a spool's preset keeps the one filament id", "[SpoolPreset]")
+{
+    ScopedTemporaryDir dir{"orca-spool-preset"};
+    PresetBundle       bundle;
+    const std::string  id = user_filament_id("AC PLA");
+    for (const std::string printer : {"Printer A", "Printer B"}) {
+        DynamicPrintConfig config(bundle.filaments.default_preset().config);
+        config.option<ConfigOptionStrings>("filament_notes", true)->values = {SPOOL_PRESET_NOTE};
+        const std::string name   = "AC PLA @" + printer;
+        Preset           &preset = bundle.filaments.load_preset((dir.path() / (name + ".json")).string(), name, config, false);
+        preset.filament_id       = id;
+        preset.is_compatible     = printer == "Printer A";
+    }
+
+    TraySpool spool;
+    spool.names = {"AC PLA"};
+    const SpoolPreset out = spool_filament_preset(bundle, spool);
+    CHECK(out.name == "AC PLA @Printer A");
+    CHECK_FALSE(out.updated);
+    CHECK(bundle.filaments.find_preset("AC PLA @Printer A")->filament_id == id);
 }
